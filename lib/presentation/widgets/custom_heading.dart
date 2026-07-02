@@ -42,7 +42,7 @@ class CustomHeading extends StatelessWidget {
           ),
           textAlign: centro ? TextAlign.center : TextAlign.left,
         ),
-        if (subTitle == '') Container() else const SizedBox(height: 0),
+        if (subTitle == '') Container() else const SizedBox(height: 10),
         if (subTitle == '')
           Container()
         else

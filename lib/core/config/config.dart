@@ -10,11 +10,11 @@ class Config {
       case Flavor.cliente2:
         return 'Cliente 2 App';
       case Flavor.development:
-        return 'Development App';
+        return 'Dev File Cast';
       case Flavor.production:
-        return 'Production App';
+        return 'File Cast';
       case Flavor.staging:
-        return 'Staging App';
+        return 'Stage File Cast';
     }
   }
 

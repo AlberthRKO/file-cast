@@ -67,10 +67,12 @@ const Color darkGraph1 = Color(0xFF105D83); // Versión oscura de 0xFF4F7CFF
 const Color darkGraph2 = Color(0xFFDC5E84); // Versión oscura de 0xFFF65164
 const Color darkGraph3 = Color(0xFFFEAA89); // Versión oscura de 0xFF6F32FF
 const Color darkGraph4 = Color(0xFF33B997); // Versión oscura de 0xFFFFD027
-const Color darkGraph5 =
-    Color(0xFF90EE90); // Versión oscura de 0xFF6CD689 (verde lima claro)
-const Color darkGraph6 =
-    Color(0xFF0DAEBB); // Azul claro suave (contraste con fondo oscuro)
+const Color darkGraph5 = Color(
+  0xFF90EE90,
+); // Versión oscura de 0xFF6CD689 (verde lima claro)
+const Color darkGraph6 = Color(
+  0xFF0DAEBB,
+); // Azul claro suave (contraste con fondo oscuro)
 const Color darkGraph7 = Color(0xFFE9969A);
 
 // section graph
@@ -85,3 +87,8 @@ const Color grapBar1 = Color(0xFF697CBA);
 const Color grapBar2 = Color(0xFFD93131);
 const Color grapBar3 = Color(0xFF0078EB);
 const Color grapBar4 = Color(0xFFE74777);
+
+const Color folder1 = Color(0xFF011734);
+const Color folder2 = Color(0xFF014DAA);
+const Color folder3 = Color(0xFF0075FF);
+const Color folder4 = Color(0xFFABD1FF);
