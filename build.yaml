@@ -4,13 +4,12 @@ targets:
       json_serializable:
         generate_for:
           include:
-            - lib/app/domain/models/**/*
-            - lib/app/domain/models/*
+            - lib/data/models/*
+            - lib/data/models/**/*
       freezed:
         generate_for:
           include:
-            - lib/app/presentation/**/**_state.dart
-            - lib/app/domain/models/**/*
-            - lib/app/domain/models/**/**/*
-            - lib/app/domain/failures/**/*
-            - lib/app/domain/either/either.dart
+            - lib/data/models/*
+            - lib/data/models/**/*
+            - lib/domain/failures/*
+            - lib/domain/failures/**/*

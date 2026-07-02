@@ -13,8 +13,10 @@ dependencies:
   connectivity_plus: ^7.0.0
   device_info_plus: ^12.3.0
   dropdown_button2: ^2.3.9
+  equatable: ^2.0.8
   flutter:
     sdk: flutter
+  flutter_cache_manager: ^3.4.1
   flutter_launcher_icons: ^0.14.4
   flutter_localizations:
     sdk: flutter
@@ -31,6 +33,7 @@ dependencies:
   modal_bottom_sheet: ^3.0.0
   path_provider: ^2.1.5
   provider: ^6.1.5+1
+  shared_preferences: ^2.5.3
   url_launcher: ^6.3.2
 
 dev_dependencies:
