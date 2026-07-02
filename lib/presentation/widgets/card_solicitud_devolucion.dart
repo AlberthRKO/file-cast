@@ -1,7 +1,7 @@
 import 'package:dropdown_button2/dropdown_button2.dart';
+import 'package:file_cast/core/constants/complemento.dart';
 import 'package:file_cast/core/theme/colors.dart';
 import 'package:file_cast/core/utils/funciones.dart';
-import 'package:file_cast/presentation/utils/complemento.dart';
 import 'package:file_cast/presentation/utils/responsive.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -384,7 +384,7 @@ class CardSolicitudDevolucion extends StatelessWidget {
                             fontSize: responsive.heightPercent(1.3),
                             color: Theme.of(context).primaryColor,
                             fontWeight: FontWeight.w600,
-                            fontFamily: 'Poppins',
+                            fontFamily: 'Montserrat',
                             height: 1.1,
                           ),
                         ),
@@ -393,7 +393,7 @@ class CardSolicitudDevolucion extends StatelessWidget {
                           style: TextStyle(
                             fontSize: responsive.heightPercent(1.3),
                             color: colorDescription,
-                            fontFamily: 'Poppins',
+                            fontFamily: 'Montserrat',
                             height: 1.1,
                           ),
                         ),
@@ -435,7 +435,7 @@ class CardSolicitudDevolucion extends StatelessWidget {
                                 fontSize: responsive.heightPercent(1.3),
                                 color: Theme.of(context).primaryColor,
                                 fontWeight: FontWeight.w600,
-                                fontFamily: 'Poppins',
+                                fontFamily: 'Montserrat',
                                 height: 1.1,
                               ),
                             ),
@@ -444,7 +444,7 @@ class CardSolicitudDevolucion extends StatelessWidget {
                               style: TextStyle(
                                 fontSize: responsive.heightPercent(1.3),
                                 color: colorDescription,
-                                fontFamily: 'Poppins',
+                                fontFamily: 'Montserrat',
                                 height: 1.1,
                               ),
                             ),
@@ -481,7 +481,7 @@ class CardSolicitudDevolucion extends StatelessWidget {
                                 fontSize: responsive.heightPercent(1.3),
                                 color: Theme.of(context).primaryColor,
                                 fontWeight: FontWeight.w600,
-                                fontFamily: 'Poppins',
+                                fontFamily: 'Montserrat',
                                 height: 1.1,
                               ),
                             ),
@@ -490,7 +490,7 @@ class CardSolicitudDevolucion extends StatelessWidget {
                               style: TextStyle(
                                 fontSize: responsive.heightPercent(1.3),
                                 color: colorDescription,
-                                fontFamily: 'Poppins',
+                                fontFamily: 'Montserrat',
                                 height: 1.1,
                               ),
                             ),
@@ -585,7 +585,7 @@ class CardSolicitudDevolucion extends StatelessWidget {
                                 fontSize: responsive.heightPercent(1.3),
                                 color: Theme.of(context).primaryColor,
                                 fontWeight: FontWeight.w600,
-                                fontFamily: 'Poppins',
+                                fontFamily: 'Montserrat',
                                 height: 1.1,
                               ),
                             ),
@@ -596,7 +596,7 @@ class CardSolicitudDevolucion extends StatelessWidget {
                               style: TextStyle(
                                 fontSize: responsive.heightPercent(1.3),
                                 color: colorDescription,
-                                fontFamily: 'Poppins',
+                                fontFamily: 'Montserrat',
                                 height: 1.1,
                               ),
                             ),
@@ -637,7 +637,7 @@ class CardSolicitudDevolucion extends StatelessWidget {
                                   fontSize: responsive.heightPercent(1.3),
                                   color: Theme.of(context).primaryColor,
                                   fontWeight: FontWeight.w600,
-                                  fontFamily: 'Poppins',
+                                  fontFamily: 'Montserrat',
                                   height: 1.1,
                                 ),
                               ),
@@ -648,7 +648,7 @@ class CardSolicitudDevolucion extends StatelessWidget {
                                 style: TextStyle(
                                   fontSize: responsive.heightPercent(1.3),
                                   color: colorDescription,
-                                  fontFamily: 'Poppins',
+                                  fontFamily: 'Montserrat',
                                   height: 1.1,
                                 ),
                               ),
@@ -758,7 +758,7 @@ class CardSolicitudDevolucion extends StatelessWidget {
                                 fontSize: responsive.heightPercent(1.3),
                                 color: Theme.of(context).primaryColor,
                                 fontWeight: FontWeight.w600,
-                                fontFamily: 'Poppins',
+                                fontFamily: 'Montserrat',
                                 height: 1.1,
                               ),
                             ),
@@ -767,7 +767,7 @@ class CardSolicitudDevolucion extends StatelessWidget {
                               style: TextStyle(
                                 fontSize: responsive.heightPercent(1.3),
                                 color: colorDescription,
-                                fontFamily: 'Poppins',
+                                fontFamily: 'Montserrat',
                                 height: 1.1,
                               ),
                             ),

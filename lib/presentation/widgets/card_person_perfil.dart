@@ -1,6 +1,6 @@
+import 'package:file_cast/core/constants/complemento.dart';
 import 'package:file_cast/core/theme/colors.dart';
 import 'package:file_cast/core/utils/funciones.dart';
-import 'package:file_cast/presentation/utils/complemento.dart';
 import 'package:file_cast/presentation/utils/responsive.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -118,7 +118,7 @@ class _CardPersonPerfilState extends State<CardPersonPerfil> {
                         style: TextStyle(
                           fontSize: responsive.heightPercent(1.3),
                           color: Theme.of(context).textTheme.bodyLarge!.color,
-                          // fontFamily: "Poppins",
+                          // fontFamily: "Montserrat",
                         ),
                       ),
                     ],
@@ -148,7 +148,7 @@ class _CardPersonPerfilState extends State<CardPersonPerfil> {
                         style: TextStyle(
                           fontSize: responsive.heightPercent(1.3),
                           color: Theme.of(context).textTheme.bodyLarge!.color,
-                          // fontFamily: "Poppins",
+                          // fontFamily: "Montserrat",
                         ),
                       ),
                     ],
@@ -178,7 +178,7 @@ class _CardPersonPerfilState extends State<CardPersonPerfil> {
                         style: TextStyle(
                           fontSize: responsive.heightPercent(1.3),
                           color: Theme.of(context).textTheme.bodyLarge!.color,
-                          // fontFamily: "Poppins",
+                          // fontFamily: "Montserrat",
                         ),
                       ),
                     ],

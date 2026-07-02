@@ -1,8 +1,8 @@
+import 'package:file_cast/core/constants/complemento.dart';
 import 'package:file_cast/core/theme/colors.dart';
 import 'package:file_cast/core/theme/padding.dart';
 import 'package:file_cast/domain/repositories/connectivity_repository.dart';
 import 'package:file_cast/presentation/routes/routes.dart';
-import 'package:file_cast/presentation/utils/complemento.dart';
 import 'package:file_cast/presentation/utils/responsive.dart';
 import 'package:file_cast/presentation/widgets/custom_button_box.dart';
 import 'package:file_cast/presentation/widgets/custom_heading.dart';

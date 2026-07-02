@@ -1,6 +1,6 @@
+import 'package:file_cast/core/constants/complemento.dart';
 import 'package:file_cast/core/theme/colors.dart';
 import 'package:file_cast/core/theme/padding.dart';
-import 'package:file_cast/presentation/utils/complemento.dart';
 import 'package:file_cast/presentation/utils/responsive.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -221,7 +221,7 @@ class CustomCardSession extends StatelessWidget {
                                           ),
                                           color: Theme.of(context).primaryColor,
                                           fontWeight: FontWeight.w600,
-                                          fontFamily: 'Poppins',
+                                          fontFamily: 'Montserrat',
                                           height: 1.1,
                                         ),
                                       ),
@@ -232,7 +232,7 @@ class CustomCardSession extends StatelessWidget {
                                             1.3,
                                           ),
                                           color: Theme.of(context).hintColor,
-                                          fontFamily: 'Poppins',
+                                          fontFamily: 'Montserrat',
                                           height: 1.1,
                                         ),
                                       ),
@@ -270,7 +270,7 @@ class CustomCardSession extends StatelessWidget {
                                           ),
                                           color: Theme.of(context).primaryColor,
                                           fontWeight: FontWeight.w600,
-                                          fontFamily: 'Poppins',
+                                          fontFamily: 'Montserrat',
                                           height: 1.1,
                                         ),
                                       ),
@@ -281,7 +281,7 @@ class CustomCardSession extends StatelessWidget {
                                             1.3,
                                           ),
                                           color: Theme.of(context).hintColor,
-                                          fontFamily: 'Poppins',
+                                          fontFamily: 'Montserrat',
                                           height: 1.1,
                                         ),
                                       ),

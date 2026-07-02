@@ -1,5 +1,5 @@
+import 'package:file_cast/core/constants/complemento.dart';
 import 'package:file_cast/core/theme/colors.dart';
-import 'package:file_cast/presentation/utils/complemento.dart';
 import 'package:file_cast/presentation/utils/responsive.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -94,7 +94,7 @@ class CustomDropDown<T> extends StatelessWidget {
           color: colorText.withOpacity(0.5),
           fontWeight: FontWeight.w400,
           fontSize: responsive.heightPercent(1.4),
-          fontFamily: 'Poppins',
+          fontFamily: 'Montserrat',
         ),
       ),
       items: lista.map((item) {
@@ -105,7 +105,7 @@ class CustomDropDown<T> extends StatelessWidget {
             style: TextStyle(
               color: colorText,
               fontSize: responsive.heightPercent(1.4),
-              fontFamily: 'Poppins',
+              fontFamily: 'Montserrat',
             ),
           ),
         );
@@ -229,7 +229,7 @@ class CustomDropDown2<T> extends StatelessWidget {
           color: colorText.withOpacity(0.5),
           fontWeight: FontWeight.w400,
           fontSize: responsive.heightPercent(1.4),
-          fontFamily: 'Poppins',
+          fontFamily: 'Montserrat',
         ),
       ),
       items: lista.map((item) {
@@ -243,7 +243,7 @@ class CustomDropDown2<T> extends StatelessWidget {
                   style: TextStyle(
                     color: colorText,
                     fontSize: responsive.heightPercent(1.4),
-                    fontFamily: 'Poppins',
+                    fontFamily: 'Montserrat',
                   ),
                 ),
         );
@@ -336,7 +336,7 @@ class CustomDropDown3<T> extends StatelessWidget {
             color: colorText.withOpacity(0.5),
             fontWeight: FontWeight.w400,
             fontSize: 14,
-            fontFamily: 'Poppins',
+            fontFamily: 'Montserrat',
           ),
         ),
         prefixIcon: prefixIcon
@@ -376,7 +376,7 @@ class CustomDropDown3<T> extends StatelessWidget {
           color: colorText.withOpacity(0.5),
           fontWeight: FontWeight.w400,
           fontSize: 14.0,
-          fontFamily: "Poppins",
+          fontFamily: "Montserrat",
         ),
       ),*/
       items: lista.map((item) {
@@ -386,7 +386,7 @@ class CustomDropDown3<T> extends StatelessWidget {
             textExtractor(item),
             style: TextStyle(
               color: color,
-              fontFamily: 'Poppins',
+              fontFamily: 'Montserrat',
             ),
           ),
         );

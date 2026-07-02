@@ -1,8 +1,8 @@
 // import 'package:elearningui/data/category_json.dart';
 
+import 'package:file_cast/core/constants/complemento.dart';
 import 'package:file_cast/core/theme/colors.dart';
 import 'package:file_cast/presentation/providers/theme_controller.dart';
-import 'package:file_cast/presentation/utils/complemento.dart';
 import 'package:file_cast/presentation/utils/responsive.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -100,7 +100,7 @@ class _CustomPlaceHolderState extends State<CustomPlaceHolder> {
                   style: TextStyle(
                     fontSize: responsive.heightPercent(1.5),
                     color: Theme.of(context).textTheme.bodySmall!.color,
-                    // fontFamily: "Poppins",
+                    // fontFamily: "Montserrat",
                   ),
                 ),
               ],
@@ -356,7 +356,7 @@ class _CustomPlaceHolder2State extends State<CustomPlaceHolder2> {
                           color: Theme.of(
                             context,
                           ).textTheme.bodySmall!.color,
-                          // fontFamily: "Poppins",
+                          // fontFamily: "Montserrat",
                         ),
                       ),
                     ],
@@ -367,7 +367,7 @@ class _CustomPlaceHolder2State extends State<CustomPlaceHolder2> {
                     style: TextStyle(
                       fontSize: responsive.heightPercent(1.5),
                       color: Theme.of(context).textTheme.bodySmall!.color,
-                      // fontFamily: "Poppins",
+                      // fontFamily: "Montserrat",
                     ),
                   ),
               ],

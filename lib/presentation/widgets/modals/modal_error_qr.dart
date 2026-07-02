@@ -1,7 +1,7 @@
+import 'package:file_cast/core/constants/complemento.dart';
 import 'package:file_cast/core/theme/colors.dart';
 import 'package:file_cast/core/theme/padding.dart';
 import 'package:file_cast/presentation/providers/theme_controller.dart';
-import 'package:file_cast/presentation/utils/complemento.dart';
 import 'package:file_cast/presentation/widgets/card_info.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';

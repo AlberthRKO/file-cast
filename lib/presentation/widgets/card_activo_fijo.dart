@@ -1,6 +1,6 @@
+import 'package:file_cast/core/constants/complemento.dart';
 import 'package:file_cast/core/theme/colors.dart';
 import 'package:file_cast/core/utils/funciones.dart';
-import 'package:file_cast/presentation/utils/complemento.dart';
 import 'package:file_cast/presentation/utils/responsive.dart';
 import 'package:file_cast/presentation/widgets/utils/expandable_text.dart';
 import 'package:flutter/material.dart';
@@ -160,7 +160,7 @@ class CardActivoFijo extends StatelessWidget {
                                 fontSize: responsive.heightPercent(1.3),
                                 color: Theme.of(context).primaryColor,
                                 fontWeight: FontWeight.w600,
-                                fontFamily: 'Poppins',
+                                fontFamily: 'Montserrat',
                                 height: 1.1,
                               ),
                             ),
@@ -169,7 +169,7 @@ class CardActivoFijo extends StatelessWidget {
                               style: TextStyle(
                                 fontSize: responsive.heightPercent(1.3),
                                 color: colorDescription,
-                                fontFamily: 'Poppins',
+                                fontFamily: 'Montserrat',
                                 height: 1.1,
                               ),
                             ),
@@ -205,7 +205,7 @@ class CardActivoFijo extends StatelessWidget {
                                 fontSize: responsive.heightPercent(1.3),
                                 color: Theme.of(context).primaryColor,
                                 fontWeight: FontWeight.w600,
-                                fontFamily: 'Poppins',
+                                fontFamily: 'Montserrat',
                                 height: 1.1,
                               ),
                             ),
@@ -260,7 +260,7 @@ class CardActivoFijo extends StatelessWidget {
                                   fontSize: responsive.heightPercent(1.3),
                                   color: Theme.of(context).primaryColor,
                                   fontWeight: FontWeight.w600,
-                                  fontFamily: 'Poppins',
+                                  fontFamily: 'Montserrat',
                                   height: 1.1,
                                 ),
                               ),
@@ -269,7 +269,7 @@ class CardActivoFijo extends StatelessWidget {
                                 style: TextStyle(
                                   fontSize: responsive.heightPercent(1.3),
                                   color: colorDescription,
-                                  fontFamily: 'Poppins',
+                                  fontFamily: 'Montserrat',
                                   height: 1.1,
                                 ),
                               ),
@@ -310,7 +310,7 @@ class CardActivoFijo extends StatelessWidget {
                                   fontSize: responsive.heightPercent(1.3),
                                   color: Theme.of(context).primaryColor,
                                   fontWeight: FontWeight.w600,
-                                  fontFamily: 'Poppins',
+                                  fontFamily: 'Montserrat',
                                   height: 1.1,
                                 ),
                               ),
@@ -319,7 +319,7 @@ class CardActivoFijo extends StatelessWidget {
                                 style: TextStyle(
                                   fontSize: responsive.heightPercent(1.3),
                                   color: colorDescription,
-                                  fontFamily: 'Poppins',
+                                  fontFamily: 'Montserrat',
                                   height: 1.1,
                                 ),
                               ),
@@ -364,7 +364,7 @@ class CardActivoFijo extends StatelessWidget {
                                   fontSize: responsive.heightPercent(1.3),
                                   color: Theme.of(context).primaryColor,
                                   fontWeight: FontWeight.w600,
-                                  fontFamily: 'Poppins',
+                                  fontFamily: 'Montserrat',
                                   height: 1.1,
                                 ),
                               ),
@@ -373,7 +373,7 @@ class CardActivoFijo extends StatelessWidget {
                                 style: TextStyle(
                                   fontSize: responsive.heightPercent(1.3),
                                   color: colorDescription,
-                                  fontFamily: 'Poppins',
+                                  fontFamily: 'Montserrat',
                                   height: 1.1,
                                 ),
                               ),
@@ -414,7 +414,7 @@ class CardActivoFijo extends StatelessWidget {
                                   fontSize: responsive.heightPercent(1.3),
                                   color: Theme.of(context).primaryColor,
                                   fontWeight: FontWeight.w600,
-                                  fontFamily: 'Poppins',
+                                  fontFamily: 'Montserrat',
                                   height: 1.1,
                                 ),
                               ),
@@ -423,7 +423,7 @@ class CardActivoFijo extends StatelessWidget {
                                 style: TextStyle(
                                   fontSize: responsive.heightPercent(1.3),
                                   color: colorDescription,
-                                  fontFamily: 'Poppins',
+                                  fontFamily: 'Montserrat',
                                   height: 1.1,
                                 ),
                               ),

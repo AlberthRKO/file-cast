@@ -2,7 +2,7 @@ import 'package:file_cast/core/theme/colors.dart';
 import 'package:flutter/material.dart';
 
 ThemeData dark = ThemeData(
-  fontFamily: 'Poppins',
+  fontFamily: 'Montserrat',
   brightness: Brightness.dark,
   timePickerTheme: const TimePickerThemeData(
     backgroundColor: fondoColorDark,
@@ -20,7 +20,7 @@ ThemeData dark = ThemeData(
   ),
   dropdownMenuTheme: const DropdownMenuThemeData(
     textStyle: TextStyle(
-      fontFamily: 'Poppins',
+      fontFamily: 'Montserrat',
     ),
   ),
   appBarTheme: const AppBarTheme(

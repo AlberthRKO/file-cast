@@ -51,7 +51,7 @@ class ModalSession extends StatelessWidget {
               fontSize: 14,
               color: deleteColor,
               fontWeight: FontWeight.w600,
-              fontFamily: 'Poppins',
+              fontFamily: 'Montserrat',
             ),
           ),
           const SizedBox(
@@ -143,7 +143,7 @@ class ModalSession2 extends StatelessWidget {
                 fontSize: responsive.heightPercent(1.5),
                 color: deleteColor,
                 fontWeight: FontWeight.w600,
-                fontFamily: 'Poppins',
+                fontFamily: 'Montserrat',
               ),
             ),
             if (isSubtilte)
@@ -160,7 +160,7 @@ class ModalSession2 extends StatelessWidget {
                   fontSize: responsive.heightPercent(1.5),
                   color: deleteColor,
                   fontWeight: FontWeight.w500,
-                  fontFamily: 'Poppins',
+                  fontFamily: 'Montserrat',
                 ),
               ),
             const SizedBox(

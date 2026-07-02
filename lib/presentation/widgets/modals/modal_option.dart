@@ -1,7 +1,7 @@
+import 'package:file_cast/core/constants/complemento.dart';
 import 'package:file_cast/core/theme/colors.dart';
 import 'package:file_cast/core/theme/padding.dart';
 import 'package:file_cast/presentation/providers/theme_controller.dart';
-import 'package:file_cast/presentation/utils/complemento.dart';
 import 'package:file_cast/presentation/utils/responsive.dart';
 import 'package:file_cast/presentation/widgets/custom_button_box.dart';
 import 'package:file_cast/presentation/widgets/custom_heading.dart';
@@ -103,7 +103,7 @@ class _ModalOptionState extends State<ModalOption> {
                                             ),
                                             color: lunchColor,
                                             fontWeight: FontWeight.w600,
-                                            fontFamily: 'Poppins',
+                                            fontFamily: 'Montserrat',
                                             height: 1.1,
                                           ),
                                         ),
@@ -115,7 +115,7 @@ class _ModalOptionState extends State<ModalOption> {
                                               1.4,
                                             ),
                                             color: lunchColor,
-                                            fontFamily: 'Poppins',
+                                            fontFamily: 'Montserrat',
                                             height: 1.1,
                                           ),
                                         ),

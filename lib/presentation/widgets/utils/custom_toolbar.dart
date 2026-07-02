@@ -1,4 +1,4 @@
-import 'package:file_cast/presentation/utils/complemento.dart';
+import 'package:file_cast/core/constants/complemento.dart';
 import 'package:file_cast/presentation/utils/responsive.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
@@ -41,7 +41,7 @@ class CustomToolbar extends StatelessWidget {
                                         fontSize: responsive.heightPercent(1.4),
                                         color: colorSancion,
                                         fontWeight: FontWeight.w600,
-                                        fontFamily: "Poppins",
+                                        fontFamily: "Montserrat",
                                         height: 1.1,
                                       ),
                                     ),*/
@@ -50,7 +50,7 @@ class CustomToolbar extends StatelessWidget {
                   style: TextStyle(
                     fontSize: responsive.heightPercent(1.4),
                     color: colorSancion,
-                    fontFamily: 'Poppins',
+                    fontFamily: 'Montserrat',
                     height: 1.1,
                   ),
                 ),
