@@ -1,0 +1,5 @@
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path_android: "assets/common/development/launcher_icon/playstore.png"
+  image_path_ios: "assets/common/development/launcher_icon/appstore.png"
