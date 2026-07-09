@@ -5,6 +5,7 @@ import 'package:file_cast/presentation/widgets/custom_button_box.dart';
 import 'package:file_cast/presentation/widgets/custom_heading.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:go_router/go_router.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -129,7 +130,9 @@ class HomePage extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
                         CustomButtonBoxStyle(
-                          funcion: () async {},
+                          funcion: () {
+                            context.push('/usb-devices');
+                          },
                           fontSize: responsive.heightPercent(1.8),
                           icon: 'paper.svg',
                           sizeHeight: responsive.widthPercent(14),
