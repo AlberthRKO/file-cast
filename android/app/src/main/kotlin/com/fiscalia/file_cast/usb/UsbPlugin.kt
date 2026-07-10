@@ -145,6 +145,45 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                         "connected" to (adbTransport?.isAdbConnected() ?: false)
                     ))
                 }
+                "getAdbLog" -> {
+                    result.success(mapOf(
+                        "log" to (adbTransport?.getLog() ?: "")
+                    ))
+                }
+                "shellCommand" -> {
+                    val command = call.argument<String>("command")
+                    val timeoutMs = call.argument<Int>("timeoutMs")?.toLong() ?: 15000L
+                    if (command == null) {
+                        result.error("INVALID_ARGS", "command is required", null)
+                        return@setMethodCallHandler
+                    }
+                    val transport = adbTransport
+                    if (transport == null || !transport.isAdbConnected()) {
+                        result.error("NOT_CONNECTED", "ADB not connected", null)
+                        return@setMethodCallHandler
+                    }
+                    // Run shell command on background thread
+                    Thread {
+                        try {
+                            val output = transport.shellCommand(command, timeoutMs)
+                            mainHandler.post {
+                                result.success(mapOf(
+                                    "output" to output,
+                                    "success" to true
+                                ))
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "shellCommand error: ${e.message}")
+                            mainHandler.post {
+                                result.error("SHELL_ERROR", e.message ?: "Shell command failed", null)
+                            }
+                        }
+                    }.apply {
+                        name = "ShellCmd"
+                        isDaemon = true
+                        start()
+                    }
+                }
                 else -> result.notImplemented()
             }
         }

@@ -8,10 +8,12 @@ import android.util.Log
 import com.fiscalia.file_cast.adb.AdbAuth
 import com.fiscalia.file_cast.adb.AdbMessage
 import com.fiscalia.file_cast.adb.AdbProtocol
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
@@ -81,7 +83,7 @@ class UsbAdbTransport(
         Log.d(TAG, msg)
     }
 
-    private fun getLog(): String = logBuffer.toString()
+    fun getLog(): String = logBuffer.toString()
 
     fun findAdbInterface(): Boolean {
         log("=== findAdbInterface ===")
@@ -251,6 +253,7 @@ class UsbAdbTransport(
                 AdbProtocol.A_CNXN -> {
                     log("Device sent CNXN - already authorized!")
                     isConnected = true
+                    startReaderThread()
                     notifyState("connected", null, getLog())
                     return true
                 }
@@ -357,6 +360,7 @@ class UsbAdbTransport(
             AdbProtocol.A_CNXN -> {
                 log("CNXN received - CONNECTED!")
                 isConnected = true
+                startReaderThread()
                 notifyState("connected", null, getLog())
                 true
             }
@@ -565,9 +569,198 @@ class UsbAdbTransport(
     fun disconnect() {
         disconnected.set(true)
         isConnected = false
+        readerRunning = false
         streams.clear()
         releaseInterface()
         notifyState("disconnected", null, getLog())
+    }
+
+    // --- Stream multiplexing ---
+
+    private var readerRunning = false
+    private var readerThread: Thread? = null
+
+    /**
+     * Start the reader thread that demultiplexes incoming ADB packets.
+     * Must be called after handshake() returns true.
+     */
+    fun startReaderThread() {
+        if (readerRunning) return
+        readerRunning = true
+        readerThread = thread(name = "AdbReader", isDaemon = true) {
+            log("Reader thread started")
+            readerLoop()
+            log("Reader thread exiting")
+        }
+    }
+
+    private fun readerLoop() {
+        while (readerRunning && !disconnected.get()) {
+            try {
+                val message = readMessage(2000) ?: continue
+                when (message.command) {
+                    AdbProtocol.A_OKAY -> {
+                        val stream = streams[message.arg0]
+                        if (stream != null) {
+                            stream.okayRemoteId = message.arg1
+                            stream.okayReceived.countDown()
+                            log("OKAY dispatched to stream ${message.arg0} (remoteId=${message.arg1})")
+                        } else {
+                            log("OKAY for unknown stream ${message.arg0}")
+                        }
+                    }
+                    AdbProtocol.A_WRTE -> {
+                        val stream = streams[message.arg1]
+                        if (stream != null) {
+                            val payload = if (message.dataLength > 0) readPayload(message.dataLength) else null
+                            if (payload != null) {
+                                stream.dataQueue.add(payload)
+                                log("WRTE: ${payload.size} bytes queued for stream ${message.arg1}")
+                            }
+                            // Send OKAY to acknowledge receipt (flow control)
+                            val okayPacket = AdbProtocol.buildOkay(message.arg1, message.arg0)
+                            if (!sendRaw(okayPacket)) {
+                                log("ERROR: Failed to send OKAY for WRTE")
+                            }
+                        } else {
+                            log("WRTE for unknown stream ${message.arg1}, discarding")
+                            // Still need to read the payload to keep protocol in sync
+                            if (message.dataLength > 0) readPayload(message.dataLength)
+                        }
+                    }
+                    AdbProtocol.A_CLSE -> {
+                        val stream = streams[message.arg0]
+                        if (stream != null) {
+                            stream.closed.set(true)
+                            stream.closeReceived.countDown()
+                            streams.remove(message.arg0)
+                            log("CLSE: stream ${message.arg0} closed by device")
+                        } else {
+                            log("CLSE for unknown stream ${message.arg0}")
+                        }
+                    }
+                    AdbProtocol.A_CNXN -> {
+                        log("Unexpected CNXN in reader loop (ignoring)")
+                    }
+                    AdbProtocol.A_AUTH -> {
+                        log("Unexpected AUTH in reader loop (ignoring)")
+                    }
+                    else -> {
+                        log("Unknown command in reader: ${message.commandName} (0x${Integer.toHexString(message.command)})")
+                    }
+                }
+            } catch (e: InterruptedException) {
+                log("Reader thread interrupted")
+                break
+            } catch (e: Exception) {
+                log("Reader loop error: ${e.javaClass.simpleName}: ${e.message}")
+                if (!disconnected.get()) {
+                    Thread.sleep(100)
+                }
+            }
+        }
+    }
+
+    /**
+     * Open an ADB stream (send A_OPEN, wait for A_OKAY).
+     * The returned stream can be used to read data from the device.
+     */
+    fun openStream(service: String, timeoutMs: Long = 10000): AdbStream {
+        val localId = localIdCounter.getAndIncrement()
+        val stream = AdbStream(localId)
+        streams[localId] = stream
+        log("openStream: service='$service' localId=$localId")
+
+        // Send A_OPEN
+        val openPacket = AdbProtocol.buildOpen(localId, service)
+        if (!sendRaw(openPacket)) {
+            streams.remove(localId)
+            throw IOException("Failed to send A_OPEN for '$service'")
+        }
+
+        // Wait for A_OKAY from device
+        val completed = stream.okayReceived.await(timeoutMs, TimeUnit.MILLISECONDS)
+        if (!completed) {
+            streams.remove(localId)
+            throw TimeoutException("Timeout waiting for A_OKAY after A_OPEN for '$service'")
+        }
+
+        stream.remoteId = stream.okayRemoteId
+        log("openStream: stream $localId opened (remoteId=${stream.remoteId})")
+        return stream
+    }
+
+    /**
+     * Write data to an open stream (send A_WRTE).
+     */
+    fun writeStream(localId: Int, data: ByteArray) {
+        val stream = streams[localId] ?: throw IllegalArgumentException("No stream with localId=$localId")
+        val remoteId = stream.remoteId ?: throw IllegalStateException("Stream $localId has no remoteId yet")
+        log("writeStream: localId=$localId remoteId=$remoteId data=${data.size} bytes")
+
+        val writePacket = AdbProtocol.buildWrite(localId, remoteId, data)
+        if (!sendRaw(writePacket)) {
+            throw IOException("Failed to send A_WRTE for stream $localId")
+        }
+    }
+
+    /**
+     * Close an ADB stream (send A_CLSE).
+     */
+    fun closeStream(localId: Int) {
+        val stream = streams[localId] ?: return
+        val remoteId = stream.remoteId ?: return
+        log("closeStream: localId=$localId remoteId=$remoteId")
+
+        stream.closed.set(true)
+        val closePacket = AdbProtocol.buildClose(localId, remoteId)
+        sendRaw(closePacket)
+        streams.remove(localId)
+    }
+
+    /**
+     * Execute a shell command and return the output.
+     * Convenience method: opens stream, reads all output, closes stream.
+     */
+    fun shellCommand(command: String, timeoutMs: Long = 15000): String {
+        log("shellCommand: '$command'")
+        val stream = openStream("shell:$command")
+        val output = StringBuilder()
+        val deadline = System.currentTimeMillis() + timeoutMs
+
+        try {
+            while (!stream.closed.get() || stream.dataQueue.isNotEmpty()) {
+                val data = stream.dataQueue.poll(500, TimeUnit.MILLISECONDS)
+                if (data != null) {
+                    output.append(String(data, Charsets.UTF_8))
+                } else if (System.currentTimeMillis() > deadline) {
+                    log("shellCommand: timeout after ${timeoutMs}ms")
+                    break
+                }
+            }
+        } finally {
+            closeStream(stream.localId)
+        }
+
+        val result = output.toString()
+        log("shellCommand: result ${result.length} chars")
+        return result
+    }
+
+    /**
+     * Read data from a stream (blocking, with timeout).
+     */
+    fun readStream(localId: Int, timeoutMs: Long = 5000): ByteArray? {
+        val stream = streams[localId] ?: return null
+        return stream.dataQueue.poll(timeoutMs, TimeUnit.MILLISECONDS)
+    }
+
+    /**
+     * Check if a stream is still open.
+     */
+    fun isStreamOpen(localId: Int): Boolean {
+        val stream = streams[localId] ?: return false
+        return !stream.closed.get()
     }
 
     fun setOnStateChangedListener(listener: (String, String?, String) -> Unit) {
@@ -585,5 +778,10 @@ class UsbAdbTransport(
 data class AdbStream(
     val localId: Int,
     var remoteId: Int? = null,
-    val dataQueue: ConcurrentLinkedQueue<ByteArray> = ConcurrentLinkedQueue()
-)
+    val dataQueue: LinkedBlockingQueue<ByteArray> = LinkedBlockingQueue(),
+    val okayReceived: CountDownLatch = CountDownLatch(1),
+    val closed: AtomicBoolean = AtomicBoolean(false),
+    val closeReceived: CountDownLatch = CountDownLatch(1)
+) {
+    @Volatile var okayRemoteId: Int = 0
+}

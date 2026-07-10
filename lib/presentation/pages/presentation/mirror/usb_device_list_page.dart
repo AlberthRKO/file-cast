@@ -25,6 +25,14 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
   String? _connectingDeviceName;
   String _adbLog = '';
 
+  // Shell command state
+  String _shellOutput = '';
+  bool _shellRunning = false;
+  String _shellCommand = 'echo hola';
+  final TextEditingController _shellCommandController = TextEditingController(
+    text: 'echo hola',
+  );
+
   @override
   void initState() {
     super.initState();
@@ -71,6 +79,7 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
   @override
   void dispose() {
     _usbSubscription?.cancel();
+    _shellCommandController.dispose();
     super.dispose();
   }
 
@@ -157,6 +166,40 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
         setState(() {
           _adbState = 'error';
           _adbMessage = 'Error: $e';
+        });
+      }
+    }
+  }
+
+  Future<void> _runShellCommand() async {
+    final command = _shellCommandController.text.trim();
+    if (command.isEmpty) return;
+
+    setState(() {
+      _shellRunning = true;
+      _shellOutput = 'Running: $command\n';
+    });
+
+    try {
+      final output = await _adbClient.shellCommand(command);
+      if (mounted) {
+        setState(() {
+          _shellOutput = 'Command: $command\n---\n$output';
+          _shellRunning = false;
+        });
+      }
+    } on PlatformException catch (e) {
+      if (mounted) {
+        setState(() {
+          _shellOutput = 'Error: ${e.code}\n${e.message}';
+          _shellRunning = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _shellOutput = 'Error: $e';
+          _shellRunning = false;
         });
       }
     }
@@ -308,11 +351,97 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
             ],
           ),
         ),
+        if (_adbState == 'connected') _buildShellPanel(responsive),
         if (_adbState == 'error' ||
             _adbState == 'authorizing' ||
             _adbState == 'connecting')
           _buildLogPanel(responsive),
       ],
+    );
+  }
+
+  Widget _buildShellPanel(Responsive responsive) {
+    return Container(
+      margin: EdgeInsets.symmetric(
+        horizontal: responsive.widthPercent(3),
+        vertical: responsive.heightPercent(1),
+      ),
+      padding: EdgeInsets.all(responsive.widthPercent(3)),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.blue.shade300),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Shell Command (Phase 3 Test)',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: responsive.heightPercent(1.4),
+            ),
+          ),
+          SizedBox(height: responsive.heightPercent(1)),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _shellCommandController,
+                  decoration: InputDecoration(
+                    hintText: 'echo hola',
+                    border: const OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: responsive.widthPercent(2),
+                      vertical: responsive.heightPercent(0.8),
+                    ),
+                  ),
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: responsive.heightPercent(1.2),
+                  ),
+                  onSubmitted: (_) => _runShellCommand(),
+                ),
+              ),
+              SizedBox(width: responsive.widthPercent(2)),
+              ElevatedButton.icon(
+                onPressed: _shellRunning ? null : _runShellCommand,
+                icon: _shellRunning
+                    ? SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.play_arrow),
+                label: Text(_shellRunning ? 'Running...' : 'Run'),
+              ),
+            ],
+          ),
+          if (_shellOutput.isNotEmpty) ...[
+            SizedBox(height: responsive.heightPercent(1)),
+            Container(
+              constraints: BoxConstraints(maxHeight: responsive.heightPercent(25)),
+              padding: EdgeInsets.all(responsive.widthPercent(2)),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade900,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  _shellOutput,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: responsive.heightPercent(1.1),
+                    color: Colors.green.shade300,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 

@@ -122,6 +122,34 @@ class AdbClient {
     }
   }
 
+  /// Get ADB transport log buffer
+  Future<String> getAdbLog() async {
+    try {
+      final result = await _methodChannel.invokeMethod<Map>('getAdbLog');
+      if (result == null) return '';
+      return result['log'] as String? ?? '';
+    } on PlatformException catch (e) {
+      print('AdbClient: Error getting ADB log: ${e.message}');
+      return '';
+    }
+  }
+
+  /// Execute a shell command on the target device and return the output.
+  /// Throws PlatformException if ADB is not connected or command fails.
+  Future<String> shellCommand(String command, {int timeoutMs = 15000}) async {
+    try {
+      final result = await _methodChannel.invokeMethod<Map>('shellCommand', {
+        'command': command,
+        'timeoutMs': timeoutMs,
+      });
+      if (result == null) return '';
+      return result['output'] as String? ?? '';
+    } on PlatformException catch (e) {
+      print('AdbClient: shellCommand error: ${e.code} - ${e.message}');
+      rethrow;
+    }
+  }
+
   /// Listen to USB events (attach, detach, permission, ADB state)
   Stream<UsbEvent> get onUsbEvent {
     _eventStream ??= _eventChannel.receiveBroadcastStream().map((event) {
