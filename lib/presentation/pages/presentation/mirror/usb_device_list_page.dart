@@ -251,19 +251,25 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
         return;
       }
 
-      setState(() => _scrcpyOutput += '[4/4] Executing scrcpy-server...\n');
-      final execResult = await _adbClient.shellCommand(
-        'CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / com.genymobile.scrcpy.Server 3.3.4',
+      setState(() => _scrcpyOutput += '[4/5] Executing scrcpy-server...\n');
+      // startPersistentShell keeps the shell stream OPEN → server process stays alive
+      // tunnel_forward=false: server creates LocalServerSocket("scrcpy") and waits for us
+      // no_audio=true, no_control=true: only open video socket for now
+      final shellLocalId = await _adbClient.startPersistentShell(
+        'CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / com.genymobile.scrcpy.Server 3.3.4 tunnel_forward=false no_audio=true no_control=true log_level=debug',
         timeoutMs: 10000,
       );
-      setState(() => _scrcpyOutput += '  Output: $execResult\n');
+      setState(() => _scrcpyOutput += '  Server shell stream: localId=$shellLocalId\n');
 
-      final checkResult = await _adbClient.shellCommand(
-        'ps -ef | grep scrcpy',
-        timeoutMs: 5000,
-      );
+      // Give server time to initialize + create LocalServerSocket + start accept()
+      await Future.delayed(const Duration(milliseconds: 3000));
+
+      setState(() => _scrcpyOutput += '[5/5] Connecting to video socket...\n');
+      final videoInfo = await _adbClient.connectScrcpySockets();
       setState(() {
-        _scrcpyOutput += '\n--- Server process check ---\n$checkResult\n';
+        _scrcpyOutput += '  Device: ${videoInfo['deviceName']}\n';
+        _scrcpyOutput += '  Screen: ${videoInfo['width']}x${videoInfo['height']}\n';
+        _scrcpyOutput += '\n--- Phase 5 SUCCESS: Server connected! ---\n';
         _scrcpyRunning = false;
       });
     } catch (e) {

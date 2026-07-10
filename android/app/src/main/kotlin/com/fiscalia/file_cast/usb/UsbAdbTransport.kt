@@ -778,6 +778,18 @@ class UsbAdbTransport(
     }
 
     /**
+     * Start a long-running shell process (e.g. scrcpy-server) by opening a shell stream
+     * that stays open. The caller MUST call closeStream() when done.
+     * Returns the localId of the stream (keeps the process alive).
+     */
+    fun startPersistentShell(command: String, timeoutMs: Long = 10000): Int {
+        log("startPersistentShell: '$command'")
+        val stream = openStream("shell:$command", timeoutMs)
+        log("startPersistentShell: stream ${stream.localId} opened, process kept alive")
+        return stream.localId
+    }
+
+    /**
      * Read data from a stream (blocking, with timeout).
      */
     fun readStream(localId: Int, timeoutMs: Long = 5000): ByteArray? {
@@ -918,6 +930,8 @@ class UsbAdbTransport(
         log("notifyState: $state - $message")
         onStateChanged?.invoke(state, message, log)
     }
+
+    fun getStream(localId: Int): AdbStream? = streams[localId]
 
     fun isAdbConnected(): Boolean = isConnected
 }

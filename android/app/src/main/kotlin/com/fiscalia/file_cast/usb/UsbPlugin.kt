@@ -218,6 +218,138 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                         start()
                     }
                 }
+                "startPersistentShell" -> {
+                    val command = call.argument<String>("command")
+                    val timeoutMs = call.argument<Int>("timeoutMs")?.toLong() ?: 10000L
+                    if (command == null) {
+                        result.error("INVALID_ARGS", "command is required", null)
+                        return@setMethodCallHandler
+                    }
+                    val transport = adbTransport
+                    if (transport == null || !transport.isAdbConnected()) {
+                        result.error("NOT_CONNECTED", "ADB not connected", null)
+                        return@setMethodCallHandler
+                    }
+                    Thread {
+                        try {
+                            val localId = transport.startPersistentShell(command, timeoutMs)
+                            mainHandler.post {
+                                result.success(mapOf(
+                                    "localId" to localId,
+                                    "success" to true
+                                ))
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "startPersistentShell error: ${e.message}")
+                            mainHandler.post {
+                                result.error("SHELL_ERROR", e.message ?: "Failed to start shell", null)
+                            }
+                        }
+                    }.apply {
+                        name = "StartPersistentShell"
+                        isDaemon = true
+                        start()
+                    }
+                }
+                "openStream" -> {
+                    val service = call.argument<String>("service")
+                    val timeoutMs = call.argument<Int>("timeoutMs")?.toLong() ?: 10000L
+                    if (service == null) {
+                        result.error("INVALID_ARGS", "service is required", null)
+                        return@setMethodCallHandler
+                    }
+                    val transport = adbTransport
+                    if (transport == null || !transport.isAdbConnected()) {
+                        result.error("NOT_CONNECTED", "ADB not connected", null)
+                        return@setMethodCallHandler
+                    }
+                    Thread {
+                        try {
+                            val stream = transport.openStream(service, timeoutMs)
+                            mainHandler.post {
+                                result.success(mapOf(
+                                    "localId" to stream.localId,
+                                    "remoteId" to stream.remoteId
+                                ))
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "openStream error: ${e.message}")
+                            mainHandler.post {
+                                result.error("STREAM_ERROR", e.message ?: "Failed to open stream", null)
+                            }
+                        }
+                    }.apply {
+                        name = "OpenStream"
+                        isDaemon = true
+                        start()
+                    }
+                }
+                "readStream" -> {
+                    val localId = call.argument<Int>("localId")
+                    val timeoutMs = call.argument<Int>("timeoutMs")?.toLong() ?: 10000L
+                    if (localId == null) {
+                        result.error("INVALID_ARGS", "localId is required", null)
+                        return@setMethodCallHandler
+                    }
+                    val transport = adbTransport
+                    if (transport == null || !transport.isAdbConnected()) {
+                        result.error("NOT_CONNECTED", "ADB not connected", null)
+                        return@setMethodCallHandler
+                    }
+                    Thread {
+                        try {
+                            val stream = transport.getStream(localId)
+                            if (stream == null) {
+                                mainHandler.post {
+                                    result.error("STREAM_ERROR", "No stream with localId=$localId", null)
+                                }
+                                return@Thread
+                            }
+                            val data = stream.dataQueue.poll(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                            if (data == null) {
+                                mainHandler.post {
+                                    result.success(mapOf(
+                                        "data" to null,
+                                        "closed" to stream.closed.get()
+                                    ))
+                                }
+                            } else {
+                                mainHandler.post {
+                                    result.success(mapOf(
+                                        "data" to data,
+                                        "closed" to stream.closed.get()
+                                    ))
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "readStream error: ${e.message}")
+                            mainHandler.post {
+                                result.error("STREAM_ERROR", e.message ?: "Failed to read stream", null)
+                            }
+                        }
+                    }.apply {
+                        name = "ReadStream"
+                        isDaemon = true
+                        start()
+                    }
+                }
+                "closeStream" -> {
+                    val localId = call.argument<Int>("localId")
+                    if (localId == null) {
+                        result.error("INVALID_ARGS", "localId is required", null)
+                        return@setMethodCallHandler
+                    }
+                    val transport = adbTransport
+                    if (transport != null) {
+                        transport.closeStream(localId)
+                    }
+                    result.success(true)
+                }
+                "getTransportLog" -> {
+                    result.success(mapOf(
+                        "log" to (adbTransport?.getLog() ?: "")
+                    ))
+                }
                 else -> result.notImplemented()
             }
         }

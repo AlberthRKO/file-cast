@@ -150,6 +150,22 @@ class AdbClient {
     }
   }
 
+  /// Start a long-running shell process that stays alive (stream not closed).
+  /// The caller MUST call closeStream(localId) when done to kill the process.
+  Future<int> startPersistentShell(String command, {int timeoutMs = 10000}) async {
+    try {
+      final result = await _methodChannel.invokeMethod<Map>('startPersistentShell', {
+        'command': command,
+        'timeoutMs': timeoutMs,
+      });
+      if (result == null) throw Exception('startPersistentShell returned null');
+      return result['localId'] as int;
+    } on PlatformException catch (e) {
+      print('AdbClient: startPersistentShell error: ${e.code} - ${e.message}');
+      rethrow;
+    }
+  }
+
   /// Push a file to the target device using ADB sync protocol.
   /// Throws PlatformException on error.
   Future<bool> pushFile(
@@ -167,6 +183,102 @@ class AdbClient {
     } on PlatformException catch (e) {
       print('AdbClient: pushFile error: ${e.code} - ${e.message}');
       rethrow;
+    }
+  }
+
+  /// Open an ADB stream (A_OPEN + wait for A_OKAY).
+  /// Returns stream info with localId and remoteId.
+  Future<Map<String, dynamic>> openStream(String service, {int timeoutMs = 10000}) async {
+    try {
+      final result = await _methodChannel.invokeMethod<Map>('openStream', {
+        'service': service,
+        'timeoutMs': timeoutMs,
+      });
+      if (result == null) throw Exception('openStream returned null');
+      return Map<String, dynamic>.from(result);
+    } on PlatformException catch (e) {
+      print('AdbClient: openStream error: ${e.code} - ${e.message}');
+      rethrow;
+    }
+  }
+
+  /// Read data from an open ADB stream.
+  /// Returns map with 'data' (Uint8List or null) and 'closed' (bool).
+  Future<Map<String, dynamic>> readStream(int localId, {int timeoutMs = 10000}) async {
+    try {
+      final result = await _methodChannel.invokeMethod<Map>('readStream', {
+        'localId': localId,
+        'timeoutMs': timeoutMs,
+      });
+      if (result == null) throw Exception('readStream returned null');
+      return Map<String, dynamic>.from(result);
+    } on PlatformException catch (e) {
+      print('AdbClient: readStream error: ${e.code} - ${e.message}');
+      rethrow;
+    }
+  }
+
+  /// Close an ADB stream.
+  Future<void> closeStream(int localId) async {
+    try {
+      await _methodChannel.invokeMethod('closeStream', {'localId': localId});
+    } on PlatformException catch (e) {
+      print('AdbClient: closeStream error: ${e.code} - ${e.message}');
+    }
+  }
+
+  /// Connect to scrcpy server sockets and read DeviceInfo.
+  /// 1. Opens video stream to "localabstract:scrcpy_00000001" (scid=1)
+  /// 2. Reads 68-byte DeviceInfo header (64B name + 2B width + 2B height)
+  /// 3. Returns parsed device info.
+  Future<Map<String, dynamic>> connectScrcpySockets() async {
+    final logBuffer = StringBuffer();
+
+    try {
+      // scid=-1 (default) → socket name is just "scrcpy"
+      final socketName = 'localabstract:scrcpy';
+      logBuffer.writeln('[1] Opening video socket ($socketName)...');
+      final streamInfo = await openStream(socketName, timeoutMs: 10000);
+      final localId = streamInfo['localId'] as int;
+      logBuffer.writeln('  Stream opened: localId=$localId');
+
+      logBuffer.writeln('[2] Reading DeviceInfo header (68 bytes)...');
+      final readResult = await readStream(localId, timeoutMs: 5000);
+      final data = readResult['data'];
+      if (data == null) {
+        throw Exception('No DeviceInfo data received (stream closed: ${readResult['closed']})');
+      }
+
+      final bytes = (data as List).cast<int>();
+      logBuffer.writeln('  Received ${bytes.length} bytes');
+
+      if (bytes.length < 68) {
+        throw Exception('DeviceInfo too short: ${bytes.length} bytes (need 68)');
+      }
+
+      // Parse DeviceInfo: 64B name (null-padded) + 2B width (BE) + 2B height (BE)
+      final nameBytes = bytes.sublist(0, 64);
+      final nameEnd = nameBytes.indexWhere((b) => b == 0);
+      final deviceName = String.fromCharCodes(
+        nameBytes.sublist(0, nameEnd > 0 ? nameEnd : 64),
+      );
+      final width = (bytes[64] << 8) | bytes[65];
+      final height = (bytes[66] << 8) | bytes[67];
+
+      logBuffer.writeln('  Device: $deviceName');
+      logBuffer.writeln('  Screen: ${width}x$height');
+
+      await closeStream(localId);
+
+      return {
+        'deviceName': deviceName,
+        'width': width,
+        'height': height,
+        'log': logBuffer.toString(),
+      };
+    } catch (e) {
+      logBuffer.writeln('ERROR: $e');
+      throw Exception('${logBuffer.toString()}\n$e');
     }
   }
 
