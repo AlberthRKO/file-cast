@@ -150,6 +150,38 @@ class AdbClient {
     }
   }
 
+  /// Push a file to the target device using ADB sync protocol.
+  /// Throws PlatformException on error.
+  Future<bool> pushFile(
+    String localPath,
+    String remotePath, {
+    int timeoutMs = 30000,
+  }) async {
+    try {
+      final result = await _methodChannel.invokeMethod<Map>('pushFile', {
+        'localPath': localPath,
+        'remotePath': remotePath,
+        'timeoutMs': timeoutMs,
+      });
+      return result?['success'] as bool? ?? false;
+    } on PlatformException catch (e) {
+      print('AdbClient: pushFile error: ${e.code} - ${e.message}');
+      rethrow;
+    }
+  }
+
+  /// Read a Flutter asset and return its bytes as a list of ints.
+  /// Uses rootBundle to load from Flutter asset bundle.
+  Future<List<int>> readAsset(String assetPath) async {
+    try {
+      final ByteData data = await rootBundle.load(assetPath);
+      return data.buffer.asUint8List().toList();
+    } catch (e) {
+      print('AdbClient: readAsset error: $e');
+      rethrow;
+    }
+  }
+
   /// Listen to USB events (attach, detach, permission, ADB state)
   Stream<UsbEvent> get onUsbEvent {
     _eventStream ??= _eventChannel.receiveBroadcastStream().map((event) {

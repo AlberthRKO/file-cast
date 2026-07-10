@@ -8,6 +8,7 @@ import android.util.Log
 import com.fiscalia.file_cast.adb.AdbAuth
 import com.fiscalia.file_cast.adb.AdbMessage
 import com.fiscalia.file_cast.adb.AdbProtocol
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
@@ -251,7 +252,11 @@ class UsbAdbTransport(
                     return handleAuth(response, startTime, signatureAttempted = false)
                 }
                 AdbProtocol.A_CNXN -> {
-                    log("Device sent CNXN - already authorized!")
+                    log("Device sent CNXN - already authorized! dataLen=${response.dataLength}")
+                    if (response.dataLength > 0) {
+                        val identity = readPayload(response.dataLength)
+                        log("CNXN identity: ${identity?.let { String(it, Charsets.UTF_8).trimEnd('\u0000') } ?: "null"}")
+                    }
                     isConnected = true
                     startReaderThread()
                     notifyState("connected", null, getLog())
@@ -358,7 +363,11 @@ class UsbAdbTransport(
                 handleAuth(nextMessage, startTime, signatureAttempted = true)
             }
             AdbProtocol.A_CNXN -> {
-                log("CNXN received - CONNECTED!")
+                log("CNXN received - CONNECTED! dataLen=${nextMessage.dataLength}")
+                if (nextMessage.dataLength > 0) {
+                    val identity = readPayload(nextMessage.dataLength)
+                    log("CNXN identity: ${identity?.let { String(it, Charsets.UTF_8).trimEnd('\u0000') } ?: "null"}")
+                }
                 isConnected = true
                 startReaderThread()
                 notifyState("connected", null, getLog())
@@ -580,6 +589,15 @@ class UsbAdbTransport(
     private var readerRunning = false
     private var readerThread: Thread? = null
 
+    // Sync sub-protocol constants - raw ASCII bytes, NOT little-endian integers
+    private val SYNC_SEND = "SEND".toByteArray(Charsets.US_ASCII)
+    private val SYNC_DATA = "DATA".toByteArray(Charsets.US_ASCII)
+    private val SYNC_DONE = "DONE".toByteArray(Charsets.US_ASCII)
+    private val SYNC_OKAY = "OKAY".toByteArray(Charsets.US_ASCII)
+    private val SYNC_FAIL = "FAIL".toByteArray(Charsets.US_ASCII)
+    private val REG_FILE = 33188  // 0o100644
+    private val PUSH_CHUNK_SIZE = 4096  // smaller chunks, more stable on phone-to-phone OTG
+
     /**
      * Start the reader thread that demultiplexes incoming ADB packets.
      * Must be called after handshake() returns true.
@@ -600,16 +618,19 @@ class UsbAdbTransport(
                 val message = readMessage(2000) ?: continue
                 when (message.command) {
                     AdbProtocol.A_OKAY -> {
-                        val stream = streams[message.arg0]
+                        // Device puts our local_id in arg1, device's remote_id in arg0
+                        val stream = streams[message.arg1]
                         if (stream != null) {
-                            stream.okayRemoteId = message.arg1
+                            stream.okayRemoteId = message.arg0
                             stream.okayReceived.countDown()
-                            log("OKAY dispatched to stream ${message.arg0} (remoteId=${message.arg1})")
+                            stream.writeOkayQueue.offer(message.arg0)
+                            log("OKAY dispatched to stream ${message.arg1} (remoteId=${message.arg0})")
                         } else {
-                            log("OKAY for unknown stream ${message.arg0}")
+                            log("OKAY for unknown stream arg1=${message.arg1} arg0=${message.arg0}")
                         }
                     }
                     AdbProtocol.A_WRTE -> {
+                        // Device puts our local_id in arg1, device's remote_id in arg0
                         val stream = streams[message.arg1]
                         if (stream != null) {
                             val payload = if (message.dataLength > 0) readPayload(message.dataLength) else null
@@ -623,20 +644,20 @@ class UsbAdbTransport(
                                 log("ERROR: Failed to send OKAY for WRTE")
                             }
                         } else {
-                            log("WRTE for unknown stream ${message.arg1}, discarding")
-                            // Still need to read the payload to keep protocol in sync
+                            log("WRTE for unknown stream arg1=${message.arg1}, discarding")
                             if (message.dataLength > 0) readPayload(message.dataLength)
                         }
                     }
                     AdbProtocol.A_CLSE -> {
-                        val stream = streams[message.arg0]
+                        // Device puts our local_id in arg1
+                        val stream = streams[message.arg1]
                         if (stream != null) {
                             stream.closed.set(true)
                             stream.closeReceived.countDown()
-                            streams.remove(message.arg0)
-                            log("CLSE: stream ${message.arg0} closed by device")
+                            streams.remove(message.arg1)
+                            log("CLSE: stream ${message.arg1} closed by device")
                         } else {
-                            log("CLSE for unknown stream ${message.arg0}")
+                            log("CLSE for unknown stream arg1=${message.arg1}")
                         }
                     }
                     AdbProtocol.A_CNXN -> {
@@ -693,7 +714,7 @@ class UsbAdbTransport(
     /**
      * Write data to an open stream (send A_WRTE).
      */
-    fun writeStream(localId: Int, data: ByteArray) {
+    fun writeStream(localId: Int, data: ByteArray, waitForOkay: Boolean = true, timeoutMs: Long = 10000): Boolean {
         val stream = streams[localId] ?: throw IllegalArgumentException("No stream with localId=$localId")
         val remoteId = stream.remoteId ?: throw IllegalStateException("Stream $localId has no remoteId yet")
         log("writeStream: localId=$localId remoteId=$remoteId data=${data.size} bytes")
@@ -702,6 +723,15 @@ class UsbAdbTransport(
         if (!sendRaw(writePacket)) {
             throw IOException("Failed to send A_WRTE for stream $localId")
         }
+
+        if (!waitForOkay) return true
+
+        val okay = stream.writeOkayQueue.poll(timeoutMs, TimeUnit.MILLISECONDS)
+        if (okay == null) {
+            log("writeStream: TIMEOUT waiting for A_OKAY on stream $localId")
+            throw TimeoutException("Timeout waiting for A_OKAY after A_WRTE on stream $localId")
+        }
+        return true
     }
 
     /**
@@ -763,6 +793,123 @@ class UsbAdbTransport(
         return !stream.closed.get()
     }
 
+    /**
+     * Push a file to the device using the ADB sync protocol.
+     * Retries up to maxRetries times on failure.
+     */
+    fun pushFile(localPath: String, remotePath: String, timeoutMs: Long = 30000, maxRetries: Int = 2): Boolean {
+        var lastError: Exception? = null
+        repeat(maxRetries + 1) { attempt ->
+            try {
+                if (attempt > 0) {
+                    log("pushFile: retry attempt $attempt/$maxRetries")
+                    Thread.sleep(500)
+                }
+                return pushFileOnce(localPath, remotePath, timeoutMs)
+            } catch (e: Exception) {
+                lastError = e
+                log("pushFile: attempt $attempt failed: ${e.message}")
+            }
+        }
+        throw lastError ?: IOException("pushFile failed after $maxRetries retries")
+    }
+
+    private fun pushFileOnce(localPath: String, remotePath: String, timeoutMs: Long = 30000): Boolean {
+        log("pushFile: '$localPath' -> '$remotePath'")
+
+        val file = java.io.File(localPath)
+        if (!file.exists()) {
+            throw java.io.FileNotFoundException("File not found: $localPath")
+        }
+        val fileData = file.readBytes()
+        log("pushFile: ${fileData.size} bytes to push")
+
+        val stream = openStream("sync:")
+        try {
+            // 1. SEND command: "SEND" + len(path,mode) + "path,mode" (comma-separated string)
+            val pathAndMode = "$remotePath,$REG_FILE"
+            val pathModeBytes = pathAndMode.toByteArray(Charsets.UTF_8)
+            val sendPayload = ByteArray(4 + 4 + pathModeBytes.size)
+            System.arraycopy(SYNC_SEND, 0, sendPayload, 0, 4)
+            java.nio.ByteBuffer.wrap(sendPayload, 4, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(pathModeBytes.size)
+            System.arraycopy(pathModeBytes, 0, sendPayload, 8, pathModeBytes.size)
+            writeStream(stream.localId, sendPayload)
+            log("pushFile: SEND sent for '$pathAndMode' (${sendPayload.size} bytes)")
+
+            // 2. DATA chunks
+            var offset = 0
+            while (offset < fileData.size) {
+                // Defensive check: if device already sent FAIL, stop sending
+                val early = stream.dataQueue.peek()
+                if (early != null && early.size >= 4 && early.sliceArray(0..3).contentEquals(SYNC_FAIL)) {
+                    val errMsg = if (early.size > 4) String(early, 4, early.size - 4, Charsets.UTF_8) else "unknown"
+                    log("pushFile: FAIL detected mid-transfer - $errMsg")
+                    throw IOException("Sync FAIL: $errMsg")
+                }
+
+                val chunkSize = minOf(PUSH_CHUNK_SIZE, fileData.size - offset)
+                val chunk = fileData.copyOfRange(offset, offset + chunkSize)
+
+                val dataPayload = ByteArray(4 + 4 + chunkSize)
+                System.arraycopy(SYNC_DATA, 0, dataPayload, 0, 4)
+                java.nio.ByteBuffer.wrap(dataPayload, 4, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(chunkSize)
+                System.arraycopy(chunk, 0, dataPayload, 8, chunkSize)
+                writeStream(stream.localId, dataPayload)
+                offset += chunkSize
+                log("pushFile: DATA ${offset}/${fileData.size} bytes")
+                Thread.sleep(25)
+            }
+
+            // 3. DONE command
+            val donePayload = ByteArray(8)
+            System.arraycopy(SYNC_DONE, 0, donePayload, 0, 4)
+            // timestamp = 0 (4 bytes of zeros)
+            writeStream(stream.localId, donePayload)
+            log("pushFile: DONE sent")
+
+            // 4. Read sync response (OKAY or FAIL)
+            val response = readSyncResponse(stream, timeoutMs)
+            if (response == null) {
+                log("pushFile: no sync response received")
+                return false
+            }
+
+            val respCmd = response.sliceArray(0 until minOf(4, response.size))
+            if (respCmd.contentEquals(SYNC_OKAY)) {
+                log("pushFile: SUCCESS - file pushed to '$remotePath'")
+                return true
+            } else if (respCmd.contentEquals(SYNC_FAIL)) {
+                val errMsg = if (response.size > 4) String(response, 4, response.size - 4, Charsets.UTF_8) else "unknown"
+                log("pushFile: FAIL - $errMsg")
+                throw IOException("Sync FAIL: $errMsg")
+            } else {
+                log("pushFile: unexpected response: ${response.joinToString(" ") { "%02X".format(it) }}")
+                return false
+            }
+        } finally {
+            closeStream(stream.localId)
+        }
+    }
+
+    /**
+     * Read a sync-level response (OKAY/FAIL) from a sync stream.
+     * Sync responses come as payloads in A_WRTE packets, queued by the reader thread.
+     */
+    private fun readSyncResponse(stream: AdbStream, timeoutMs: Long): ByteArray? {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        val buffer = java.io.ByteArrayOutputStream()
+
+        while (buffer.size() < 4) {
+            val remaining = deadline - System.currentTimeMillis()
+            if (remaining <= 0) break
+
+            val data = stream.dataQueue.poll(remaining, TimeUnit.MILLISECONDS) ?: continue
+            buffer.write(data)
+        }
+
+        return if (buffer.size() >= 4) buffer.toByteArray() else null
+    }
+
     fun setOnStateChangedListener(listener: (String, String?, String) -> Unit) {
         onStateChanged = listener
     }
@@ -781,7 +928,8 @@ data class AdbStream(
     val dataQueue: LinkedBlockingQueue<ByteArray> = LinkedBlockingQueue(),
     val okayReceived: CountDownLatch = CountDownLatch(1),
     val closed: AtomicBoolean = AtomicBoolean(false),
-    val closeReceived: CountDownLatch = CountDownLatch(1)
+    val closeReceived: CountDownLatch = CountDownLatch(1),
+    val writeOkayQueue: LinkedBlockingQueue<Int> = LinkedBlockingQueue()
 ) {
     @Volatile var okayRemoteId: Int = 0
 }

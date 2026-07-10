@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:file_cast/core/core.dart';
 import 'package:file_cast/presentation/utils/responsive.dart';
@@ -32,6 +33,10 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
   final TextEditingController _shellCommandController = TextEditingController(
     text: 'echo hola',
   );
+
+  // Phase 4 - scrcpy push/execute state
+  String _scrcpyOutput = '';
+  bool _scrcpyRunning = false;
 
   @override
   void initState() {
@@ -205,6 +210,74 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
     }
   }
 
+  Future<void> _pushAndExecuteScrcpy() async {
+    setState(() {
+      _scrcpyRunning = true;
+      _scrcpyOutput = 'Starting Phase 4: Push & Execute scrcpy-server...\n';
+    });
+
+    try {
+      setState(() => _scrcpyOutput += '[1/4] Reading scrcpy-server from assets...\n');
+      final assetBytes = await _adbClient.readAsset(
+        'assets/scrcpy/scrcpy-server-v3.3.4.jar',
+      );
+      if (assetBytes.isEmpty) {
+        setState(() {
+          _scrcpyOutput += 'ERROR: Asset is empty!\n';
+          _scrcpyRunning = false;
+        });
+        return;
+      }
+      setState(() => _scrcpyOutput += '  Read ${assetBytes.length} bytes\n');
+
+      setState(() => _scrcpyOutput += '[2/4] Writing to temp file...\n');
+      final tempDir = Directory.systemTemp;
+      final tempFile = File('${tempDir.path}/scrcpy-server.jar');
+      await tempFile.writeAsBytes(assetBytes);
+      setState(() => _scrcpyOutput += '  Temp: ${tempFile.path}\n');
+
+      setState(() => _scrcpyOutput += '[3/4] Pushing to /data/local/tmp/scrcpy-server.jar...\n');
+      final pushResult = await _adbClient.pushFile(
+        tempFile.path,
+        '/data/local/tmp/scrcpy-server.jar',
+      );
+      setState(() => _scrcpyOutput += '  Push success: $pushResult\n');
+
+      if (!pushResult) {
+        setState(() {
+          _scrcpyOutput += 'ERROR: Push failed!\n';
+          _scrcpyRunning = false;
+        });
+        return;
+      }
+
+      setState(() => _scrcpyOutput += '[4/4] Executing scrcpy-server...\n');
+      final execResult = await _adbClient.shellCommand(
+        'CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / com.genymobile.scrcpy.Server 3.3.4',
+        timeoutMs: 10000,
+      );
+      setState(() => _scrcpyOutput += '  Output: $execResult\n');
+
+      final checkResult = await _adbClient.shellCommand(
+        'ps -ef | grep scrcpy',
+        timeoutMs: 5000,
+      );
+      setState(() {
+        _scrcpyOutput += '\n--- Server process check ---\n$checkResult\n';
+        _scrcpyRunning = false;
+      });
+    } catch (e) {
+      String adbLog = '';
+      try {
+        adbLog = await _adbClient.getAdbLog();
+      } catch (_) {}
+      setState(() {
+        _scrcpyOutput += 'ERROR: $e\n\n--- ADB TRANSPORT LOG ---\n$adbLog';
+        _scrcpyRunning = false;
+      });
+    }
+  }
+
   Future<void> _disconnect() async {
     await _adbClient.disconnectAdb();
     setState(() {
@@ -352,6 +425,7 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
           ),
         ),
         if (_adbState == 'connected') _buildShellPanel(responsive),
+        if (_adbState == 'connected') _buildScrcpyPanel(responsive),
         if (_adbState == 'error' ||
             _adbState == 'authorizing' ||
             _adbState == 'connecting')
@@ -430,6 +504,80 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
               child: SingleChildScrollView(
                 child: SelectableText(
                   _shellOutput,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: responsive.heightPercent(1.1),
+                    color: Colors.green.shade300,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScrcpyPanel(Responsive responsive) {
+    return Container(
+      margin: EdgeInsets.symmetric(
+        horizontal: responsive.widthPercent(3),
+        vertical: responsive.heightPercent(1),
+      ),
+      padding: EdgeInsets.all(responsive.widthPercent(3)),
+      decoration: BoxDecoration(
+        color: Colors.purple.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.purple.shade300),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.phone_android, color: Colors.purple, size: responsive.heightPercent(2)),
+              SizedBox(width: responsive.widthPercent(2)),
+              Expanded(
+                child: Text(
+                  'Phase 4 - Push & Execute scrcpy-server',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: responsive.heightPercent(1.4),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: responsive.heightPercent(1)),
+          ElevatedButton.icon(
+            onPressed: _scrcpyRunning ? null : _pushAndExecuteScrcpy,
+            icon: _scrcpyRunning
+                ? SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.rocket_launch),
+            label: Text(_scrcpyRunning ? 'Running...' : 'Push & Execute Server'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.purple,
+              foregroundColor: Colors.white,
+            ),
+          ),
+          if (_scrcpyOutput.isNotEmpty) ...[
+            SizedBox(height: responsive.heightPercent(1)),
+            Container(
+              constraints: BoxConstraints(maxHeight: responsive.heightPercent(50)),
+              padding: EdgeInsets.all(responsive.widthPercent(2)),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade900,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  _scrcpyOutput,
                   style: TextStyle(
                     fontFamily: 'monospace',
                     fontSize: responsive.heightPercent(1.1),

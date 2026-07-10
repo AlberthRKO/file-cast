@@ -184,6 +184,40 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                         start()
                     }
                 }
+                "pushFile" -> {
+                    val localPath = call.argument<String>("localPath")
+                    val remotePath = call.argument<String>("remotePath")
+                    val timeoutMs = call.argument<Int>("timeoutMs")?.toLong() ?: 30000L
+                    if (localPath == null || remotePath == null) {
+                        result.error("INVALID_ARGS", "localPath and remotePath are required", null)
+                        return@setMethodCallHandler
+                    }
+                    val transport = adbTransport
+                    if (transport == null || !transport.isAdbConnected()) {
+                        result.error("NOT_CONNECTED", "ADB not connected", null)
+                        return@setMethodCallHandler
+                    }
+                    Thread {
+                        try {
+                            val success = transport.pushFile(localPath, remotePath, timeoutMs)
+                            mainHandler.post {
+                                result.success(mapOf(
+                                    "success" to success,
+                                    "remotePath" to remotePath
+                                ))
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "pushFile error: ${e.message}")
+                            mainHandler.post {
+                                result.error("PUSH_ERROR", e.message ?: "Push failed", null)
+                            }
+                        }
+                    }.apply {
+                        name = "PushFile"
+                        isDaemon = true
+                        start()
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
