@@ -62,6 +62,7 @@ enum UsbEventType {
   deviceDetached,
   deviceConnected,
   permissionDenied,
+  adbState,
 }
 
 class UsbEvent {
@@ -76,7 +77,25 @@ class UsbEvent {
 
     final type = UsbEventType.values.firstWhere(
       (e) => e.name == typeStr,
-      orElse: () => UsbEventType.deviceAttached,
+      orElse: () {
+        // Map snake_case strings from Kotlin to camelCase enum values
+        switch (typeStr) {
+          case 'initial_devices':
+            return UsbEventType.initialDevices;
+          case 'device_attached':
+            return UsbEventType.deviceAttached;
+          case 'device_detached':
+            return UsbEventType.deviceDetached;
+          case 'device_connected':
+            return UsbEventType.deviceConnected;
+          case 'permission_denied':
+            return UsbEventType.permissionDenied;
+          case 'adb_state':
+            return UsbEventType.adbState;
+          default:
+            return UsbEventType.deviceAttached;
+        }
+      },
     );
 
     return UsbEvent(type: type, data: rawData);
@@ -97,5 +116,18 @@ class UsbEvent {
       return [UsbDeviceInfo.fromMap(raw)];
     }
     return [];
+  }
+
+  /// Get ADB state info (state + message + log)
+  Map<String, dynamic>? get adbStateInfo {
+    final raw = _data;
+    if (raw is Map) {
+      return {
+        'state': raw['state'] as String? ?? 'unknown',
+        'message': raw['message'] as String?,
+        'log': raw['log'] as String? ?? '',
+      };
+    }
+    return null;
   }
 }

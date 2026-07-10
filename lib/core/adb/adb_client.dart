@@ -85,7 +85,44 @@ class AdbClient {
     }
   }
 
-  /// Listen to USB events (attach, detach, permission)
+  /// Connect ADB to a device
+  Future<Map<String, dynamic>?> connectAdb(String deviceName) async {
+    try {
+      final result = await _methodChannel.invokeMethod<Map>('connectAdb', {
+        'deviceName': deviceName,
+      });
+      if (result == null) return null;
+      return Map<String, dynamic>.from(result);
+    } on PlatformException catch (e) {
+      print('AdbClient: Error connecting ADB: ${e.code} - ${e.message}');
+      rethrow; // Rethrow so UI can catch and display details
+    }
+  }
+
+  /// Disconnect ADB
+  Future<bool> disconnectAdb() async {
+    try {
+      final result = await _methodChannel.invokeMethod<bool>('disconnectAdb');
+      return result ?? false;
+    } on PlatformException catch (e) {
+      print('AdbClient: Error disconnecting ADB: ${e.message}');
+      return false;
+    }
+  }
+
+  /// Get current ADB connection state
+  Future<Map<String, dynamic>?> getAdbState() async {
+    try {
+      final result = await _methodChannel.invokeMethod<Map>('getAdbState');
+      if (result == null) return null;
+      return Map<String, dynamic>.from(result);
+    } on PlatformException catch (e) {
+      print('AdbClient: Error getting ADB state: ${e.message}');
+      return null;
+    }
+  }
+
+  /// Listen to USB events (attach, detach, permission, ADB state)
   Stream<UsbEvent> get onUsbEvent {
     _eventStream ??= _eventChannel.receiveBroadcastStream().map((event) {
       if (event is Map) {
