@@ -240,7 +240,7 @@ class AdbClient {
       }
       buffer.addAll((data as List).cast<int>());
     }
-    return buffer;
+    return buffer.sublist(0, n);
   }
 
   /// Connect to scrcpy server socket and read device info header.
@@ -290,6 +290,59 @@ class AdbClient {
     } catch (e) {
       logBuffer.writeln('ERROR: $e');
       throw Exception('${logBuffer.toString()}\n$e');
+    }
+  }
+
+  /// Create a Flutter Texture backed by a SurfaceTexture.
+  /// Returns the textureId to use with the Texture widget.
+  Future<int> createMirrorTexture() async {
+    try {
+      final result = await _methodChannel.invokeMethod<Map>('createMirrorTexture');
+      if (result == null) throw Exception('createMirrorTexture returned null');
+      return result['textureId'] as int;
+    } on PlatformException catch (e) {
+      print('AdbClient: createMirrorTexture error: ${e.code} - ${e.message}');
+      rethrow;
+    }
+  }
+
+  /// Start video mirror decoding to the created texture.
+  /// Connects MediaCodec to the Surface and starts the native video read loop.
+  Future<void> startMirror(
+    int width,
+    int height, {
+    required int videoStreamLocalId,
+  }) async {
+    try {
+      await _methodChannel.invokeMethod('startMirror', {
+        'width': width,
+        'height': height,
+        'videoStreamLocalId': videoStreamLocalId,
+      });
+    } on PlatformException catch (e) {
+      print('AdbClient: startMirror error: ${e.code} - ${e.message}');
+      rethrow;
+    }
+  }
+
+  /// Stop video mirror and release decoder + texture.
+  Future<void> stopMirror() async {
+    try {
+      await _methodChannel.invokeMethod('stopMirror');
+    } on PlatformException catch (e) {
+      print('AdbClient: stopMirror error: ${e.code} - ${e.message}');
+    }
+  }
+
+  /// Get mirror decoder + transport logs for debugging.
+  Future<String> getMirrorLog() async {
+    try {
+      final result = await _methodChannel.invokeMethod<Map>('getMirrorLog');
+      if (result == null) return '';
+      return result['log'] as String? ?? '';
+    } on PlatformException catch (e) {
+      print('AdbClient: getMirrorLog error: ${e.code} - ${e.message}');
+      return '';
     }
   }
 

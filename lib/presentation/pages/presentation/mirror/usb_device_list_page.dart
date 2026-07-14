@@ -38,6 +38,15 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
   String _scrcpyOutput = '';
   bool _scrcpyRunning = false;
 
+  // Phase 6 - mirror state
+  int? _mirrorTextureId;
+  bool _mirrorStarted = false;
+  int? _videoStreamLocalId;
+  int? _videoWidth;
+  int? _videoHeight;
+  String _mirrorLog = '';
+  Timer? _mirrorLogTimer;
+
   @override
   void initState() {
     super.initState();
@@ -74,6 +83,17 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
               _adbMessage = stateInfo['message'] as String?;
               _adbLog = stateInfo['log'] as String? ?? '';
             }
+          case UsbEventType.mirrorState:
+            final mirrorInfo = event.adbStateInfo;
+            if (mirrorInfo != null) {
+              final state = mirrorInfo['state'] as String?;
+              final msg = mirrorInfo['message'] as String?;
+              if (state == 'error' && mounted) {
+                setState(() {
+                  _scrcpyOutput += '\nMIRROR ERROR: $msg\n';
+                });
+              }
+            }
         }
       });
     });
@@ -84,6 +104,7 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
   @override
   void dispose() {
     _usbSubscription?.cancel();
+    _mirrorLogTimer?.cancel();
     _shellCommandController.dispose();
     super.dispose();
   }
@@ -217,7 +238,9 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
     });
 
     try {
-      setState(() => _scrcpyOutput += '[1/4] Reading scrcpy-server from assets...\n');
+      setState(
+        () => _scrcpyOutput += '[1/4] Reading scrcpy-server from assets...\n',
+      );
       final assetBytes = await _adbClient.readAsset(
         'assets/scrcpy/scrcpy-server-v2.7.jar',
       );
@@ -236,7 +259,10 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
       await tempFile.writeAsBytes(assetBytes);
       setState(() => _scrcpyOutput += '  Temp: ${tempFile.path}\n');
 
-      setState(() => _scrcpyOutput += '[3/4] Pushing to /data/local/tmp/scrcpy-server.jar...\n');
+      setState(
+        () => _scrcpyOutput +=
+            '[3/4] Pushing to /data/local/tmp/scrcpy-server.jar...\n',
+      );
       final pushResult = await _adbClient.pushFile(
         tempFile.path,
         '/data/local/tmp/scrcpy-server.jar',
@@ -257,20 +283,52 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
       // audio=false, control=false: only open video socket for now
       final shellLocalId = await _adbClient.startPersistentShell(
         'CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / com.genymobile.scrcpy.Server 2.7 tunnel_forward=true audio=false control=false log_level=debug',
-        timeoutMs: 10000,
       );
-      setState(() => _scrcpyOutput += '  Server shell stream: localId=$shellLocalId\n');
+      setState(
+        () => _scrcpyOutput += '  Server shell stream: localId=$shellLocalId\n',
+      );
 
       // Give server time to initialize + create LocalServerSocket + start accept()
       await Future.delayed(const Duration(milliseconds: 3000));
 
       setState(() => _scrcpyOutput += '[5/5] Connecting to video socket...\n');
       final videoInfo = await _adbClient.connectScrcpySockets();
+      _videoStreamLocalId = videoInfo['localId'] as int;
+      _videoWidth = videoInfo['width'] as int;
+      _videoHeight = videoInfo['height'] as int;
       setState(() {
         _scrcpyOutput += '  Device: ${videoInfo['deviceName']}\n';
-        _scrcpyOutput += '  Screen: ${videoInfo['width']}x${videoInfo['height']}\n';
+        _scrcpyOutput += '  Screen: ${_videoWidth}x$_videoHeight\n';
         _scrcpyOutput += '  Codec: ${videoInfo['codec']}\n';
+        _scrcpyOutput += '\n--- Phase 5 SUCCESS ---\n';
+        _scrcpyOutput += '\nStarting Phase 6: Mirror...\n';
+      });
+
+      // Phase 6: Create texture and start mirror
+      setState(() => _scrcpyOutput += '[6/7] Creating mirror texture...\n');
+      final textureId = await _adbClient.createMirrorTexture();
+      _mirrorTextureId = textureId;
+      setState(() => _scrcpyOutput += '  Texture id=$textureId\n');
+
+      setState(() => _scrcpyOutput += '[7/7] Starting mirror decoder...\n');
+      await _adbClient.startMirror(
+        _videoWidth!,
+        _videoHeight!,
+        videoStreamLocalId: _videoStreamLocalId!,
+      );
+      _mirrorStarted = true;
+      setState(() {
+        _scrcpyOutput += '  Mirror started!\n';
+        _scrcpyOutput += '\n=== PHASE 6 SUCCESS: MIRROR ACTIVE ===\n';
         _scrcpyRunning = false;
+      });
+
+      // Start periodic log refresh to show decoder status
+      _mirrorLogTimer?.cancel();
+      _mirrorLogTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
+        if (!mounted || !_mirrorStarted) return;
+        final log = await _adbClient.getMirrorLog();
+        if (mounted) setState(() => _mirrorLog = log);
       });
     } catch (e) {
       String adbLog = '';
@@ -285,10 +343,18 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
   }
 
   Future<void> _disconnect() async {
+    _mirrorLogTimer?.cancel();
+    await _adbClient.stopMirror();
     await _adbClient.disconnectAdb();
     setState(() {
       _adbState = 'disconnected';
       _adbMessage = null;
+      _mirrorStarted = false;
+      _mirrorTextureId = null;
+      _mirrorLog = '';
+      _videoStreamLocalId = null;
+      _videoWidth = null;
+      _videoHeight = null;
       // Keep _adbLog so user can copy the full log
       _connectingDeviceName = null;
     });
@@ -349,13 +415,13 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    return Column(
-      children: [
-        _buildStatusBar(responsive),
-        Expanded(
-          child: _buildContent(responsive),
-        ),
-      ],
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          _buildStatusBar(responsive),
+          _buildContent(responsive),
+        ],
+      ),
     );
   }
 
@@ -432,6 +498,8 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
         ),
         if (_adbState == 'connected') _buildShellPanel(responsive),
         if (_adbState == 'connected') _buildScrcpyPanel(responsive),
+        if (_mirrorStarted && _mirrorTextureId != null)
+          _buildMirrorPanel(responsive),
         if (_adbState == 'error' ||
             _adbState == 'authorizing' ||
             _adbState == 'connecting')
@@ -488,7 +556,7 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
               ElevatedButton.icon(
                 onPressed: _shellRunning ? null : _runShellCommand,
                 icon: _shellRunning
-                    ? SizedBox(
+                    ? const SizedBox(
                         width: 16,
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
@@ -501,7 +569,9 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
           if (_shellOutput.isNotEmpty) ...[
             SizedBox(height: responsive.heightPercent(1)),
             Container(
-              constraints: BoxConstraints(maxHeight: responsive.heightPercent(25)),
+              constraints: BoxConstraints(
+                maxHeight: responsive.heightPercent(25),
+              ),
               padding: EdgeInsets.all(responsive.widthPercent(2)),
               decoration: BoxDecoration(
                 color: Colors.grey.shade900,
@@ -543,7 +613,11 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
         children: [
           Row(
             children: [
-              Icon(Icons.phone_android, color: Colors.purple, size: responsive.heightPercent(2)),
+              Icon(
+                Icons.phone_android,
+                color: Colors.purple,
+                size: responsive.heightPercent(2),
+              ),
               SizedBox(width: responsive.widthPercent(2)),
               Expanded(
                 child: Text(
@@ -560,13 +634,15 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
           ElevatedButton.icon(
             onPressed: _scrcpyRunning ? null : _pushAndExecuteScrcpy,
             icon: _scrcpyRunning
-                ? SizedBox(
+                ? const SizedBox(
                     width: 16,
                     height: 16,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.rocket_launch),
-            label: Text(_scrcpyRunning ? 'Running...' : 'Push & Execute Server'),
+            label: Text(
+              _scrcpyRunning ? 'Running...' : 'Push & Execute Server',
+            ),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.purple,
               foregroundColor: Colors.white,
@@ -575,7 +651,9 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
           if (_scrcpyOutput.isNotEmpty) ...[
             SizedBox(height: responsive.heightPercent(1)),
             Container(
-              constraints: BoxConstraints(maxHeight: responsive.heightPercent(50)),
+              constraints: BoxConstraints(
+                maxHeight: responsive.heightPercent(50),
+              ),
               padding: EdgeInsets.all(responsive.widthPercent(2)),
               decoration: BoxDecoration(
                 color: Colors.grey.shade900,
@@ -587,6 +665,115 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
                   style: TextStyle(
                     fontFamily: 'monospace',
                     fontSize: responsive.heightPercent(1.1),
+                    color: Colors.green.shade300,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMirrorPanel(Responsive responsive) {
+    // Get last 30 lines of transport log for mirror debug
+    final logLines = _adbLog.split('\n');
+    final transportLog = logLines.where((l) =>
+      l.contains('VideoReader') ||
+      l.contains('ScrcpyDecoder') ||
+      l.contains('WRTE') && l.contains('stream ${_videoStreamLocalId}')
+    ).join('\n');
+    // Merge transport log with decoder log from getMirrorLog()
+    final mirrorLog = [transportLog, _mirrorLog].where((l) => l.isNotEmpty).join('\n');
+
+    return Container(
+      margin: EdgeInsets.symmetric(
+        horizontal: responsive.widthPercent(3),
+        vertical: responsive.heightPercent(1),
+      ),
+      padding: EdgeInsets.all(responsive.widthPercent(2)),
+      decoration: BoxDecoration(
+        color: Colors.green.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.green.shade300),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.screen_share,
+                color: Colors.green,
+                size: responsive.heightPercent(2),
+              ),
+              SizedBox(width: responsive.widthPercent(2)),
+              Expanded(
+                child: Text(
+                  'Phase 6 - Mirror Active',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: responsive.heightPercent(1.4),
+                    color: Colors.green.shade700,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.stop_circle, color: Colors.red),
+                onPressed: () async {
+                  _mirrorLogTimer?.cancel();
+                  await _adbClient.stopMirror();
+                  setState(() {
+                    _mirrorStarted = false;
+                    _mirrorTextureId = null;
+                    _mirrorLog = '';
+                  });
+                },
+                tooltip: 'Stop Mirror',
+              ),
+            ],
+          ),
+          SizedBox(height: responsive.heightPercent(1)),
+          AspectRatio(
+            aspectRatio:
+                (_videoWidth?.toDouble() ?? 9) /
+                (_videoHeight?.toDouble() ?? 16),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.black,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Texture(textureId: _mirrorTextureId!),
+            ),
+          ),
+          SizedBox(height: responsive.heightPercent(0.5)),
+          Text(
+            '${_videoWidth}x$_videoHeight - ${_videoStreamLocalId != null ? "Stream #$_videoStreamLocalId" : "No stream"}',
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: responsive.heightPercent(1.1),
+              color: Colors.grey.shade600,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          if (mirrorLog.isNotEmpty) ...[
+            SizedBox(height: responsive.heightPercent(1)),
+            Container(
+              constraints: BoxConstraints(maxHeight: responsive.heightPercent(20)),
+              padding: EdgeInsets.all(responsive.widthPercent(2)),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade900,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  mirrorLog,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: responsive.heightPercent(1.0),
                     color: Colors.green.shade300,
                     height: 1.4,
                   ),
@@ -859,18 +1046,10 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
   }
 
   Widget _buildDeviceList(Responsive responsive) {
-    return RefreshIndicator(
-      onRefresh: () async {
-        _devices = await _adbClient.getConnectedDevices();
-        setState(() {});
-      },
-      child: ListView.builder(
-        padding: EdgeInsets.all(responsive.widthPercent(3)),
-        itemCount: _devices.length,
-        itemBuilder: (context, index) {
-          final device = _devices[index];
-          return _buildDeviceCard(device, responsive);
-        },
+    return Padding(
+      padding: EdgeInsets.all(responsive.widthPercent(3)),
+      child: Column(
+        children: _devices.map((device) => _buildDeviceCard(device, responsive)).toList(),
       ),
     );
   }

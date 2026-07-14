@@ -11,10 +11,13 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.Surface
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.view.TextureRegistry
 import com.fiscalia.file_cast.adb.AdbAuth
+import com.fiscalia.file_cast.scrcpy.ScrcpyDecoder
 
 class UsbPlugin(private val context: Context, private val flutterEngine: FlutterEngine) {
 
@@ -38,6 +41,10 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     private var pendingHandshakeResult: MethodChannel.Result? = null
     private var pendingHandshakeDevice: UsbDevice? = null
     private var waitingForReattach = false
+
+    // Mirror components
+    private var mirrorTextureEntry: TextureRegistry.SurfaceTextureEntry? = null
+    private var scrcpyDecoder: ScrcpyDecoder? = null
 
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -152,7 +159,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                 }
                 "shellCommand" -> {
                     val command = call.argument<String>("command")
-                    val timeoutMs = call.argument<Int>("timeoutMs")?.toLong() ?: 15000L
+                    val timeoutMs = call.argument<Number>("timeoutMs")?.toLong() ?: 15000L
                     if (command == null) {
                         result.error("INVALID_ARGS", "command is required", null)
                         return@setMethodCallHandler
@@ -187,7 +194,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                 "pushFile" -> {
                     val localPath = call.argument<String>("localPath")
                     val remotePath = call.argument<String>("remotePath")
-                    val timeoutMs = call.argument<Int>("timeoutMs")?.toLong() ?: 30000L
+                    val timeoutMs = call.argument<Number>("timeoutMs")?.toLong() ?: 30000L
                     if (localPath == null || remotePath == null) {
                         result.error("INVALID_ARGS", "localPath and remotePath are required", null)
                         return@setMethodCallHandler
@@ -220,7 +227,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                 }
                 "startPersistentShell" -> {
                     val command = call.argument<String>("command")
-                    val timeoutMs = call.argument<Int>("timeoutMs")?.toLong() ?: 10000L
+                    val timeoutMs = call.argument<Number>("timeoutMs")?.toLong() ?: 10000L
                     if (command == null) {
                         result.error("INVALID_ARGS", "command is required", null)
                         return@setMethodCallHandler
@@ -253,7 +260,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                 }
                 "openStream" -> {
                     val service = call.argument<String>("service")
-                    val timeoutMs = call.argument<Int>("timeoutMs")?.toLong() ?: 10000L
+                    val timeoutMs = call.argument<Number>("timeoutMs")?.toLong() ?: 10000L
                     if (service == null) {
                         result.error("INVALID_ARGS", "service is required", null)
                         return@setMethodCallHandler
@@ -285,8 +292,8 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     }
                 }
                 "readStream" -> {
-                    val localId = call.argument<Int>("localId")
-                    val timeoutMs = call.argument<Int>("timeoutMs")?.toLong() ?: 10000L
+                    val localId = call.argument<Number>("localId")?.toInt()
+                    val timeoutMs = call.argument<Number>("timeoutMs")?.toLong() ?: 10000L
                     if (localId == null) {
                         result.error("INVALID_ARGS", "localId is required", null)
                         return@setMethodCallHandler
@@ -334,7 +341,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     }
                 }
                 "closeStream" -> {
-                    val localId = call.argument<Int>("localId")
+                    val localId = call.argument<Number>("localId")?.toInt()
                     if (localId == null) {
                         result.error("INVALID_ARGS", "localId is required", null)
                         return@setMethodCallHandler
@@ -349,6 +356,96 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     result.success(mapOf(
                         "log" to (adbTransport?.getLog() ?: "")
                     ))
+                }
+                "createMirrorTexture" -> {
+                    try {
+                        val entry = flutterEngine.renderer.createSurfaceTexture()
+                        mirrorTextureEntry = entry
+                        val textureId = entry.id()
+                        Log.d(TAG, "Mirror texture created: id=$textureId")
+                        result.success(mapOf("textureId" to textureId))
+                    } catch (e: Exception) {
+                        Log.e(TAG, "createMirrorTexture error: ${e.message}")
+                        result.error("TEXTURE_ERROR", e.message ?: "Failed to create texture", null)
+                    }
+                }
+                "startMirror" -> {
+                    val width = call.argument<Number>("width")?.toInt()
+                    val height = call.argument<Number>("height")?.toInt()
+                    val localId = call.argument<Number>("videoStreamLocalId")?.toInt()
+                    if (width == null || height == null || localId == null) {
+                        result.error("INVALID_ARGS", "width, height, videoStreamLocalId required", null)
+                        return@setMethodCallHandler
+                    }
+                    val entry = mirrorTextureEntry
+                    val transport = adbTransport
+                    if (entry == null || transport == null) {
+                        result.error("NOT_READY", "Texture o transporte no inicializado", null)
+                        return@setMethodCallHandler
+                    }
+                    Thread {
+                        try {
+                            val surfaceTexture = entry.surfaceTexture()
+                            surfaceTexture.setDefaultBufferSize(width, height)
+                            val surface = Surface(surfaceTexture)
+
+                            val decoder = ScrcpyDecoder()
+                            scrcpyDecoder = decoder
+                            decoder.start(width, height, surface)
+
+                            transport.startVideoReadLoop(
+                                localId = localId,
+                                onPacket = { headerValue, payload ->
+                                    decoder.feedPacket(payload, headerValue)
+                                },
+                                onError = { msg ->
+                                    Log.e(TAG, "Video error: $msg")
+                                    mainHandler.post {
+                                        sendEvent("mirror_state", mapOf(
+                                            "state" to "error",
+                                            "message" to msg
+                                        ))
+                                    }
+                                }
+                            )
+
+                            mainHandler.post {
+                                result.success(mapOf("started" to true))
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "startMirror error: ${e.message}", e)
+                            mainHandler.post {
+                                result.error("MIRROR_ERROR", e.message ?: "Failed to start mirror", null)
+                            }
+                        }
+                    }.apply {
+                        name = "StartMirror"
+                        isDaemon = true
+                        start()
+                    }
+                }
+                "stopMirror" -> {
+                    adbTransport?.stopVideoReadLoop()
+                    scrcpyDecoder?.stop()
+                    scrcpyDecoder = null
+                    mirrorTextureEntry?.release()
+                    mirrorTextureEntry = null
+                    Log.d(TAG, "Mirror stopped")
+                    result.success(mapOf("stopped" to true))
+                }
+                "getMirrorLog" -> {
+                    val decoder = scrcpyDecoder
+                    val transport = adbTransport
+                    val log = StringBuilder()
+                    if (decoder != null) {
+                        log.appendLine("Decoder: started=${decoder.isStarted()} frames=${decoder.getFrameCount()} configs=${decoder.getConfigCount()}")
+                    } else {
+                        log.appendLine("Decoder: not initialized")
+                    }
+                    if (transport != null) {
+                        log.appendLine("Transport log:\n${transport.getLog()}")
+                    }
+                    result.success(mapOf("log" to log.toString()))
                 }
                 else -> result.notImplemented()
             }

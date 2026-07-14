@@ -10,9 +10,12 @@ import com.fiscalia.file_cast.adb.AdbMessage
 import com.fiscalia.file_cast.adb.AdbProtocol
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingDeque
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -934,12 +937,112 @@ class UsbAdbTransport(
     fun getStream(localId: Int): AdbStream? = streams[localId]
 
     fun isAdbConnected(): Boolean = isConnected
+
+    // --- Video read loop ---
+
+    private var videoReaderThread: Thread? = null
+    private val videoRunning = AtomicBoolean(false)
+
+    /**
+     * Read video packets from an already-open scrcpy stream.
+     * Calls onPacket(headerValue, payload) for each decoded packet.
+     * Runs on a background thread. Call stopVideoReadLoop() to stop.
+     */
+    fun startVideoReadLoop(localId: Int, onPacket: (Long, ByteArray) -> Unit, onError: (String) -> Unit) {
+        if (videoRunning.get()) {
+            log("startVideoReadLoop: already running")
+            return
+        }
+        videoRunning.set(true)
+        videoReaderThread = thread(name = "ScrcpyVideoReader", isDaemon = true) {
+            log("VideoReader: started for stream $localId")
+            log("VideoReader: stream exists=${streams.containsKey(localId)} open=${isStreamOpen(localId)} connected=$isConnected")
+            var packetCount = 0
+            try {
+                while (videoRunning.get() && isConnected && isStreamOpen(localId)) {
+                    val stream = streams[localId]
+                    val queueSize = stream?.dataQueue?.size ?: -1
+                    if (packetCount == 0) {
+                        log("VideoReader: waiting for first packet, dataQueue.size=$queueSize")
+                    }
+
+                    // Read 12-byte frame header: 8B (flags+pts) + 4B (payload size), both big-endian
+                    val header = readStreamExact(localId, 12)
+                    if (header == null) {
+                        log("VideoReader: readStreamExact(12) returned null, stream closed or timeout")
+                        break
+                    }
+                    if (packetCount == 0) {
+                        log("VideoReader: first header hex: ${header.joinToString(" ") { "%02X".format(it) }}")
+                    }
+
+                    val bb = ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN)
+                    val headerValue = bb.long   // flags + pts
+                    val size = bb.int            // payload size
+
+                    if (size <= 0 || size > 10 * 1024 * 1024) {
+                        log("VideoReader: INVALID size=$size, header hex=${header.joinToString(" ") { "%02X".format(it) }}, stopping")
+                        break
+                    }
+
+                    val payload = readStreamExact(localId, size)
+                    if (payload == null) {
+                        log("VideoReader: readStreamExact($size) returned null for payload")
+                        break
+                    }
+
+                    packetCount++
+                    if (packetCount <= 5 || packetCount % 100 == 0) {
+                        log("VideoReader: packet #$packetCount size=$size totalPayload=${payload.size} headerValue=$headerValue")
+                    }
+                    onPacket(headerValue, payload)
+                }
+                log("VideoReader: loop ended, received $packetCount packets")
+            } catch (e: InterruptedException) {
+                log("VideoReader: interrupted (stop solicitado normalmente)")
+            } catch (e: Exception) {
+                log("VideoReader EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
+                log("VideoReader stack: ${e.stackTraceToString().lines().take(5).joinToString("\n")}")
+                onError(e.message ?: "video read loop failed: ${e.javaClass.simpleName}")
+            }
+            log("VideoReader: exiting")
+            videoRunning.set(false)
+        }
+    }
+
+    fun stopVideoReadLoop() {
+        videoRunning.set(false)
+        videoReaderThread?.interrupt()
+        videoReaderThread = null
+    }
+
+    /**
+     * Read exactly n bytes from a stream, accumulating from dataQueue.
+     * Uses addFirst() to put back leftover bytes from partial chunks.
+     * Returns null if stream closes before n bytes are read.
+     */
+    fun readStreamExact(localId: Int, n: Int): ByteArray? {
+        val stream = streams[localId] ?: return null
+        val out = ByteArray(n)
+        var offset = 0
+        while (offset < n) {
+            val chunk = stream.dataQueue.poll(15, TimeUnit.SECONDS) ?: return null
+            val toCopy = minOf(chunk.size, n - offset)
+            System.arraycopy(chunk, 0, out, offset, toCopy)
+            offset += toCopy
+            if (toCopy < chunk.size) {
+                // Leftover bytes belong to the next packet - put them back at the front
+                stream.dataQueue.addFirst(chunk.copyOfRange(toCopy, chunk.size))
+            }
+        }
+        return out
+    }
 }
 
 data class AdbStream(
     val localId: Int,
     var remoteId: Int? = null,
-    val dataQueue: LinkedBlockingQueue<ByteArray> = LinkedBlockingQueue(),
+    val dataQueue: LinkedBlockingDeque<ByteArray> = LinkedBlockingDeque(),
     val okayReceived: CountDownLatch = CountDownLatch(1),
     val closed: AtomicBoolean = AtomicBoolean(false),
     val closeReceived: CountDownLatch = CountDownLatch(1),

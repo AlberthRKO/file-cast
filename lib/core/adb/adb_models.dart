@@ -63,6 +63,7 @@ enum UsbEventType {
   deviceConnected,
   permissionDenied,
   adbState,
+  mirrorState,
 }
 
 class UsbEvent {
@@ -92,6 +93,8 @@ class UsbEvent {
             return UsbEventType.permissionDenied;
           case 'adb_state':
             return UsbEventType.adbState;
+          case 'mirror_state':
+            return UsbEventType.mirrorState;
           default:
             return UsbEventType.deviceAttached;
         }

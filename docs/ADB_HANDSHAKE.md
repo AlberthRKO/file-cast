@@ -1,4 +1,4 @@
-# ADB Handshake - Fase 1 y 2
+# ADB Handshake - Documentacion Completa (Fase 1-5)
 
 ## Fase 1: Deteccion USB y Permisos
 
@@ -85,3 +85,300 @@ Fix: envolver en `mainHandler.post { }`.
 - `UsbPlugin.kt` - mainHandler.post para results, re-attach logic
 - `adb_models.dart` - Mapeo snake_case a camelCase
 - `usb_device_list_page.dart` - Log panel siempre visible, retry/cancel buttons
+
+---
+
+## Fase 3: Stream Multiplexing
+
+### Objetivo
+Implementar el protocolo de multiplexacion de streams de ADB sobre una sola conexion USB. Permite abrir, leer, escribir y cerrar multiples streams simultaneamente (shell, sync, scrcpy).
+
+### Protocolo ADB - Headers (24 bytes, little-endian)
+```
+[0..3]   command    (4 bytes)  - A_CNXN, A_OPEN, A_OKAY, A_WRTE, A_CLSE, A_AUTH
+[4..7]   arg0       (4 bytes)  - Comando especifico (localId, remoteId, etc.)
+[8..11]  arg1       (4 bytes)  - Comando especifico
+[12..15] dataLength (4 bytes)  - Longitud del payload
+[16..19] dataCheck  (4 bytes)  - CRC32 del payload
+[20..23] magic      (4 bytes)  - command XOR 0xFFFFFFFF
+```
+
+### Constantes de comandos
+| Comando | Valor | Descripcion |
+|---------|-------|-------------|
+| A_CNXN | 0x4e584e43 | Connect |
+| A_OPEN | 0x4e45504f | Abrir stream |
+| A_OKAY | 0x59414b4f | Acknowledge / Listo |
+| A_WRTE | 0x45545257 | Escribir datos |
+| A_CLSE | 0x45534c43 | Cerrar stream |
+| A_AUTH | 0x48545541 | Autenticar |
+
+### Flujo de multiplexacion
+```
+Host (app)                              Device
+    |                                     |
+    |-- OPEN(localId=1, "shell:id") ---->|
+    |<-- OKAY(remoteId=5, localId=1) ----|  (device asigna remoteId)
+    |-- WRTE(localId=1, remoteId=5, "")->|
+    |<-- OKAY(remoteId=5, localId=1) ----|  (flow control)
+    |<-- WRTE(remoteId=5, localId=1, data)|
+    |-- OKAY(localId=1, remoteId=5) ---->|
+    |<-- CLSE(remoteId=5, localId=1) ----|  (shell cierra al terminar)
+    |-- CLSE(localId=1, remoteId=5) ---->|
+```
+
+### Implementacion en UsbAdbTransport.kt
+
+#### Reader Thread (`startReaderThread`)
+- Thread background que lee paquetes ADB en loop
+- Demultiplexea: busca stream por `message.arg1` (host localId)
+- **A_OKAY**: Registra `message.arg0` como remoteId en el stream
+- **A_WRTE**: Encola payload en `stream.dataQueue`, envia A_OKAY de vuelta
+- **A_CLSE**: Marca stream como cerrado, remueve del mapa
+
+#### Flow Control (writeOkayQueue)
+Cada `AdbStream` tiene una `writeOkayQueue: LinkedBlockingQueue<Int>`. Cuando el device envia A_OKAY, el reader thread encola el remoteId. `writeStream()` espera en esta cola con timeout, logrando control de flujo por-stream.
+
+#### Multiplexacion de streams
+```kotlin
+val streams: ConcurrentHashMap<Int, AdbStream>  // localId -> stream
+val localIdCounter: AtomicInteger                // IDs monotonicos
+val writeLock: ReentrantLock                      // Serializa USB writes
+val readLock: ReentrantLock                       // Serializa USB reads
+```
+
+### Metodos principales
+| Metodo | Descripcion |
+|--------|-------------|
+| `openStream(service, timeoutMs)` | Envia A_OPEN, espera A_OKAY, retorna AdbStream |
+| `writeStream(localId, data, waitForOkay)` | Envia A_WRTE con flow control |
+| `readStream(localId, timeoutMs)` | Lee de stream.dataQueue con timeout |
+| `closeStream(localId)` | Envia A_CLSE, remueve del mapa |
+| `isStreamOpen(localId)` | Verifica si el stream esta abierto |
+
+### Bug critico: CNXN payload drain
+Despues del handshake, el device puede enviar datos residuales en el stream de control. Si no se drenan antes de iniciar el reader thread, todos los paquetes subsiguientes se desincronizan.
+
+Fix: Leer y descartar cualquier dato pendiente despues de recibir CNXN antes de llamar `startReaderThread()`.
+
+---
+
+## Fase 4: Push y Ejecucion de scrcpy-server
+
+### Objetivo
+Transferir el archivo `scrcpy-server-v2.7.jar` al device via ADB sync protocol, y ejecutarlo como proceso Java via `app_process`.
+
+### Protocolo ADB Sync (push)
+
+#### Constantes sync
+| Constante | Valor | Descripcion |
+|-----------|-------|-------------|
+| SYNC_SEND | `"SEND"` | Comando de envio |
+| SYNC_DATA | `"DATA"` | Bloque de datos |
+| SYNC_DONE | `"DONE"` | Fin de transferencia |
+| SYNC_OKAY | `"OKAY"` | Exito |
+| SYNC_FAIL | `"FAIL"` | Error |
+| REG_FILE | 33188 | Modo archivo (0o100644) |
+| PUSH_CHUNK_SIZE | 4096 | Tamano de chunk para OTG |
+
+#### Flujo de push
+```
+Host                                  Device
+  |                                      |
+  |-- OPEN(localId=1, "sync:") -------->|
+  |<-- OKAY(remoteId=10, localId=1) ----|
+  |                                      |
+  |-- WRTE(localId=1, remoteId=10) ---->|  Payload: "SEND" + 4B LE len + "/data/local/tmp/scrcpy-server.jar,33188"
+  |<-- OKAY ----------------------------|
+  |                                      |
+  |-- WRTE: "DATA" + 4B LE 4096 + chunk1 ->|
+  |<-- OKAY ----------------------------|
+  |-- WRTE: "DATA" + 4B LE 4096 + chunk2 ->|
+  |<-- OKAY ----------------------------|
+  |-- ... (repetir por cada chunk) -----|
+  |                                      |
+  |-- WRTE: "DONE" + 4B zeros --------->|
+  |<-- OKAY (o FAIL) -------------------|
+  |                                      |
+  |-- CLSE ---------------------------->|
+```
+
+#### Implementacion
+- Chunks de **4096 bytes** (estabilidad OTG phone-to-phone)
+- Sleep de **25ms** entre chunks para evitar bus resets
+- Retry logic: maxRetries=2 en caso de fallo
+- Validacion de respuestas FAIL tempranas durante envio de DATA
+
+### Ejecucion del server
+
+#### Comando
+```
+CLASSPATH=/data/local/tmp/scrcpy-server.jar \
+  app_process / com.genymobile.scrcpy.Server 2.7 \
+  tunnel_forward=true \
+  audio=false \
+  control=false \
+  log_level=debug
+```
+
+#### Opciones validas (v2.7)
+| Opcion | Valor | Descripcion |
+|--------|-------|-------------|
+| `tunnel_forward` | `true` | Server crea LocalServerSocket y escucha |
+| `audio` | `false` | Deshabilita captura de audio |
+| `control` | `false` | Deshabilita canal de control |
+| `log_level` | `debug` | Logging detallado |
+| `send_dummy_byte` | `true` | Envio de byte 0x00 al conectar (default) |
+| `send_device_meta` | `true` | Envio de nombre de device (default) |
+| `send_codec_meta` | `true` | Envio de codec + resolucion (default) |
+
+#### startPersistentShell
+El server se ejecuta via `startPersistentShell()` que mantiene el stream `shell:` abierto. Si se cerrara, el proceso server moriria inmediatamente.
+
+```kotlin
+fun startPersistentShell(command: String, timeoutMs: Long = 10000): Int
+```
+
+### Archivos clave
+- `UsbAdbTransport.kt` - `pushFile()`, `shellCommand()`, `startPersistentShell()`
+- `UsbPlugin.kt` - MethodChannel handlers: `pushFile`, `shellCommand`, `startPersistentShell`
+- `adb_client.dart` - `pushFile()`, `shellCommand()`, `startPersistentShell()`, `readAsset()`
+- `usb_device_list_page.dart` - UI: log panel con pasos 1-5 visibles
+
+---
+
+## Fase 5: Conexion al Socket scrcpy y Device Info
+
+### Objetivo
+Conectar al socket abstracto `localabstract:scrcpy` del server y leer el header de informacion del device (nombre, resolucion, codec).
+
+### Protocolo v2.7 - Device Info Header
+
+El server envia **77 bytes** de header despues de aceptar la conexion:
+
+| Offset | Tamano | Campo | Encoding |
+|--------|--------|-------|----------|
+| 0 | 1 byte | Dummy byte | Siempre 0x00 |
+| 1 | 64 bytes | Device name | UTF-8 null-padded |
+| 65 | 4 bytes | Codec ID | Big-endian int (FourCC) |
+| 69 | 4 bytes | Screen width | Big-endian int |
+| 73 | 4 bytes | Screen height | Big-endian int |
+
+**Total: 77 bytes**
+
+### Flujo de conexion
+```
+Host (app)                              Device (server)
+    |                                      |
+    |-- OPEN(localId=N, "localabstract:scrcpy") -->|
+    |<-- OKAY(remoteId=M, localId=N) -----|
+    |                                      |
+    |<-- 1 byte: 0x00 (dummy) ------------|  (despues de accept)
+    |<-- 64 bytes: device name ------------|  (sendDeviceMeta)
+    |<-- 12 bytes: codec + resolution ----|  (sendCodecMeta)
+    |                                      |
+    |== Stream abierto para video frames ==|
+```
+
+### Codigo Dart (connectScrcpySockets)
+```dart
+Future<Map<String, dynamic>> connectScrcpySockets() async {
+  // 1. Abrir socket
+  final streamInfo = await openStream('localabstract:scrcpy', timeoutMs: 10000);
+  final localId = streamInfo['localId'] as int;
+
+  // 2. Leer dummy byte (1 byte)
+  final dummy = await _readExact(localId, 1);
+
+  // 3. Leer device name (64 bytes)
+  final nameBytes = await _readExact(localId, 64);
+  final nameEnd = nameBytes.indexWhere((b) => b == 0);
+  final deviceName = String.fromCharCodes(nameBytes.sublist(0, nameEnd > 0 ? nameEnd : 64));
+
+  // 4. Leer codec metadata (12 bytes: 4B codec + 4B width + 4B height)
+  final codecMeta = await _readExact(localId, 12);
+  final codecId = (codecMeta[0] << 24) | (codecMeta[1] << 16) | (codecMeta[2] << 8) | codecMeta[3];
+  final width = (codecMeta[4] << 24) | (codecMeta[5] << 16) | (codecMeta[6] << 8) | codecMeta[7];
+  final height = (codecMeta[8] << 24) | (codecMeta[9] << 16) | (codecMeta[10] << 8) | codecMeta[11];
+
+  return {'deviceName': deviceName, 'width': width, 'height': height, 'codec': codecFourcc, 'localId': localId};
+}
+```
+
+### Helper _readExact
+Acumula datos de multiples paquetes WRTE hasta completar N bytes exactos:
+```dart
+Future<List<int>> _readExact(int localId, int n, {int timeoutMs = 5000}) async {
+  final buffer = <int>[];
+  while (buffer.length < n) {
+    final result = await readStream(localId, timeoutMs: timeoutMs);
+    if (result['data'] != null) buffer.addAll(result['data']);
+    if (result['closed'] == true) throw Exception('Stream closed (${buffer.length}/$n bytes)');
+  }
+  return buffer;
+}
+```
+
+### Resultado exitoso
+```
+Starting Phase 4: Push & Execute scrcpy-server...
+[1/4] Reading scrcpy-server from assets...
+  Read 71200 bytes
+[2/4] Writing to temp file...
+  Temp: /data/user/0/com.fiscalia.file_cast/code_cache/scrcpy-server.jar
+[3/4] Pushing to /data/local/tmp/scrcpy-server.jar...
+  Push success: true
+[4/5] Executing scrcpy-server...
+  Server shell stream: localId=2
+[5/5] Connecting to video socket...
+  Device: SM-T505
+  Screen: 1200x2000
+  Codec: h264
+```
+
+### Bugs corregidos
+
+#### 1. v3.3.4 - Opciones invalidas
+v3.3.4 no reconoce `no_audio` ni `no_control`. El server imprime warning y puede fallar durante init de MediaCodec/AudioRecord.
+
+Fix: Usar v2.7 con opciones validas `audio=false control=false`.
+
+#### 2. v3.3.4 - Server hang despues de dummy byte
+Con v3.3.4, el server enviaba el dummy byte pero nunca el device info. El server colgaba durante MediaCodec init.
+
+Fix: Migrar a v2.7 donde el protocolo funciona correctamente.
+
+#### 3. Shell stream se cierra y server muere
+Si se cierra el stream `shell:` donde corre el server, el proceso muere.
+
+Fix: Usar `startPersistentShell()` que mantiene el stream abierto.
+
+#### 4. tunnel_forward semantics
+- `tunnel_forward=true`: Server crea `LocalServerSocket` y hace `accept()`. El host se conecta como client.
+- `tunnel_forward=false`: Requiere `adb reverse` (host escucha, server se conecta). No viable para OTG phone-to-phone.
+
+#### 5. CNXN payload drain (ya documentado en Fase 3)
+Datos residuales del handshake desincronizan el reader thread.
+
+### Archivos clave
+- `UsbAdbTransport.kt` - `openStream()`, `readStream()`, `closeStream()`, `getStream()`
+- `UsbPlugin.kt` - MethodChannel handlers: `openStream`, `readStream`, `closeStream`, `startPersistentShell`
+- `adb_client.dart` - `openStream()`, `readStream()`, `closeStream()`, `connectScrcpySockets()`, `_readExact()`
+- `usb_device_list_page.dart` - UI: push + execute + connect con log completo
+
+---
+
+## Referencia: Archivos del proyecto
+
+| Archivo | Descripcion |
+|---------|-------------|
+| `android/.../usb/UsbPlugin.kt` | Plugin MethodChannel + BroadcastReceiver |
+| `android/.../usb/UsbAdbTransport.kt` | USB bulk, handshake, stream multiplexing, push |
+| `android/.../adb/AdbProtocol.kt` | Constantes + helpers de paquetes ADB |
+| `android/.../adb/AdbAuth.kt` | RSA keypair + firma + android_pubkey struct |
+| `android/.../adb/AdbMessage.kt` | AdbMessage data class |
+| `lib/core/adb/adb_client.dart` | Cliente Dart (singleton, MethodChannel) |
+| `lib/core/adb/adb_models.dart` | Modelos UsbDeviceInfo, UsbEvent |
+| `lib/.../usb_device_list_page.dart` | UI completa: device list, shell, scrcpy push/execute |
+| `assets/scrcpy/scrcpy-server-v2.7.jar` | scrcpy server binary (71200 bytes) |
+| `docs/ADB_HANDSHAKE.md` | Este archivo |
