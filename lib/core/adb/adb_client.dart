@@ -227,53 +227,64 @@ class AdbClient {
     }
   }
 
-  /// Connect to scrcpy server sockets and read DeviceInfo.
-  /// 1. Opens video stream to "localabstract:scrcpy_00000001" (scid=1)
-  /// 2. Reads 68-byte DeviceInfo header (64B name + 2B width + 2B height)
-  /// 3. Returns parsed device info.
+  /// Read exactly [n] bytes from a stream, accumulating across multiple WRTE packets.
+  Future<List<int>> _readExact(int localId, int n, {int timeoutMs = 5000}) async {
+    final buffer = <int>[];
+    while (buffer.length < n) {
+      final result = await readStream(localId, timeoutMs: timeoutMs);
+      final data = result['data'];
+      if (data == null) {
+        throw Exception(
+          'Stream closed while reading (got ${buffer.length}/$n bytes, closed=${result['closed']})',
+        );
+      }
+      buffer.addAll((data as List).cast<int>());
+    }
+    return buffer;
+  }
+
+  /// Connect to scrcpy server socket and read device info header.
+  /// v3.3.4 protocol: 1B dummy + 64B name + 4B codec_id + 4B width + 4B height (all BE)
+  /// Returns parsed device info. Stream stays open for video frames (Phase 6).
   Future<Map<String, dynamic>> connectScrcpySockets() async {
     final logBuffer = StringBuffer();
 
     try {
-      // scid=-1 (default) → socket name is just "scrcpy"
       final socketName = 'localabstract:scrcpy';
       logBuffer.writeln('[1] Opening video socket ($socketName)...');
       final streamInfo = await openStream(socketName, timeoutMs: 10000);
       final localId = streamInfo['localId'] as int;
       logBuffer.writeln('  Stream opened: localId=$localId');
 
-      logBuffer.writeln('[2] Reading DeviceInfo header (68 bytes)...');
-      final readResult = await readStream(localId, timeoutMs: 5000);
-      final data = readResult['data'];
-      if (data == null) {
-        throw Exception('No DeviceInfo data received (stream closed: ${readResult['closed']})');
-      }
+      logBuffer.writeln('[2] Reading dummy byte...');
+      final dummy = await _readExact(localId, 1);
+      logBuffer.writeln('  Dummy byte: 0x${dummy[0].toRadixString(16)}');
 
-      final bytes = (data as List).cast<int>();
-      logBuffer.writeln('  Received ${bytes.length} bytes');
-
-      if (bytes.length < 68) {
-        throw Exception('DeviceInfo too short: ${bytes.length} bytes (need 68)');
-      }
-
-      // Parse DeviceInfo: 64B name (null-padded) + 2B width (BE) + 2B height (BE)
-      final nameBytes = bytes.sublist(0, 64);
+      logBuffer.writeln('[3] Reading device name (64 bytes)...');
+      final nameBytes = await _readExact(localId, 64);
       final nameEnd = nameBytes.indexWhere((b) => b == 0);
       final deviceName = String.fromCharCodes(
         nameBytes.sublist(0, nameEnd > 0 ? nameEnd : 64),
       );
-      final width = (bytes[64] << 8) | bytes[65];
-      final height = (bytes[66] << 8) | bytes[67];
-
       logBuffer.writeln('  Device: $deviceName');
-      logBuffer.writeln('  Screen: ${width}x$height');
 
-      await closeStream(localId);
+      logBuffer.writeln('[4] Reading video codec metadata (12 bytes)...');
+      final codecMeta = await _readExact(localId, 12);
+      final codecId = (codecMeta[0] << 24) | (codecMeta[1] << 16) | (codecMeta[2] << 8) | codecMeta[3];
+      final width = (codecMeta[4] << 24) | (codecMeta[5] << 16) | (codecMeta[6] << 8) | codecMeta[7];
+      final height = (codecMeta[8] << 24) | (codecMeta[9] << 16) | (codecMeta[10] << 8) | codecMeta[11];
+      final codecFourcc = String.fromCharCodes(codecMeta.sublist(0, 4));
+
+      logBuffer.writeln('  Codec: $codecFourcc (0x${codecId.toRadixString(16)})');
+      logBuffer.writeln('  Screen: ${width}x$height');
+      logBuffer.writeln('\n--- Phase 5 SUCCESS: Server connected! ---');
 
       return {
         'deviceName': deviceName,
         'width': width,
         'height': height,
+        'codec': codecFourcc,
+        'localId': localId,
         'log': logBuffer.toString(),
       };
     } catch (e) {

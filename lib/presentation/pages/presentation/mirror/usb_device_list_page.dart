@@ -253,10 +253,10 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
 
       setState(() => _scrcpyOutput += '[4/5] Executing scrcpy-server...\n');
       // startPersistentShell keeps the shell stream OPEN → server process stays alive
-      // tunnel_forward=false: server creates LocalServerSocket("scrcpy") and waits for us
+      // tunnel_forward=true: server creates LocalServerSocket and listens, we connect as client
       // no_audio=true, no_control=true: only open video socket for now
       final shellLocalId = await _adbClient.startPersistentShell(
-        'CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / com.genymobile.scrcpy.Server 3.3.4 tunnel_forward=false no_audio=true no_control=true log_level=debug',
+        'CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / com.genymobile.scrcpy.Server 3.3.4 tunnel_forward=true no_audio=true no_control=true log_level=debug',
         timeoutMs: 10000,
       );
       setState(() => _scrcpyOutput += '  Server shell stream: localId=$shellLocalId\n');
@@ -269,7 +269,7 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
       setState(() {
         _scrcpyOutput += '  Device: ${videoInfo['deviceName']}\n';
         _scrcpyOutput += '  Screen: ${videoInfo['width']}x${videoInfo['height']}\n';
-        _scrcpyOutput += '\n--- Phase 5 SUCCESS: Server connected! ---\n';
+        _scrcpyOutput += '  Codec: ${videoInfo['codec']}\n';
         _scrcpyRunning = false;
       });
     } catch (e) {
