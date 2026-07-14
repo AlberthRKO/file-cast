@@ -524,39 +524,43 @@ class UsbAdbTransport(
     }
 
     fun readMessage(timeoutMs: Int = READ_TIMEOUT): AdbMessage? {
-        log("readMessage: reading ${AdbProtocol.HEADER_SIZE} byte header (timeout=${timeoutMs}ms)...")
+        if (!quietMode) log("readMessage: reading ${AdbProtocol.HEADER_SIZE} byte header (timeout=${timeoutMs}ms)...")
         val headerBuffer = ByteArray(AdbProtocol.HEADER_SIZE)
         val bytesRead = readRaw(headerBuffer, timeoutMs)
 
         if (bytesRead == 0) {
-            log("readMessage: 0 bytes - device not responding")
+            if (!quietMode) log("readMessage: 0 bytes - device not responding")
             return null
         }
         if (bytesRead < 0) {
-            log("readMessage: $bytesRead - timeout or read error")
+            if (!quietMode) log("readMessage: $bytesRead - timeout or read error")
             return null
         }
         if (bytesRead != AdbProtocol.HEADER_SIZE) {
-            log("readMessage: incomplete header: ${bytesRead}/${AdbProtocol.HEADER_SIZE} bytes")
-            log("readMessage: partial hex: ${headerBuffer.sliceArray(0 until bytesRead).joinToString(" ") { "%02X".format(it) }}")
+            if (!quietMode) {
+                log("readMessage: incomplete header: ${bytesRead}/${AdbProtocol.HEADER_SIZE} bytes")
+                log("readMessage: partial hex: ${headerBuffer.sliceArray(0 until bytesRead).joinToString(" ") { "%02X".format(it) }}")
+            }
             return null
         }
 
-        log("readMessage: header hex: ${headerBuffer.joinToString(" ") { "%02X".format(it) }}")
+        if (!quietMode) log("readMessage: header hex: ${headerBuffer.joinToString(" ") { "%02X".format(it) }}")
         val message = AdbProtocol.parseHeader(headerBuffer)
         if (message == null) {
-            val cmd = java.nio.ByteBuffer.wrap(headerBuffer.sliceArray(0..3)).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
-            log("readMessage: INVALID MAGIC! cmd=0x${Integer.toHexString(cmd)} expected_xor=0x${Integer.toHexString(cmd xor 0xffffffff.toInt())}")
-            log("readMessage: raw bytes: ${headerBuffer.joinToString(" ") { "%02X".format(it) }}")
+            if (!quietMode) {
+                val cmd = java.nio.ByteBuffer.wrap(headerBuffer.sliceArray(0..3)).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+                log("readMessage: INVALID MAGIC! cmd=0x${Integer.toHexString(cmd)} expected_xor=0x${Integer.toHexString(cmd xor 0xffffffff.toInt())}")
+                log("readMessage: raw bytes: ${headerBuffer.joinToString(" ") { "%02X".format(it) }}")
+            }
         } else {
-            log("readMessage: OK ${message.commandName} arg0=${message.arg0} arg1=${message.arg1} dataLen=${message.dataLength} dataCheck=0x${Integer.toHexString(message.dataCheck)}")
+            if (!quietMode) log("readMessage: OK ${message.commandName} arg0=${message.arg0} arg1=${message.arg1} dataLen=${message.dataLength} dataCheck=0x${Integer.toHexString(message.dataCheck)}")
         }
         return message
     }
 
     fun readPayload(length: Int): ByteArray? {
         if (length == 0) return null
-        log("readPayload: reading $length bytes...")
+        if (!quietMode) log("readPayload: reading $length bytes...")
         val payload = ByteArray(length)
         var totalRead = 0
 
@@ -566,11 +570,11 @@ class UsbAdbTransport(
             val bytesRead = readRaw(tempBuffer)
 
             if (bytesRead < 0) {
-                log("readPayload: FAILED at $totalRead/$length bytes")
+                if (!quietMode) log("readPayload: FAILED at $totalRead/$length bytes")
                 return null
             }
             if (bytesRead == 0) {
-                log("readPayload: got 0 bytes at $totalRead/$length")
+                if (!quietMode) log("readPayload: got 0 bytes at $totalRead/$length")
                 return null
             }
 
@@ -578,7 +582,7 @@ class UsbAdbTransport(
             totalRead += bytesRead
         }
 
-        log("readPayload: complete ${payload.size} bytes")
+        if (!quietMode) log("readPayload: complete ${payload.size} bytes")
         return payload
     }
 
@@ -960,45 +964,35 @@ class UsbAdbTransport(
         videoRunning.set(true)
         videoReaderThread = thread(name = "ScrcpyVideoReader", isDaemon = true) {
             log("VideoReader: started for stream $localId")
-            log("VideoReader: stream exists=${streams.containsKey(localId)} open=${isStreamOpen(localId)} connected=$isConnected")
             var packetCount = 0
+            // Reuse header buffer and ByteBuffer across iterations
+            val headerBuf = ByteArray(12)
+            val headerBB = ByteBuffer.wrap(headerBuf).order(ByteOrder.BIG_ENDIAN)
             try {
                 while (videoRunning.get() && isConnected && isStreamOpen(localId)) {
-                    val stream = streams[localId]
-                    val queueSize = stream?.dataQueue?.size ?: -1
-                    if (packetCount == 0) {
-                        log("VideoReader: waiting for first packet, dataQueue.size=$queueSize")
-                    }
-
-                    // Read 12-byte frame header: 8B (flags+pts) + 4B (payload size), both big-endian
-                    val header = readStreamExact(localId, 12)
-                    if (header == null) {
-                        log("VideoReader: readStreamExact(12) returned null, stream closed or timeout")
+                    // Read 12-byte frame header into reusable buffer
+                    val headerRead = readStreamExactInto(localId, headerBuf, 12)
+                    if (headerRead < 12) {
+                        if (!quietMode) log("VideoReader: readStreamExact returned $headerRead bytes, stream closed or timeout")
                         break
                     }
-                    if (packetCount == 0) {
-                        log("VideoReader: first header hex: ${header.joinToString(" ") { "%02X".format(it) }}")
-                    }
 
-                    val bb = ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN)
-                    val headerValue = bb.long   // flags + pts
-                    val size = bb.int            // payload size
+                    headerBB.position(0)
+                    val headerValue = headerBB.long   // flags + pts
+                    val size = headerBB.int            // payload size
 
                     if (size <= 0 || size > 10 * 1024 * 1024) {
-                        log("VideoReader: INVALID size=$size, header hex=${header.joinToString(" ") { "%02X".format(it) }}, stopping")
+                        log("VideoReader: INVALID size=$size, stopping")
                         break
                     }
 
                     val payload = readStreamExact(localId, size)
                     if (payload == null) {
-                        log("VideoReader: readStreamExact($size) returned null for payload")
+                        if (!quietMode) log("VideoReader: payload null for size=$size")
                         break
                     }
 
                     packetCount++
-                    if (packetCount <= 5 || packetCount % 100 == 0) {
-                        log("VideoReader: packet #$packetCount size=$size totalPayload=${payload.size} headerValue=$headerValue")
-                    }
                     onPacket(headerValue, payload)
                 }
                 log("VideoReader: loop ended, received $packetCount packets")
@@ -1006,7 +1000,6 @@ class UsbAdbTransport(
                 log("VideoReader: interrupted (stop solicitado normalmente)")
             } catch (e: Exception) {
                 log("VideoReader EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
-                log("VideoReader stack: ${e.stackTraceToString().lines().take(5).joinToString("\n")}")
                 onError(e.message ?: "video read loop failed: ${e.javaClass.simpleName}")
             }
             log("VideoReader: exiting")
@@ -1018,6 +1011,26 @@ class UsbAdbTransport(
         videoRunning.set(false)
         videoReaderThread?.interrupt()
         videoReaderThread = null
+    }
+
+    /**
+     * Read exactly n bytes from a stream into an existing buffer.
+     * Avoids allocation per call — used in the hot video read loop.
+     * Returns number of bytes read, or -1 on error.
+     */
+    fun readStreamExactInto(localId: Int, out: ByteArray, n: Int): Int {
+        val stream = streams[localId] ?: return -1
+        var offset = 0
+        while (offset < n) {
+            val chunk = stream.dataQueue.poll(15, TimeUnit.SECONDS) ?: return -1
+            val toCopy = minOf(chunk.size, n - offset)
+            System.arraycopy(chunk, 0, out, offset, toCopy)
+            offset += toCopy
+            if (toCopy < chunk.size) {
+                stream.dataQueue.addFirst(chunk.copyOfRange(toCopy, chunk.size))
+            }
+        }
+        return offset
     }
 
     /**

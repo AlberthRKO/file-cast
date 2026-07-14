@@ -323,9 +323,9 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
         _scrcpyRunning = false;
       });
 
-      // Start periodic log refresh to show decoder status
+      // Start periodic log refresh to show decoder status (5s to avoid overhead)
       _mirrorLogTimer?.cancel();
-      _mirrorLogTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
+      _mirrorLogTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
         if (!mounted || !_mirrorStarted) return;
         final log = await _adbClient.getMirrorLog();
         if (mounted) setState(() => _mirrorLog = log);
