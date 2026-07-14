@@ -219,7 +219,7 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
     try {
       setState(() => _scrcpyOutput += '[1/4] Reading scrcpy-server from assets...\n');
       final assetBytes = await _adbClient.readAsset(
-        'assets/scrcpy/scrcpy-server-v3.3.4.jar',
+        'assets/scrcpy/scrcpy-server-v2.7.jar',
       );
       if (assetBytes.isEmpty) {
         setState(() {
@@ -254,9 +254,9 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
       setState(() => _scrcpyOutput += '[4/5] Executing scrcpy-server...\n');
       // startPersistentShell keeps the shell stream OPEN → server process stays alive
       // tunnel_forward=true: server creates LocalServerSocket and listens, we connect as client
-      // no_audio=true, no_control=true: only open video socket for now
+      // audio=false, control=false: only open video socket for now
       final shellLocalId = await _adbClient.startPersistentShell(
-        'CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / com.genymobile.scrcpy.Server 3.3.4 tunnel_forward=true no_audio=true no_control=true log_level=debug',
+        'CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / com.genymobile.scrcpy.Server 2.7 tunnel_forward=true audio=false control=false log_level=debug',
         timeoutMs: 10000,
       );
       setState(() => _scrcpyOutput += '  Server shell stream: localId=$shellLocalId\n');

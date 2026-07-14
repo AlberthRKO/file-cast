@@ -244,8 +244,8 @@ class AdbClient {
   }
 
   /// Connect to scrcpy server socket and read device info header.
-  /// v3.3.4 protocol: 1B dummy + 64B name + 4B codec_id + 4B width + 4B height (all BE)
-  /// Returns parsed device info. Stream stays open for video frames (Phase 6).
+  /// v2.7 protocol: 1B dummy + 64B name + 4B codec_id + 4B width + 4B height (all BE)
+  /// Total header: 77 bytes. Stream stays open for video frames (Phase 6).
   Future<Map<String, dynamic>> connectScrcpySockets() async {
     final logBuffer = StringBuffer();
 

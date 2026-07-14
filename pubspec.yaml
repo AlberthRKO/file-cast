@@ -62,7 +62,7 @@ flutter:
     - assets/cliente2/logos/
 
     # scrcpy server
-    - assets/scrcpy/scrcpy-server-v3.3.4.jar
+    - assets/scrcpy/scrcpy-server-v2.7.jar
   fonts:
     - family: Montserrat
       fonts:
