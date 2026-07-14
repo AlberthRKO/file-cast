@@ -393,6 +393,9 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                             scrcpyDecoder = decoder
                             decoder.start(width, height, surface)
 
+                            // Suppress verbose logging during active mirror for performance
+                            transport.quietMode = true
+
                             transport.startVideoReadLoop(
                                 localId = localId,
                                 onPacket = { headerValue, payload ->
@@ -425,6 +428,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     }
                 }
                 "stopMirror" -> {
+                    adbTransport?.quietMode = false
                     adbTransport?.stopVideoReadLoop()
                     scrcpyDecoder?.stop()
                     scrcpyDecoder = null

@@ -81,7 +81,11 @@ class UsbAdbTransport(
     // Log buffer - all messages sent to UI
     private val logBuffer = StringBuilder()
 
+    @Volatile
+    var quietMode = false  // suppress logging during active mirror for performance
+
     private fun log(msg: String) {
+        if (quietMode) return
         val line = "[${System.currentTimeMillis() % 100000}] $msg"
         logBuffer.appendLine(line)
         Log.d(TAG, msg)
@@ -508,11 +512,11 @@ class UsbAdbTransport(
                 timeoutMs
             )
             log("USB READ result: $bytesRead bytes")
-            if (bytesRead > 0) {
+            if (!quietMode && bytesRead > 0) {
                 log("USB READ data: ${buffer.sliceArray(0 until minOf(bytesRead, 48)).joinToString(" ") { "%02X".format(it) }}")
             } else if (bytesRead == 0) {
                 log("USB READ: got 0 bytes (device empty)")
-            } else {
+            } else if (!quietMode) {
                 log("USB READ: returned -1 (timeout or error)")
             }
             return bytesRead
