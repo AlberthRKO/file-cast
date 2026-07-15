@@ -36,7 +36,15 @@ class _MirrorPageState extends State<MirrorPage> {
     _mirrorLogTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
       if (!mounted) return;
       final log = await _adbClient.getMirrorLog();
-      if (mounted) setState(() => _mirrorLog = log);
+      final serverLog = await _adbClient.getServerLog();
+      if (mounted) {
+        final sb = StringBuffer(log);
+        if (serverLog.isNotEmpty) {
+          sb.writeln('--- SERVER LOG ---');
+          sb.write(serverLog);
+        }
+        setState(() => _mirrorLog = sb.toString());
+      }
     });
   }
 
@@ -46,7 +54,7 @@ class _MirrorPageState extends State<MirrorPage> {
     super.dispose();
   }
 
-  Offset _widgetToDevice(Offset widgetPos, Size widgetSize, double offsetX, double offsetY) {
+  Offset _widgetToDevice(Offset widgetPos, Size widgetSize) {
     final scaleX = widget.videoWidth / widgetSize.width;
     final scaleY = widget.videoHeight / widgetSize.height;
     return Offset(
@@ -55,18 +63,18 @@ class _MirrorPageState extends State<MirrorPage> {
     );
   }
 
-  void _handlePointerDown(PointerDownEvent event, Size layoutSize, double offsetX, double offsetY) {
-    final device = _widgetToDevice(event.localPosition, layoutSize, offsetX, offsetY);
+  void _handlePointerDown(PointerDownEvent event, Size layoutSize) {
+    final device = _widgetToDevice(event.localPosition, layoutSize);
     _sendTouchSafe(0, device.dx.toInt(), device.dy.toInt());
   }
 
-  void _handlePointerMove(PointerMoveEvent event, Size layoutSize, double offsetX, double offsetY) {
-    final device = _widgetToDevice(event.localPosition, layoutSize, offsetX, offsetY);
+  void _handlePointerMove(PointerMoveEvent event, Size layoutSize) {
+    final device = _widgetToDevice(event.localPosition, layoutSize);
     _sendTouchSafe(2, device.dx.toInt(), device.dy.toInt());
   }
 
-  void _handlePointerUp(PointerEvent event, Size layoutSize, double offsetX, double offsetY) {
-    final device = _widgetToDevice(event.localPosition, layoutSize, offsetX, offsetY);
+  void _handlePointerUp(PointerEvent event, Size layoutSize) {
+    final device = _widgetToDevice(event.localPosition, layoutSize);
     _sendTouchSafe(1, device.dx.toInt(), device.dy.toInt());
   }
 
@@ -161,10 +169,10 @@ class _MirrorPageState extends State<MirrorPage> {
                       height: renderH,
                       child: Listener(
                         behavior: HitTestBehavior.opaque,
-                        onPointerDown: (e) => _handlePointerDown(e, renderSize, offsetX, offsetY),
-                        onPointerMove: (e) => _handlePointerMove(e, renderSize, offsetX, offsetY),
-                        onPointerUp: (e) => _handlePointerUp(e, renderSize, offsetX, offsetY),
-                        onPointerCancel: (e) => _handlePointerUp(e, renderSize, offsetX, offsetY),
+                        onPointerDown: (e) => _handlePointerDown(e, renderSize),
+                        onPointerMove: (e) => _handlePointerMove(e, renderSize),
+                        onPointerUp: (e) => _handlePointerUp(e, renderSize),
+                        onPointerCancel: (e) => _handlePointerUp(e, renderSize),
                         child: Texture(textureId: widget.textureId),
                       ),
                     ),

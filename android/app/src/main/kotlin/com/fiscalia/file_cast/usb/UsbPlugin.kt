@@ -46,6 +46,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     private var mirrorTextureEntry: TextureRegistry.SurfaceTextureEntry? = null
     private var scrcpyDecoder: ScrcpyDecoder? = null
     private var controlStreamLocalId: Int? = null
+    private var scrcpyServerShellLocalId: Int? = null
     private var deviceScreenWidth: Int = 0
     private var deviceScreenHeight: Int = 0
 
@@ -243,6 +244,10 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     Thread {
                         try {
                             val localId = transport.startPersistentShell(command, timeoutMs)
+                            if (command.contains("scrcpy.Server") || command.contains("scrcpy-server")) {
+                                scrcpyServerShellLocalId = localId
+                                Log.d(TAG, "Saved scrcpy server shell localId=$localId")
+                            }
                             mainHandler.post {
                                 result.success(mapOf(
                                     "localId" to localId,
@@ -440,8 +445,10 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                 "stopMirror" -> {
                     adbTransport?.quietMode = false
                     adbTransport?.stopVideoReadLoop()
+                    adbTransport?.stopControlWriter()
                     scrcpyDecoder?.stop()
                     scrcpyDecoder = null
+                    scrcpyServerShellLocalId = null
                     mirrorTextureEntry?.release()
                     mirrorTextureEntry = null
                     Log.d(TAG, "Mirror stopped")
@@ -465,6 +472,26 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     }
                     result.success(mapOf("log" to log.toString()))
                 }
+                "getServerLog" -> {
+                    val localId = scrcpyServerShellLocalId
+                    val transport = adbTransport
+                    if (localId == null || transport == null) {
+                        result.success(mapOf("log" to "(server shell not started)"))
+                        return@setMethodCallHandler
+                    }
+                    val stream = transport.getStream(localId)
+                    if (stream == null) {
+                        result.success(mapOf("log" to "(stream closed)"))
+                        return@setMethodCallHandler
+                    }
+                    val sb = StringBuilder()
+                    var chunk = stream.dataQueue.poll()
+                    while (chunk != null) {
+                        sb.append(String(chunk, Charsets.UTF_8))
+                        chunk = stream.dataQueue.poll()
+                    }
+                    result.success(mapOf("log" to sb.toString()))
+                }
                 "sendTouch" -> {
                     val controlId = controlStreamLocalId
                     val transport = adbTransport
@@ -483,19 +510,17 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     val y = call.argument<Number>("y")?.toInt() ?: 0
                     val screenWidth = call.argument<Number>("screenWidth")?.toInt() ?: deviceScreenWidth
                     val screenHeight = call.argument<Number>("screenHeight")?.toInt() ?: deviceScreenHeight
-                    val pressure = call.argument<Number>("pressure")?.toInt() ?: 0xFFFF
-                    Thread {
-                        try {
-                            val packet = com.fiscalia.file_cast.scrcpy.ScrcpyControl.buildTouchPacket(
-                                action, x, y, screenWidth, screenHeight, pressure
-                            )
-                            transport.writeStream(controlId, packet, waitForOkay = false)
-                            mainHandler.post { result.success(true) }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "sendTouch error: ${e.message}", e)
-                            mainHandler.post { result.error("TOUCH_ERROR", e.message, null) }
-                        }
-                    }.apply { name = "SendTouch"; isDaemon = true; start() }
+                    val pressure = if (action == 1) 0 else 0xFFFF
+                    try {
+                        val packet = com.fiscalia.file_cast.scrcpy.ScrcpyControl.buildTouchPacket(
+                            action, x, y, screenWidth, screenHeight, pressure
+                        )
+                        transport.enqueueControlWrite(controlId, packet)
+                        result.success(true)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "sendTouch error: ${e.message}", e)
+                        result.error("TOUCH_ERROR", e.message, null)
+                    }
                 }
                 "sendKey" -> {
                     val controlId = controlStreamLocalId
@@ -513,16 +538,14 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     val action = call.argument<Number>("action")?.toInt() ?: 0
                     val keycode = call.argument<Number>("keycode")?.toInt() ?: 0
                     Log.d(TAG, "sendKey: action=$action keycode=$keycode controlId=$controlId")
-                    Thread {
-                        try {
-                            val packet = com.fiscalia.file_cast.scrcpy.ScrcpyControl.buildKeyPacket(action, keycode)
-                            transport.writeStream(controlId, packet, waitForOkay = false)
-                            mainHandler.post { result.success(true) }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "sendKey error: ${e.message}", e)
-                            mainHandler.post { result.error("KEY_ERROR", e.message, null) }
-                        }
-                    }.apply { name = "SendKey"; isDaemon = true; start() }
+                    try {
+                        val packet = com.fiscalia.file_cast.scrcpy.ScrcpyControl.buildKeyPacket(action, keycode)
+                        transport.enqueueControlWrite(controlId, packet)
+                        result.success(true)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "sendKey error: ${e.message}", e)
+                        result.error("KEY_ERROR", e.message, null)
+                    }
                 }
                 "sendScroll" -> {
                     val controlId = controlStreamLocalId
@@ -543,18 +566,16 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     val scrollY = call.argument<Number>("scrollY")?.toInt() ?: 0
                     val screenWidth = call.argument<Number>("screenWidth")?.toInt() ?: deviceScreenWidth
                     val screenHeight = call.argument<Number>("screenHeight")?.toInt() ?: deviceScreenHeight
-                    Thread {
-                        try {
-                            val packet = com.fiscalia.file_cast.scrcpy.ScrcpyControl.buildScrollPacket(
-                                x, y, scrollX, scrollY, screenWidth, screenHeight
-                            )
-                            transport.writeStream(controlId, packet, waitForOkay = false)
-                            mainHandler.post { result.success(true) }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "sendScroll error: ${e.message}", e)
-                            mainHandler.post { result.error("SCROLL_ERROR", e.message, null) }
-                        }
-                    }.apply { name = "SendScroll"; isDaemon = true; start() }
+                    try {
+                        val packet = com.fiscalia.file_cast.scrcpy.ScrcpyControl.buildScrollPacket(
+                            x, y, scrollX, scrollY, screenWidth, screenHeight
+                        )
+                        transport.enqueueControlWrite(controlId, packet)
+                        result.success(true)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "sendScroll error: ${e.message}", e)
+                        result.error("SCROLL_ERROR", e.message, null)
+                    }
                 }
                 "setControlStream" -> {
                     val controlId = call.argument<Number>("controlLocalId")?.toInt()

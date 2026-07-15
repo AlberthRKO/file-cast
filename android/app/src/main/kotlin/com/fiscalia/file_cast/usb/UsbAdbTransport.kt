@@ -590,6 +590,7 @@ class UsbAdbTransport(
         disconnected.set(true)
         isConnected = false
         readerRunning = false
+        stopControlWriter()
         streams.clear()
         releaseInterface()
         notifyState("disconnected", null, getLog())
@@ -945,6 +946,45 @@ class UsbAdbTransport(
     fun getStream(localId: Int): AdbStream? = streams[localId]
 
     fun isAdbConnected(): Boolean = isConnected
+
+    // --- Control write queue (serialized, flow-control compliant) ---
+
+    private val controlWriteQueue = LinkedBlockingQueue<Pair<Int, ByteArray>>()
+    private var controlWriterThread: Thread? = null
+    private val controlWriterRunning = AtomicBoolean(false)
+
+    /**
+     * Enqueue a control packet to be sent in order, respecting ADB flow control
+     * (1 unconfirmed A_WRTE per stream at a time). Does not block the caller.
+     */
+    fun enqueueControlWrite(localId: Int, packet: ByteArray) {
+        controlWriteQueue.offer(localId to packet)
+        startControlWriterIfNeeded()
+    }
+
+    private fun startControlWriterIfNeeded() {
+        if (controlWriterRunning.get()) return
+        controlWriterRunning.set(true)
+        controlWriterThread = thread(name = "AdbControlWriter", isDaemon = true) {
+            log("ControlWriter: started")
+            while (controlWriterRunning.get() && !disconnected.get()) {
+                try {
+                    val (localId, packet) = controlWriteQueue.poll(2, TimeUnit.SECONDS) ?: continue
+                    writeStream(localId, packet, waitForOkay = true, timeoutMs = 3000)
+                } catch (e: Exception) {
+                    log("ControlWriter error: ${e.message}")
+                }
+            }
+            log("ControlWriter: exiting")
+        }
+    }
+
+    fun stopControlWriter() {
+        controlWriterRunning.set(false)
+        controlWriteQueue.clear()
+        controlWriterThread?.interrupt()
+        controlWriterThread = null
+    }
 
     // --- Video read loop ---
 

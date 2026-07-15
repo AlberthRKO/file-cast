@@ -359,6 +359,18 @@ class AdbClient {
     }
   }
 
+  /// Get scrcpy-server stdout/stderr log (drains accumulated output from server shell stream).
+  Future<String> getServerLog() async {
+    try {
+      final result = await _methodChannel.invokeMethod<Map>('getServerLog');
+      if (result == null) return '';
+      return result['log'] as String? ?? '';
+    } on PlatformException catch (e) {
+      print('AdbClient: getServerLog error: ${e.code} - ${e.message}');
+      return '';
+    }
+  }
+
   /// Send a touch event to the target device via control stream.
   /// [action]: 0=down, 1=up, 2=move
   /// [x], [y]: touch coordinates in device screen space
