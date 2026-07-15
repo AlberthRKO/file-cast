@@ -37,26 +37,43 @@ class ScrcpyDecoder {
     // Reuse BufferInfo to avoid allocation per frame in drainOutputBuffers
     private val bufferInfo = MediaCodec.BufferInfo()
 
-    fun start(width: Int, height: Int, surface: Surface) {
-        Log.d(TAG, "start() ${width}x$height")
+    fun start(width: Int, height: Int, surface: Surface, maxRetries: Int = 3): Boolean {
+        Log.d(TAG, "start() ${width}x$height maxRetries=$maxRetries")
 
         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
         }
 
-        val mediaCodec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-        mediaCodec.configure(format, surface, null, 0)
-        mediaCodec.start()
+        var lastError: Exception? = null
+        repeat(maxRetries) { attempt ->
+            if (attempt > 0) {
+                val delayMs = attempt * 500L
+                Log.w(TAG, "Retry attempt $attempt/$maxRetries after ${delayMs}ms")
+                Thread.sleep(delayMs)
+            }
+            try {
+                val mediaCodec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                mediaCodec.configure(format, surface, null, 0)
+                mediaCodec.start()
 
-        this.codec = mediaCodec
-        this.inputSurface = surface
-        this.started = true
-        this.configSent = false
-        this.frameCount = 0
-        this.configCount = 0
+                this.codec = mediaCodec
+                this.inputSurface = surface
+                this.started = true
+                this.configSent = false
+                this.frameCount = 0
+                this.configCount = 0
 
-        Log.d(TAG, "Decoder started (synchronous mode)")
+                Log.d(TAG, "Decoder started (synchronous mode) on attempt ${attempt + 1}")
+                return true
+            } catch (e: Exception) {
+                lastError = e
+                Log.e(TAG, "Decoder start failed on attempt ${attempt + 1}: ${e.message}")
+            }
+        }
+
+        Log.e(TAG, "Decoder start failed after $maxRetries attempts: ${lastError?.message}")
+        return false
     }
 
     fun feedPacket(payload: ByteArray, headerValue: Long) {

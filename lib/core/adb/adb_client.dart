@@ -246,21 +246,33 @@ class AdbClient {
   /// Connect to scrcpy server socket and read device info header.
   /// v2.7 protocol: 1B dummy + 64B name + 4B codec_id + 4B width + 4B height (all BE)
   /// Total header: 77 bytes. Stream stays open for video frames (Phase 6).
+  /// Also opens control stream (second connection to same socket).
+  /// IMPORTANT: With control=true, server waits for BOTH connections before sending header.
   Future<Map<String, dynamic>> connectScrcpySockets() async {
     final logBuffer = StringBuffer();
 
     try {
       final socketName = 'localabstract:scrcpy';
+
+      // Open video stream (first connection)
       logBuffer.writeln('[1] Opening video socket ($socketName)...');
       final streamInfo = await openStream(socketName, timeoutMs: 10000);
       final localId = streamInfo['localId'] as int;
-      logBuffer.writeln('  Stream opened: localId=$localId');
+      logBuffer.writeln('  Video stream opened: localId=$localId');
 
-      logBuffer.writeln('[2] Reading dummy byte...');
+      // Open control stream (second connection) — MUST be done before reading header
+      // because with control=true, server waits for both connections
+      logBuffer.writeln('[2] Opening control socket ($socketName)...');
+      final controlInfo = await openStream(socketName, timeoutMs: 10000);
+      final controlLocalId = controlInfo['localId'] as int;
+      logBuffer.writeln('  Control stream opened: localId=$controlLocalId');
+
+      // Now server sends the video header on the first stream
+      logBuffer.writeln('[3] Reading dummy byte...');
       final dummy = await _readExact(localId, 1);
       logBuffer.writeln('  Dummy byte: 0x${dummy[0].toRadixString(16)}');
 
-      logBuffer.writeln('[3] Reading device name (64 bytes)...');
+      logBuffer.writeln('[4] Reading device name (64 bytes)...');
       final nameBytes = await _readExact(localId, 64);
       final nameEnd = nameBytes.indexWhere((b) => b == 0);
       final deviceName = String.fromCharCodes(
@@ -268,7 +280,7 @@ class AdbClient {
       );
       logBuffer.writeln('  Device: $deviceName');
 
-      logBuffer.writeln('[4] Reading video codec metadata (12 bytes)...');
+      logBuffer.writeln('[5] Reading video codec metadata (12 bytes)...');
       final codecMeta = await _readExact(localId, 12);
       final codecId = (codecMeta[0] << 24) | (codecMeta[1] << 16) | (codecMeta[2] << 8) | codecMeta[3];
       final width = (codecMeta[4] << 24) | (codecMeta[5] << 16) | (codecMeta[6] << 8) | codecMeta[7];
@@ -285,6 +297,7 @@ class AdbClient {
         'height': height,
         'codec': codecFourcc,
         'localId': localId,
+        'controlLocalId': controlLocalId,
         'log': logBuffer.toString(),
       };
     } catch (e) {
@@ -343,6 +356,111 @@ class AdbClient {
     } on PlatformException catch (e) {
       print('AdbClient: getMirrorLog error: ${e.code} - ${e.message}');
       return '';
+    }
+  }
+
+  /// Send a touch event to the target device via control stream.
+  /// [action]: 0=down, 1=up, 2=move
+  /// [x], [y]: touch coordinates in device screen space
+  Future<void> sendTouch(int action, int x, int y, int screenWidth, int screenHeight, {int pressure = 0xFFFF}) async {
+    try {
+      await _methodChannel.invokeMethod('sendTouch', {
+        'action': action,
+        'x': x,
+        'y': y,
+        'screenWidth': screenWidth,
+        'screenHeight': screenHeight,
+        'pressure': pressure,
+      });
+    } on PlatformException catch (e) {
+      print('AdbClient: sendTouch error: ${e.code} - ${e.message}');
+    }
+  }
+
+  /// Send a key event to the target device via control stream.
+  /// [action]: 0=down, 1=up
+  /// [keycode]: Android keycode (e.g., 3=HOME, 4=BACK, 26=POWER)
+  Future<void> sendKey(int action, int keycode) async {
+    try {
+      await _methodChannel.invokeMethod('sendKey', {
+        'action': action,
+        'keycode': keycode,
+      });
+    } on PlatformException catch (e) {
+      print('AdbClient: sendKey error: ${e.code} - ${e.message}');
+    }
+  }
+
+  /// Send a scroll event to the target device via control stream.
+  /// [scrollY]: vertical scroll amount (positive=up, negative=down)
+  Future<void> sendScroll(int x, int y, int scrollX, int scrollY, int screenWidth, int screenHeight) async {
+    try {
+      await _methodChannel.invokeMethod('sendScroll', {
+        'x': x,
+        'y': y,
+        'scrollX': scrollX,
+        'scrollY': scrollY,
+        'screenWidth': screenWidth,
+        'screenHeight': screenHeight,
+      });
+    } on PlatformException catch (e) {
+      print('AdbClient: sendScroll error: ${e.code} - ${e.message}');
+    }
+  }
+
+  /// Send a back key press (down + up) to the target device.
+  Future<void> sendBack() async {
+    await sendKey(0, 4); // ACTION_DOWN, AKEYCODE_BACK
+    await sendKey(1, 4); // ACTION_UP, AKEYCODE_BACK
+  }
+
+  /// Send a home key press (down + up) to the target device.
+  Future<void> sendHome() async {
+    await sendKey(0, 3); // ACTION_DOWN, AKEYCODE_HOME
+    await sendKey(1, 3); // ACTION_UP, AKEYCODE_HOME
+  }
+
+  /// Send a power key press (down + up) to the target device.
+  Future<void> sendPower() async {
+    await sendKey(0, 26); // ACTION_DOWN, AKEYCODE_POWER
+    await sendKey(1, 26); // ACTION_UP, AKEYCODE_POWER
+  }
+
+  /// Send volume up key press.
+  Future<void> sendVolumeUp() async {
+    await sendKey(0, 24); // ACTION_DOWN, AKEYCODE_VOLUME_UP
+    await sendKey(1, 24); // ACTION_UP, AKEYCODE_VOLUME_UP
+  }
+
+  /// Send volume down key press.
+  Future<void> sendVolumeDown() async {
+    await sendKey(0, 25); // ACTION_DOWN, AKEYCODE_VOLUME_DOWN
+    await sendKey(1, 25); // ACTION_UP, AKEYCODE_VOLUME_DOWN
+  }
+
+  /// Send app switch (recent apps) key press.
+  Future<void> sendAppSwitch() async {
+    await sendKey(0, 187); // ACTION_DOWN, AKEYCODE_APP_SWITCH
+    await sendKey(1, 187); // ACTION_UP, AKEYCODE_APP_SWITCH
+  }
+
+  /// Set the control stream localId and device screen dimensions on the native side.
+  Future<void> setControlStream(int controlLocalId, int screenWidth, int screenHeight) async {
+    try {
+      final result = await _methodChannel.invokeMethod<Map>('setControlStream', {
+        'controlLocalId': controlLocalId,
+        'screenWidth': screenWidth,
+        'screenHeight': screenHeight,
+      });
+      if (result != null) {
+        final streamOpen = result['streamOpen'] as bool? ?? false;
+        print('AdbClient: setControlStream result: controlId=${result['controlId']} streamOpen=$streamOpen');
+        if (!streamOpen) {
+          print('AdbClient: WARNING - control stream $controlLocalId is NOT open!');
+        }
+      }
+    } on PlatformException catch (e) {
+      print('AdbClient: setControlStream error: ${e.code} - ${e.message}');
     }
   }
 

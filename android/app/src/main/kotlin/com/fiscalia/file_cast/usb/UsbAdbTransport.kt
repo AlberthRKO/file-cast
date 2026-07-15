@@ -965,9 +965,12 @@ class UsbAdbTransport(
         videoReaderThread = thread(name = "ScrcpyVideoReader", isDaemon = true) {
             log("VideoReader: started for stream $localId")
             var packetCount = 0
-            // Reuse header buffer and ByteBuffer across iterations
+            // Reuse header buffer across iterations
             val headerBuf = ByteArray(12)
             val headerBB = ByteBuffer.wrap(headerBuf).order(ByteOrder.BIG_ENDIAN)
+            // Reuse payload buffer pool to avoid allocation per frame
+            var lastPayloadSize = 0
+            var payloadBuf = ByteArray(0)
             try {
                 while (videoRunning.get() && isConnected && isStreamOpen(localId)) {
                     // Read 12-byte frame header into reusable buffer
@@ -986,14 +989,18 @@ class UsbAdbTransport(
                         break
                     }
 
-                    val payload = readStreamExact(localId, size)
-                    if (payload == null) {
-                        if (!quietMode) log("VideoReader: payload null for size=$size")
+                    // Reuse payload buffer if same size, reallocate only if larger
+                    if (size > payloadBuf.size) {
+                        payloadBuf = ByteArray(size)
+                    }
+                    val payloadRead = readStreamExactInto(localId, payloadBuf, size)
+                    if (payloadRead < size) {
+                        if (!quietMode) log("VideoReader: payload read $payloadRead/$size bytes")
                         break
                     }
 
                     packetCount++
-                    onPacket(headerValue, payload)
+                    onPacket(headerValue, payloadBuf.copyOf(size))
                 }
                 log("VideoReader: loop ended, received $packetCount packets")
             } catch (e: InterruptedException) {

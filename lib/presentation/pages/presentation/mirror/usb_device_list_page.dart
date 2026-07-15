@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:file_cast/core/core.dart';
+import 'package:file_cast/presentation/pages/presentation/mirror/mirror_page.dart';
 import 'package:file_cast/presentation/utils/responsive.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -42,6 +43,7 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
   int? _mirrorTextureId;
   bool _mirrorStarted = false;
   int? _videoStreamLocalId;
+  int? _controlLocalId;
   int? _videoWidth;
   int? _videoHeight;
   String _mirrorLog = '';
@@ -277,12 +279,20 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
         return;
       }
 
-      setState(() => _scrcpyOutput += '[4/5] Executing scrcpy-server...\n');
+      setState(() => _scrcpyOutput += '[4/7] Killing previous scrcpy-server...\n');
+      try {
+        await _adbClient.shellCommand('pkill -f scrcpy.Server 2>/dev/null; sleep 0.5');
+        setState(() => _scrcpyOutput += '  Previous server killed\n');
+      } catch (_) {
+        setState(() => _scrcpyOutput += '  No previous server (ok)\n');
+      }
+
+      setState(() => _scrcpyOutput += '[5/7] Executing scrcpy-server...\n');
       // startPersistentShell keeps the shell stream OPEN → server process stays alive
       // tunnel_forward=true: server creates LocalServerSocket and listens, we connect as client
       // audio=false, control=false: only open video socket for now
       final shellLocalId = await _adbClient.startPersistentShell(
-        'CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / com.genymobile.scrcpy.Server 2.7 tunnel_forward=true audio=false control=false log_level=debug',
+        'CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / com.genymobile.scrcpy.Server 2.7 tunnel_forward=true audio=false control=true log_level=debug',
       );
       setState(
         () => _scrcpyOutput += '  Server shell stream: localId=$shellLocalId\n',
@@ -291,26 +301,32 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
       // Give server time to initialize + create LocalServerSocket + start accept()
       await Future.delayed(const Duration(milliseconds: 3000));
 
-      setState(() => _scrcpyOutput += '[5/5] Connecting to video socket...\n');
+      setState(() => _scrcpyOutput += '[6/7] Connecting to video socket...\n');
       final videoInfo = await _adbClient.connectScrcpySockets();
       _videoStreamLocalId = videoInfo['localId'] as int;
+      final controlLocalId = videoInfo['controlLocalId'] as int;
+      _controlLocalId = controlLocalId;
       _videoWidth = videoInfo['width'] as int;
       _videoHeight = videoInfo['height'] as int;
       setState(() {
         _scrcpyOutput += '  Device: ${videoInfo['deviceName']}\n';
         _scrcpyOutput += '  Screen: ${_videoWidth}x$_videoHeight\n';
         _scrcpyOutput += '  Codec: ${videoInfo['codec']}\n';
+        _scrcpyOutput += '  Control stream: localId=$controlLocalId\n';
         _scrcpyOutput += '\n--- Phase 5 SUCCESS ---\n';
-        _scrcpyOutput += '\nStarting Phase 6: Mirror...\n';
       });
 
+      // Set control stream on native side
+      await _adbClient.setControlStream(controlLocalId, _videoWidth!, _videoHeight!);
+
       // Phase 6: Create texture and start mirror
-      setState(() => _scrcpyOutput += '[6/7] Creating mirror texture...\n');
+      setState(() => _scrcpyOutput += '\nStarting Phase 6: Mirror...\n');
+      setState(() => _scrcpyOutput += '[7/9] Creating mirror texture...\n');
       final textureId = await _adbClient.createMirrorTexture();
       _mirrorTextureId = textureId;
       setState(() => _scrcpyOutput += '  Texture id=$textureId\n');
 
-      setState(() => _scrcpyOutput += '[7/7] Starting mirror decoder...\n');
+      setState(() => _scrcpyOutput += '[8/9] Starting mirror decoder...\n');
       await _adbClient.startMirror(
         _videoWidth!,
         _videoHeight!,
@@ -322,6 +338,21 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
         _scrcpyOutput += '\n=== PHASE 6 SUCCESS: MIRROR ACTIVE ===\n';
         _scrcpyRunning = false;
       });
+
+      // Navigate to dedicated mirror page
+      if (mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => MirrorPage(
+              textureId: _mirrorTextureId!,
+              videoWidth: _videoWidth!,
+              videoHeight: _videoHeight!,
+              controlLocalId: videoInfo['controlLocalId'] as int,
+              deviceName: videoInfo['deviceName'] as String,
+            ),
+          ),
+        );
+      }
 
       // Start periodic log refresh to show decoder status (5s to avoid overhead)
       _mirrorLogTimer?.cancel();
@@ -353,6 +384,7 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
       _mirrorTextureId = null;
       _mirrorLog = '';
       _videoStreamLocalId = null;
+      _controlLocalId = null;
       _videoWidth = null;
       _videoHeight = null;
       // Keep _adbLog so user can copy the full log
@@ -720,6 +752,23 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
                     color: Colors.green.shade700,
                   ),
                 ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.open_in_new, color: Colors.blue),
+                onPressed: _mirrorTextureId != null ? () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => MirrorPage(
+                        textureId: _mirrorTextureId!,
+                        videoWidth: _videoWidth!,
+                        videoHeight: _videoHeight!,
+                        controlLocalId: _controlLocalId!,
+                        deviceName: _connectingDeviceName ?? 'Device',
+                      ),
+                    ),
+                  );
+                } : null,
+                tooltip: 'Abrir Mirror',
               ),
               IconButton(
                 icon: const Icon(Icons.stop_circle, color: Colors.red),

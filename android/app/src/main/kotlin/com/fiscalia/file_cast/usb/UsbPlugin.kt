@@ -45,6 +45,9 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     // Mirror components
     private var mirrorTextureEntry: TextureRegistry.SurfaceTextureEntry? = null
     private var scrcpyDecoder: ScrcpyDecoder? = null
+    private var controlStreamLocalId: Int? = null
+    private var deviceScreenWidth: Int = 0
+    private var deviceScreenHeight: Int = 0
 
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -391,7 +394,14 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
 
                             val decoder = ScrcpyDecoder()
                             scrcpyDecoder = decoder
-                            decoder.start(width, height, surface)
+                            val started = decoder.start(width, height, surface)
+                            if (!started) {
+                                Log.e(TAG, "Decoder failed to start after retries")
+                                mainHandler.post {
+                                    result.error("CODEC_ERROR", "MediaCodec failed to start after 3 attempts. Error 0xffffec77 may indicate insufficient codec resources.", null)
+                                }
+                                return@Thread
+                            }
 
                             // Suppress verbose logging during active mirror for performance
                             transport.quietMode = true
@@ -440,16 +450,128 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                 "getMirrorLog" -> {
                     val decoder = scrcpyDecoder
                     val transport = adbTransport
+                    val controlId = controlStreamLocalId
                     val log = StringBuilder()
                     if (decoder != null) {
                         log.appendLine("Decoder: started=${decoder.isStarted()} frames=${decoder.getFrameCount()} configs=${decoder.getConfigCount()}")
                     } else {
                         log.appendLine("Decoder: not initialized")
                     }
-                    if (transport != null) {
-                        log.appendLine("Transport log:\n${transport.getLog()}")
+                    if (controlId != null && transport != null) {
+                        val open = transport.isStreamOpen(controlId)
+                        log.appendLine("Control stream: localId=$controlId open=$open")
+                    } else {
+                        log.appendLine("Control stream: not set")
                     }
                     result.success(mapOf("log" to log.toString()))
+                }
+                "sendTouch" -> {
+                    val controlId = controlStreamLocalId
+                    val transport = adbTransport
+                    if (controlId == null || transport == null) {
+                        Log.e(TAG, "sendTouch rejected: controlId=$controlId transport=${transport != null}")
+                        result.error("NOT_READY", "Control stream not initialized", null)
+                        return@setMethodCallHandler
+                    }
+                    if (!transport.isStreamOpen(controlId)) {
+                        Log.e(TAG, "sendTouch rejected: control stream $controlId is closed")
+                        result.error("STREAM_CLOSED", "Control stream $controlId is closed", null)
+                        return@setMethodCallHandler
+                    }
+                    val action = call.argument<Number>("action")?.toInt() ?: 0
+                    val x = call.argument<Number>("x")?.toInt() ?: 0
+                    val y = call.argument<Number>("y")?.toInt() ?: 0
+                    val screenWidth = call.argument<Number>("screenWidth")?.toInt() ?: deviceScreenWidth
+                    val screenHeight = call.argument<Number>("screenHeight")?.toInt() ?: deviceScreenHeight
+                    val pressure = call.argument<Number>("pressure")?.toInt() ?: 0xFFFF
+                    Thread {
+                        try {
+                            val packet = com.fiscalia.file_cast.scrcpy.ScrcpyControl.buildTouchPacket(
+                                action, x, y, screenWidth, screenHeight, pressure
+                            )
+                            transport.writeStream(controlId, packet, waitForOkay = false)
+                            mainHandler.post { result.success(true) }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "sendTouch error: ${e.message}", e)
+                            mainHandler.post { result.error("TOUCH_ERROR", e.message, null) }
+                        }
+                    }.apply { name = "SendTouch"; isDaemon = true; start() }
+                }
+                "sendKey" -> {
+                    val controlId = controlStreamLocalId
+                    val transport = adbTransport
+                    if (controlId == null || transport == null) {
+                        Log.e(TAG, "sendKey rejected: controlId=$controlId transport=${transport != null}")
+                        result.error("NOT_READY", "Control stream not initialized", null)
+                        return@setMethodCallHandler
+                    }
+                    if (!transport.isStreamOpen(controlId)) {
+                        Log.e(TAG, "sendKey rejected: control stream $controlId is closed")
+                        result.error("STREAM_CLOSED", "Control stream $controlId is closed", null)
+                        return@setMethodCallHandler
+                    }
+                    val action = call.argument<Number>("action")?.toInt() ?: 0
+                    val keycode = call.argument<Number>("keycode")?.toInt() ?: 0
+                    Log.d(TAG, "sendKey: action=$action keycode=$keycode controlId=$controlId")
+                    Thread {
+                        try {
+                            val packet = com.fiscalia.file_cast.scrcpy.ScrcpyControl.buildKeyPacket(action, keycode)
+                            transport.writeStream(controlId, packet, waitForOkay = false)
+                            mainHandler.post { result.success(true) }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "sendKey error: ${e.message}", e)
+                            mainHandler.post { result.error("KEY_ERROR", e.message, null) }
+                        }
+                    }.apply { name = "SendKey"; isDaemon = true; start() }
+                }
+                "sendScroll" -> {
+                    val controlId = controlStreamLocalId
+                    val transport = adbTransport
+                    if (controlId == null || transport == null) {
+                        Log.e(TAG, "sendScroll rejected: controlId=$controlId transport=${transport != null}")
+                        result.error("NOT_READY", "Control stream not initialized", null)
+                        return@setMethodCallHandler
+                    }
+                    if (!transport.isStreamOpen(controlId)) {
+                        Log.e(TAG, "sendScroll rejected: control stream $controlId is closed")
+                        result.error("STREAM_CLOSED", "Control stream $controlId is closed", null)
+                        return@setMethodCallHandler
+                    }
+                    val x = call.argument<Number>("x")?.toInt() ?: 0
+                    val y = call.argument<Number>("y")?.toInt() ?: 0
+                    val scrollX = call.argument<Number>("scrollX")?.toInt() ?: 0
+                    val scrollY = call.argument<Number>("scrollY")?.toInt() ?: 0
+                    val screenWidth = call.argument<Number>("screenWidth")?.toInt() ?: deviceScreenWidth
+                    val screenHeight = call.argument<Number>("screenHeight")?.toInt() ?: deviceScreenHeight
+                    Thread {
+                        try {
+                            val packet = com.fiscalia.file_cast.scrcpy.ScrcpyControl.buildScrollPacket(
+                                x, y, scrollX, scrollY, screenWidth, screenHeight
+                            )
+                            transport.writeStream(controlId, packet, waitForOkay = false)
+                            mainHandler.post { result.success(true) }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "sendScroll error: ${e.message}", e)
+                            mainHandler.post { result.error("SCROLL_ERROR", e.message, null) }
+                        }
+                    }.apply { name = "SendScroll"; isDaemon = true; start() }
+                }
+                "setControlStream" -> {
+                    val controlId = call.argument<Number>("controlLocalId")?.toInt()
+                    val width = call.argument<Number>("screenWidth")?.toInt()
+                    val height = call.argument<Number>("screenHeight")?.toInt()
+                    val transport = adbTransport
+                    val streamOpen = if (controlId != null && transport != null) {
+                        transport.isStreamOpen(controlId)
+                    } else false
+                    Log.d(TAG, "setControlStream: localId=$controlId ${width}x$height streamOpen=$streamOpen")
+                    controlStreamLocalId = controlId
+                    if (width != null) deviceScreenWidth = width
+                    if (height != null) deviceScreenHeight = height
+                    result.success(mapOf(
+                        "controlId" to controlId,
+                        "streamOpen" to streamOpen,
+                    ))
                 }
                 else -> result.notImplemented()
             }
