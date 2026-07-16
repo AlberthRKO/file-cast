@@ -317,7 +317,22 @@ class _UsbDeviceListPageState extends State<UsbDeviceListPage> {
       });
 
       // Set control stream on native side
-      await _adbClient.setControlStream(controlLocalId, _videoWidth!, _videoHeight!);
+      final controlResult = await _adbClient.setControlStream(controlLocalId, _videoWidth!, _videoHeight!);
+      final wmWidth = controlResult['wmSizeWidth'] as int? ?? 0;
+      final wmHeight = controlResult['wmSizeHeight'] as int? ?? 0;
+      final wmRaw = controlResult['wmSizeRaw'] as String? ?? '';
+      setState(() {
+        _scrcpyOutput += '  Header size: ${_videoWidth}x$_videoHeight\n';
+        if (wmWidth > 0) {
+          _scrcpyOutput += '  wm size: ${wmWidth}x$wmHeight\n';
+          if (wmWidth != _videoWidth || wmHeight != _videoHeight) {
+            _scrcpyOutput += '  *** MISMATCH: header vs wm size ***\n';
+            _scrcpyOutput += '  Touch will use wm size dimensions\n';
+          }
+        } else if (wmRaw.isNotEmpty) {
+          _scrcpyOutput += '  wm size raw: $wmRaw\n';
+        }
+      });
 
       // Phase 6: Create texture and start mirror
       setState(() => _scrcpyOutput += '\nStarting Phase 6: Mirror...\n');

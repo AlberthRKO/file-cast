@@ -49,6 +49,10 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     private var scrcpyServerShellLocalId: Int? = null
     private var deviceScreenWidth: Int = 0
     private var deviceScreenHeight: Int = 0
+    private var wmSizeWidth: Int = 0
+    private var wmSizeHeight: Int = 0
+    private var wmSizeRaw: String = ""
+    private var lastTouchInfo: String = "none"
 
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -449,6 +453,9 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     scrcpyDecoder?.stop()
                     scrcpyDecoder = null
                     scrcpyServerShellLocalId = null
+                    wmSizeWidth = 0
+                    wmSizeHeight = 0
+                    wmSizeRaw = ""
                     mirrorTextureEntry?.release()
                     mirrorTextureEntry = null
                     Log.d(TAG, "Mirror stopped")
@@ -470,6 +477,16 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     } else {
                         log.appendLine("Control stream: not set")
                     }
+                    log.appendLine("Header size: ${deviceScreenWidth}x${deviceScreenHeight}")
+                    if (wmSizeWidth > 0) {
+                        log.appendLine("wm size: ${wmSizeWidth}x${wmSizeHeight}")
+                        if (wmSizeWidth != deviceScreenWidth || wmSizeHeight != deviceScreenHeight) {
+                            log.appendLine("NOTE: header and wm size DIFFER!")
+                        }
+                    } else if (wmSizeRaw.isNotEmpty()) {
+                        log.appendLine("wm size: $wmSizeRaw")
+                    }
+                    log.appendLine("Last touch: $lastTouchInfo")
                     result.success(mapOf("log" to log.toString()))
                 }
                 "getServerLog" -> {
@@ -492,6 +509,37 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     }
                     result.success(mapOf("log" to sb.toString()))
                 }
+                "getDeviceScreenSize" -> {
+                    val transport = adbTransport
+                    if (transport == null || !transport.isAdbConnected()) {
+                        result.error("NOT_CONNECTED", "ADB not connected", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        val output = transport.shellCommand("wm size")
+                        val match = Regex("Physical size: (\\d+)x(\\d+)").find(output)
+                        if (match != null) {
+                            val w = match.groupValues[1].toInt()
+                            val h = match.groupValues[2].toInt()
+                            Log.d(TAG, "Device screen size: ${w}x${h}")
+                            result.success(mapOf("width" to w, "height" to h))
+                        } else {
+                            val matchOverride = Regex("Override size: (\\d+)x(\\d+)").find(output)
+                            if (matchOverride != null) {
+                                val w = matchOverride.groupValues[1].toInt()
+                                val h = matchOverride.groupValues[2].toInt()
+                                Log.d(TAG, "Device screen size (override): ${w}x${h}")
+                                result.success(mapOf("width" to w, "height" to h))
+                            } else {
+                                Log.e(TAG, "Could not parse wm size output: $output")
+                                result.error("PARSE_ERROR", "Could not parse screen size: $output", null)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "getDeviceScreenSize error: ${e.message}")
+                        result.error("SCREEN_SIZE_ERROR", e.message, null)
+                    }
+                }
                 "sendTouch" -> {
                     val controlId = controlStreamLocalId
                     val transport = adbTransport
@@ -508,9 +556,13 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     val action = call.argument<Number>("action")?.toInt() ?: 0
                     val x = call.argument<Number>("x")?.toInt() ?: 0
                     val y = call.argument<Number>("y")?.toInt() ?: 0
-                    val screenWidth = call.argument<Number>("screenWidth")?.toInt() ?: deviceScreenWidth
-                    val screenHeight = call.argument<Number>("screenHeight")?.toInt() ?: deviceScreenHeight
+                    // Always use the screen dimensions from the video header (set by setControlStream)
+                    // These match what the server reports and expects in touch packets
+                    val screenWidth = deviceScreenWidth
+                    val screenHeight = deviceScreenHeight
                     val pressure = if (action == 1) 0 else 0xFFFF
+                    Log.d(TAG, "sendTouch: action=$action x=$x y=$y screen=${screenWidth}x${screenHeight}")
+                    lastTouchInfo = "action=$action x=$x y=$y screen=${screenWidth}x${screenHeight}"
                     try {
                         val packet = com.fiscalia.file_cast.scrcpy.ScrcpyControl.buildTouchPacket(
                             action, x, y, screenWidth, screenHeight, pressure
@@ -589,9 +641,54 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     controlStreamLocalId = controlId
                     if (width != null) deviceScreenWidth = width
                     if (height != null) deviceScreenHeight = height
+
+                    // Query wm size ONCE (async) to compare with header dimensions
+                    Thread {
+                        try {
+                            if (transport != null && transport.isAdbConnected()) {
+                                val output = transport.shellCommand("wm size")
+                                wmSizeRaw = output.trim()
+                                val match = Regex("Physical size: (\\d+)x(\\d+)").find(wmSizeRaw)
+                                if (match != null) {
+                                    wmSizeWidth = match.groupValues[1].toInt()
+                                    wmSizeHeight = match.groupValues[2].toInt()
+                                } else {
+                                    val matchOvr = Regex("Override size: (\\d+)x(\\d+)").find(wmSizeRaw)
+                                    if (matchOvr != null) {
+                                        wmSizeWidth = matchOvr.groupValues[1].toInt()
+                                        wmSizeHeight = matchOvr.groupValues[2].toInt()
+                                    }
+                                }
+                                Log.d(TAG, "wm size: raw='$wmSizeRaw' parsed=${wmSizeWidth}x${wmSizeHeight}")
+
+                                // If wm size differs from header, use wm size for touch
+                                if (wmSizeWidth > 0 && wmSizeHeight > 0 &&
+                                    (wmSizeWidth != deviceScreenWidth || wmSizeHeight != deviceScreenHeight)) {
+                                    Log.w(TAG, "MISMATCH: header=${deviceScreenWidth}x${deviceScreenHeight} vs wm=${wmSizeWidth}x${wmSizeHeight}")
+                                    Log.w(TAG, "Using wm size for touch packets")
+                                    deviceScreenWidth = wmSizeWidth
+                                    deviceScreenHeight = wmSizeHeight
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "wm size query failed: ${e.message}")
+                            wmSizeRaw = "ERROR: ${e.message}"
+                        }
+                    }.apply {
+                        name = "WmSizeQuery"
+                        isDaemon = true
+                        start()
+                    }
+
+                    // Return immediately — wm size runs async, touch will use header dims until wm completes
                     result.success(mapOf(
                         "controlId" to controlId,
                         "streamOpen" to streamOpen,
+                        "headerWidth" to width,
+                        "headerHeight" to height,
+                        "wmSizeWidth" to wmSizeWidth,
+                        "wmSizeHeight" to wmSizeHeight,
+                        "wmSizeRaw" to wmSizeRaw,
                     ))
                 }
                 else -> result.notImplemented()

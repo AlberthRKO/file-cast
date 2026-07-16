@@ -282,13 +282,17 @@ class AdbClient {
 
       logBuffer.writeln('[5] Reading video codec metadata (12 bytes)...');
       final codecMeta = await _readExact(localId, 12);
+      final hexBytes = codecMeta.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+      logBuffer.writeln('  Raw bytes: $hexBytes');
       final codecId = (codecMeta[0] << 24) | (codecMeta[1] << 16) | (codecMeta[2] << 8) | codecMeta[3];
       final width = (codecMeta[4] << 24) | (codecMeta[5] << 16) | (codecMeta[6] << 8) | codecMeta[7];
       final height = (codecMeta[8] << 24) | (codecMeta[9] << 16) | (codecMeta[10] << 8) | codecMeta[11];
       final codecFourcc = String.fromCharCodes(codecMeta.sublist(0, 4));
 
-      logBuffer.writeln('  Codec: $codecFourcc (0x${codecId.toRadixString(16)})');
+      logBuffer.writeln('  Codec: $codecFourcc (id=0x${codecId.toRadixString(16)})');
       logBuffer.writeln('  Screen: ${width}x$height');
+      logBuffer.writeln('  (bytes[4..7] width raw: ${codecMeta[4]},${codecMeta[5]},${codecMeta[6]},${codecMeta[7]})');
+      logBuffer.writeln('  (bytes[8..11] height raw: ${codecMeta[8]},${codecMeta[9]},${codecMeta[10]},${codecMeta[11]})');
       logBuffer.writeln('\n--- Phase 5 SUCCESS: Server connected! ---');
 
       return {
@@ -368,6 +372,22 @@ class AdbClient {
     } on PlatformException catch (e) {
       print('AdbClient: getServerLog error: ${e.code} - ${e.message}');
       return '';
+    }
+  }
+
+  /// Get the actual device screen size via `wm size`.
+  /// Returns (width, height) in pixels.
+  Future<(int, int)?> getDeviceScreenSize() async {
+    try {
+      final result = await _methodChannel.invokeMethod<Map>('getDeviceScreenSize');
+      if (result == null) return null;
+      final w = result['width'] as int?;
+      final h = result['height'] as int?;
+      if (w != null && h != null) return (w, h);
+      return null;
+    } on PlatformException catch (e) {
+      print('AdbClient: getDeviceScreenSize error: ${e.code} - ${e.message}');
+      return null;
     }
   }
 
@@ -457,7 +477,8 @@ class AdbClient {
   }
 
   /// Set the control stream localId and device screen dimensions on the native side.
-  Future<void> setControlStream(int controlLocalId, int screenWidth, int screenHeight) async {
+  /// Returns wm size info for debugging.
+  Future<Map<String, dynamic>> setControlStream(int controlLocalId, int screenWidth, int screenHeight) async {
     try {
       final result = await _methodChannel.invokeMethod<Map>('setControlStream', {
         'controlLocalId': controlLocalId,
@@ -465,14 +486,23 @@ class AdbClient {
         'screenHeight': screenHeight,
       });
       if (result != null) {
-        final streamOpen = result['streamOpen'] as bool? ?? false;
-        print('AdbClient: setControlStream result: controlId=${result['controlId']} streamOpen=$streamOpen');
+        final map = result.map((key, value) => MapEntry(key.toString(), value));
+        final streamOpen = map['streamOpen'] as bool? ?? false;
+        final wmWidth = map['wmSizeWidth'] as int? ?? 0;
+        final wmHeight = map['wmSizeHeight'] as int? ?? 0;
+        final wmRaw = map['wmSizeRaw'] as String? ?? '';
+        print('AdbClient: setControlStream: controlId=${map['controlId']} streamOpen=$streamOpen');
+        print('  header: ${map['headerWidth']}x${map['headerHeight']}');
+        print('  wm size: ${wmWidth}x${wmHeight} raw="$wmRaw"');
         if (!streamOpen) {
           print('AdbClient: WARNING - control stream $controlLocalId is NOT open!');
         }
+        return map;
       }
+      return {};
     } on PlatformException catch (e) {
       print('AdbClient: setControlStream error: ${e.code} - ${e.message}');
+      return {};
     }
   }
 
