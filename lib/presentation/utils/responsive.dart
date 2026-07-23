@@ -9,7 +9,6 @@ class Responsive {
     required this.inch,
   });
 
-  // Funcion que devuelve el acho , alto y total de pulgadas de la pantalla
   factory Responsive.of(BuildContext context) {
     final data = MediaQuery.of(context);
     final size = data.size;
@@ -33,4 +32,10 @@ class Responsive {
   double inchPercent(double percent) {
     return inch * percent / 100;
   }
+
+  double get shortestSide => math.min(width, height);
+
+  bool get isLandscape => width > height;
+
+  double get scaleFactor => shortestSide / 375;
 }

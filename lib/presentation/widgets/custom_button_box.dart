@@ -1,7 +1,6 @@
 import 'package:file_cast/core/constants/complemento.dart';
-import 'package:file_cast/core/theme/colors.dart';
+import 'package:file_cast/core/core.dart';
 import 'package:file_cast/presentation/providers/theme_controller.dart';
-import 'package:file_cast/presentation/utils/responsive.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:provider/provider.dart';
@@ -16,27 +15,25 @@ class CustomButtonBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
     return Container(
-      width: size.width,
-      height: 45,
+      width: 1.sw,
+      height: 45.h,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        // color: primary.withOpacity(0.7),
         color: primary,
-        borderRadius: BorderRadius.circular(17.5),
+        borderRadius: BorderRadius.circular(17.5.r),
         boxShadow: [
           BoxShadow(
             color: primary.withOpacity(0.8),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
+            blurRadius: 6.r,
+            offset: Offset(0, 2.h),
           ),
         ],
       ),
       child: Text(
         title,
-        style: const TextStyle(
-          fontSize: 16,
+        style: TextStyle(
+          fontSize: 16.sp,
           fontWeight: FontWeight.w700,
           color: textWhite,
         ),
@@ -57,14 +54,13 @@ class CustomButtonBoxDelete extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
     return Container(
-      width: size.width * .3,
-      height: 40,
+      width: 0.3.sw,
+      height: 40.h,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: typeCancel ? textWhite : deleteColor.withOpacity(0.7),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(AppDimensions.radiusS),
         border: typeCancel
             ? Border.all(color: deleteColor.withOpacity(.7))
             : null,
@@ -74,15 +70,15 @@ class CustomButtonBoxDelete extends StatelessWidget {
           else
             BoxShadow(
               color: deleteColor.withOpacity(0.5),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
+              blurRadius: 6.r,
+              offset: Offset(0, 2.h),
             ),
         ],
       ),
       child: Text(
         title,
         style: TextStyle(
-          fontSize: 16,
+          fontSize: 16.sp,
           fontWeight: FontWeight.w700,
           color: typeCancel ? deleteColor : textWhite,
         ),
@@ -115,14 +111,13 @@ class CustomButtonBoxCrud extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
     return Container(
-      width: sizeWidth == 0 ? size.width * .4 : sizeWidth,
-      height: 40,
+      width: sizeWidth == 0 ? 0.4.sw : sizeWidth,
+      height: 40.h,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: typeCancel ? textWhite : color.withOpacity(1),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(AppDimensions.radiusS),
         border: typeCancel
             ? Border.all(color: deleteColor.withOpacity(.7))
             : option
@@ -134,32 +129,25 @@ class CustomButtonBoxCrud extends StatelessWidget {
           else
             BoxShadow(
               color: color.withOpacity(0.5),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
+              blurRadius: 6.r,
+              offset: Offset(0, 2.h),
             ),
         ],
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          if (!iconActive)
-            Container()
-          else
+          if (iconActive)
             SvgPicture.asset(
               '$assetImgIcon$icon',
               color: textWhite,
-              width: 18,
+              width: 18.r,
             ),
-          if (!iconActive)
-            Container()
-          else
-            const SizedBox(
-              width: 10,
-            ),
+          if (iconActive) SizedBox(width: AppDimensions.spaceS),
           Text(
             title,
             style: TextStyle(
-              fontSize: 16,
+              fontSize: 16.sp,
               fontWeight: FontWeight.w700,
               color: typeCancel ? deleteColor : titleColor,
             ),
@@ -194,6 +182,7 @@ class CustomButtonBoxStyle extends StatelessWidget {
     this.isShadowCustom = false,
     this.isShadow = false,
   });
+
   final bool reverse;
   final bool isBorder;
   final String title;
@@ -217,25 +206,20 @@ class CustomButtonBoxStyle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final responsive = Responsive.of(context);
     final ThemeController themeController = context.watch();
     final bool darkMode = themeController.darkMode;
     return InkWell(
       onTap: funcion,
-      borderRadius: BorderRadius.circular(15),
+      borderRadius: BorderRadius.circular(AppDimensions.radiusL),
       child: Container(
-        width: sizeWidth == 0 ? responsive.width * .4 : sizeWidth,
+        width: sizeWidth == 0 ? 0.4.sw : sizeWidth,
         height: sizeHeight,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: cancel ? Theme.of(context).cardColor : color,
-          borderRadius: BorderRadius.circular(15),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusL),
           border: Border.all(
-            width: cancel
-                ? 1
-                : isBorder
-                ? 1
-                : 0,
+            width: cancel ? 1 : isBorder ? 1 : 0,
             color: cancel
                 ? deleteColor
                 : isBorder
@@ -250,8 +234,8 @@ class CustomButtonBoxStyle extends StatelessWidget {
                     color: darkMode
                         ? Theme.of(context).primaryColor.withOpacity(0.15)
                         : Theme.of(context).primaryColor.withOpacity(0.25),
-                    blurRadius: 15,
-                    offset: const Offset(0, 7),
+                    blurRadius: 15.r,
+                    offset: Offset(0, 7.h),
                   ),
                 ]
               : [
@@ -259,40 +243,34 @@ class CustomButtonBoxStyle extends StatelessWidget {
                     color: cancel
                         ? deleteColor.withOpacity(0.1)
                         : color.withOpacity(0.5),
-                    blurRadius: 6,
-                    offset: const Offset(0, 2),
+                    blurRadius: 6.r,
+                    offset: Offset(0, 2.h),
                   ),
                 ],
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            if (!iconActive)
-              Container()
-            else
+            if (iconActive)
               isLoading
-                  ? CircularProgressIndicator(
-                      color: titleColor,
-                      strokeWidth: 2,
-                      strokeAlign: -7,
-                    ) // Muestra el loader
+                  ? SizedBox(
+                      width: (fontSize ?? 14.sp) + 2,
+                      height: (fontSize ?? 14.sp) + 2,
+                      child: CircularProgressIndicator(
+                        color: titleColor,
+                        strokeWidth: 2,
+                      ),
+                    )
                   : SvgPicture.asset(
                       '$assetImgIcon$icon',
                       color: cancel ? deleteColor : titleColor,
-                      width: fontSize == null
-                          ? responsive.heightPercent(2)
-                          : fontSize! + 2,
+                      width: fontSize == null ? 20.r : fontSize! + 2,
                     ),
-            if (!iconActive)
-              Container()
-            else
-              const SizedBox(
-                width: 10,
-              ),
+            if (iconActive) SizedBox(width: AppDimensions.spaceS),
             Text(
               title,
               style: TextStyle(
-                fontSize: fontSize ?? responsive.heightPercent(1.7),
+                fontSize: fontSize ?? 14.sp,
                 fontWeight: fontWeight,
                 color: cancel ? deleteColor : titleColor,
               ),

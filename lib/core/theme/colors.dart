@@ -46,7 +46,7 @@ const Color colorAgetic = Color(0xFF2B3486);
 //Colors dark:
 const Color fondoColorDark2 = Color.fromARGB(255, 39, 36, 56);
 //const Color fondoColorDark = Color(0xff1F1D2B);
-const Color fondoColorDark = Color(0xff09122D);
+const Color fondoColorDark = Color(0xff131323);
 const Color colorCardDark = Color(0xff252837);
 const Color textDark = Color(0xFFEEEEEE);
 const Color primaryDark = Color(0xFF89A878);

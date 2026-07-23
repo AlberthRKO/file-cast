@@ -1,8 +1,8 @@
 import 'package:file_cast/core/constants/complemento.dart';
-import 'package:file_cast/core/theme/colors.dart';
-import 'package:file_cast/presentation/utils/responsive.dart';
+import 'package:file_cast/core/core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import 'package:flutter_svg/svg.dart';
 import 'package:intl/intl.dart';
 
@@ -66,7 +66,6 @@ class _TextFormCustomState extends State<TextFormCustom> {
 
   @override
   Widget build(BuildContext context) {
-    final responsive = Responsive.of(context);
     return TextFormField(
       enabled: widget.enabled,
       maxLength: widget.maxLength,
@@ -99,31 +98,32 @@ class _TextFormCustomState extends State<TextFormCustom> {
       initialValue: widget.valor,
       maxLines: widget.maxLine == 0 ? null : widget.maxLine,
       style: TextStyle(
-        fontSize: responsive.heightPercent(1.4),
+        fontSize: AppTokens.fontBody(context),
         color: Theme.of(context).textTheme.bodyLarge!.color,
       ),
       cursorColor: Theme.of(context).textTheme.bodyLarge!.color,
       decoration: InputDecoration(
         prefixIcon: Container(
-          height: responsive.widthPercent(10),
-          width: responsive.widthPercent(10),
-          // color: grey,
+          height: 37.5.w,
+          width: 37.5.w,
           alignment: Alignment.center,
           child: SvgPicture.asset(
             assetImgIcon + widget.prefixIcon,
-            height: widget.iconHeight,
+            height: widget.iconHeight.r,
             color: widget.iconColor,
           ),
         ),
         labelText: widget.labelText,
         labelStyle: TextStyle(
           color: Theme.of(context).primaryColor.withOpacity(0.5),
-          fontSize: responsive.heightPercent(1.4),
+          fontSize: AppTokens.fontBody(context),
           height: 1,
         ),
         suffixIcon: widget.isPassword
-            ? (widget.blockedViewPass ? null : togglePass(responsive))
-            : (widget.isActionField ? actionVerification(responsive) : null),
+            ? (widget.blockedViewPass ? null : _togglePass())
+            : (widget.isActionField
+                ? _actionVerification()
+                : null),
         errorMaxLines: 2,
       ),
       validator: (text) {
@@ -132,7 +132,7 @@ class _TextFormCustomState extends State<TextFormCustom> {
     );
   }
 
-  Widget togglePass(Responsive responsive) {
+  Widget _togglePass() {
     return InkWell(
       onTap: () {
         setState(() {
@@ -140,28 +140,26 @@ class _TextFormCustomState extends State<TextFormCustom> {
         });
       },
       child: Container(
-        height: responsive.widthPercent(12),
-        width: responsive.widthPercent(12),
-        // color: grey,
+        height: 45.w,
+        width: 45.w,
         alignment: Alignment.center,
         child: SvgPicture.asset(
           _isViewPass
               ? '${assetImgIcon}eye.svg'
               : '${assetImgIcon}eyeClose.svg',
-          height: widget.iconHeight,
+          height: widget.iconHeight.r,
           color: Theme.of(context).primaryColor.withOpacity(.7),
         ),
       ),
     );
   }
 
-  Widget actionVerification(Responsive responsive) {
+  Widget _actionVerification() {
     return InkWell(
       onTap: widget.onActionField,
       child: Container(
-        height: responsive.widthPercent(12),
-        width: responsive.widthPercent(12),
-        // color: grey,
+        height: 45.w,
+        width: 45.w,
         alignment: Alignment.center,
         child: widget.isActionFieldVerification == 2
             ? Padding(
@@ -175,7 +173,7 @@ class _TextFormCustomState extends State<TextFormCustom> {
                 widget.isActionFieldVerification == 1
                     ? '${assetImgIcon}check.svg'
                     : '${assetImgIcon}verificaciones.svg',
-                height: 20,
+                height: AppDimensions.iconM,
                 color: Theme.of(context).primaryColor,
               ),
       ),
@@ -209,7 +207,7 @@ class _SwitchCustomState extends State<SwitchCustom> {
           widget.text,
           style: TextStyle(
             color: secondary.withOpacity(0.5),
-            fontSize: 12,
+            fontSize: 12.sp,
           ),
         ),
         Switch(
@@ -252,7 +250,7 @@ class _SwitchCustom2State extends State<SwitchCustom2> {
               widget.text,
               style: TextStyle(
                 color: secondary.withOpacity(0.5),
-                fontSize: 12,
+                fontSize: 12.sp,
               ),
             ),
             Switch(
@@ -317,7 +315,6 @@ class TextFieldSearch extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final responsive = Responsive.of(context);
     return TextFormField(
       onChanged: onChanged,
       autovalidateMode: AutovalidateMode.onUserInteraction,
@@ -328,23 +325,20 @@ class TextFieldSearch extends StatelessWidget {
         print(value);
       },
       readOnly: readOnlyField,
-      // obscureText: .isPassword ? _isViewPass : false,
-      // controller: widget.controller,
       initialValue: valor ?? '',
       style: TextStyle(
-        fontSize: responsive.heightPercent(1.4),
+        fontSize: AppTokens.fontBody(context),
         color: Theme.of(context).textTheme.bodyLarge!.color,
       ),
       cursorColor: Theme.of(context).textTheme.bodyLarge!.color,
       decoration: InputDecoration(
         prefixIcon: Container(
-          height: responsive.widthPercent(10),
-          width: responsive.widthPercent(10),
-          // color: grey,
+          height: 37.5.w,
+          width: 37.5.w,
           alignment: Alignment.center,
           child: SvgPicture.asset(
             assetImgIcon + prefixIcon,
-            height: iconHeight,
+            height: iconHeight.r,
             color: iconColor,
           ),
         ),
@@ -352,19 +346,19 @@ class TextFieldSearch extends StatelessWidget {
         labelText: labelText,
         labelStyle: TextStyle(
           color: Theme.of(context).primaryColor.withOpacity(0.5),
-          fontSize: 14,
+          fontSize: AppTokens.fontBody(context),
         ),
         suffixIcon: search
             ? InkWell(
                 borderRadius: BorderRadius.circular(100),
                 onTap: onTapSearch,
                 child: Container(
-                  width: responsive.widthPercent(12),
-                  height: responsive.widthPercent(12),
+                  width: 45.w,
+                  height: 45.w,
                   alignment: Alignment.center,
                   child: SvgPicture.asset(
                     '${assetImgIcon}search.svg',
-                    width: responsive.heightPercent(2.4),
+                    width: 20.r,
                     color: iconColor,
                   ),
                 ),
@@ -492,7 +486,6 @@ class _DatePickerFormCustomState extends State<DatePickerFormCustom> {
 
   @override
   Widget build(BuildContext context) {
-    final responsive = Responsive.of(context);
     return TextFormField(
       enabled: widget.enabled,
       controller: _controller,
@@ -515,24 +508,24 @@ class _DatePickerFormCustomState extends State<DatePickerFormCustom> {
         }
       },
       style: TextStyle(
-        fontSize: responsive.heightPercent(1.4),
+        fontSize: AppTokens.fontBody(context),
         color: Theme.of(context).textTheme.bodyLarge!.color,
       ),
       decoration: InputDecoration(
         prefixIcon: Container(
-          height: responsive.widthPercent(10),
-          width: responsive.widthPercent(10),
+          height: 37.5.w,
+          width: 37.5.w,
           alignment: Alignment.center,
           child: SvgPicture.asset(
             assetImgIcon + widget.prefixIcon,
-            height: widget.iconHeight,
+            height: widget.iconHeight.r,
             color: widget.iconColor,
           ),
         ),
         labelText: widget.labelText,
         labelStyle: TextStyle(
           color: Theme.of(context).primaryColor.withOpacity(0.5),
-          fontSize: responsive.heightPercent(1.4),
+          fontSize: AppTokens.fontBody(context),
           height: 1,
         ),
       ),
@@ -627,7 +620,6 @@ class _TimePickerFormCustomState extends State<TimePickerFormCustom> {
 
   @override
   Widget build(BuildContext context) {
-    final responsive = Responsive.of(context);
     return TextFormField(
       enabled: widget.enabled,
       controller: _controller,
@@ -644,24 +636,24 @@ class _TimePickerFormCustomState extends State<TimePickerFormCustom> {
         }
       },
       style: TextStyle(
-        fontSize: responsive.heightPercent(1.4),
+        fontSize: AppTokens.fontBody(context),
         color: Theme.of(context).textTheme.bodyLarge!.color,
       ),
       decoration: InputDecoration(
         prefixIcon: Container(
-          height: responsive.widthPercent(10),
-          width: responsive.widthPercent(10),
+          height: 37.5.w,
+          width: 37.5.w,
           alignment: Alignment.center,
           child: SvgPicture.asset(
             assetImgIcon + widget.prefixIcon,
-            height: widget.iconHeight,
+            height: widget.iconHeight.r,
             color: widget.iconColor,
           ),
         ),
         labelText: widget.labelText,
         labelStyle: TextStyle(
           color: Theme.of(context).primaryColor.withOpacity(0.5),
-          fontSize: responsive.heightPercent(1.4),
+          fontSize: AppTokens.fontBody(context),
           height: 1,
         ),
       ),
@@ -750,14 +742,13 @@ class _NumberRangePickerState extends State<NumberRangePicker> {
 
   @override
   Widget build(BuildContext context) {
-    final responsive = Responsive.of(context);
     return TextFormField(
       enabled: widget.enabled,
       controller: _controller,
       readOnly: true,
       textAlign: TextAlign.center,
       style: TextStyle(
-        fontSize: responsive.heightPercent(1.4),
+        fontSize: AppTokens.fontBody(context),
         color: Theme.of(context).textTheme.bodyLarge!.color,
       ),
       decoration: InputDecoration(
@@ -773,12 +764,12 @@ class _NumberRangePickerState extends State<NumberRangePicker> {
             });
           },
           child: Container(
-            height: responsive.widthPercent(10),
-            width: responsive.widthPercent(10),
+            height: 37.5.w,
+            width: 37.5.w,
             alignment: Alignment.center,
             child: SvgPicture.asset(
               '${assetImgIcon}arrow-left.svg',
-              width: responsive.heightPercent(2.5),
+              width: 20.r,
               color: widget.iconColor,
             ),
           ),
@@ -795,12 +786,12 @@ class _NumberRangePickerState extends State<NumberRangePicker> {
             });
           },
           child: Container(
-            height: responsive.widthPercent(10),
-            width: responsive.widthPercent(10),
+            height: 37.5.w,
+            width: 37.5.w,
             alignment: Alignment.center,
             child: SvgPicture.asset(
               '${assetImgIcon}arrow-right.svg',
-              width: responsive.heightPercent(2.5),
+              width: 20.r,
               color: widget.iconColor,
             ),
           ),
@@ -809,7 +800,7 @@ class _NumberRangePickerState extends State<NumberRangePicker> {
         labelText: widget.labelText,
         labelStyle: TextStyle(
           color: Theme.of(context).primaryColor.withOpacity(0.5),
-          fontSize: responsive.heightPercent(1.4),
+          fontSize: AppTokens.fontBody(context),
           height: 1,
         ),
       ),
@@ -869,7 +860,6 @@ class _NumberRangePicker2State extends State<NumberRangePicker2> {
 
   @override
   Widget build(BuildContext context) {
-    final responsive = Responsive.of(context);
     return SizedBox(
       height: widget.height,
       child: TextFormField(
@@ -885,7 +875,7 @@ class _NumberRangePicker2State extends State<NumberRangePicker2> {
         keyboardType: TextInputType.number,
         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
         style: TextStyle(
-          fontSize: responsive.heightPercent(1.4),
+          fontSize: AppTokens.fontBody(context),
           color: Theme.of(context).textTheme.bodyLarge!.color,
         ),
         decoration: InputDecoration(
@@ -908,12 +898,12 @@ class _NumberRangePicker2State extends State<NumberRangePicker2> {
               });
             },
             child: Container(
-              height: responsive.widthPercent(10),
-              width: responsive.widthPercent(10),
+              height: 37.5.w,
+              width: 37.5.w,
               alignment: Alignment.center,
               child: SvgPicture.asset(
                 '${assetImgIcon}arrow-left.svg',
-                width: responsive.heightPercent(2.5),
+                width: 20.r,
                 color: widget.iconColor,
               ),
             ),
@@ -930,12 +920,12 @@ class _NumberRangePicker2State extends State<NumberRangePicker2> {
               });
             },
             child: Container(
-              height: responsive.widthPercent(10),
-              width: responsive.widthPercent(10),
+              height: 37.5.w,
+              width: 37.5.w,
               alignment: Alignment.center,
               child: SvgPicture.asset(
                 '${assetImgIcon}arrow-right.svg',
-                width: responsive.heightPercent(2.5),
+                width: 20.r,
                 color: widget.iconColor,
               ),
             ),
@@ -1010,7 +1000,6 @@ class _DateRangePickerFormCustomState extends State<DateRangePickerFormCustom> {
 
   @override
   Widget build(BuildContext context) {
-    final responsive = Responsive.of(context);
     return TextFormField(
       enabled: widget.enabled,
       controller: _controller,
@@ -1033,24 +1022,24 @@ class _DateRangePickerFormCustomState extends State<DateRangePickerFormCustom> {
         }
       },
       style: TextStyle(
-        fontSize: responsive.heightPercent(1.4),
+        fontSize: AppTokens.fontBody(context),
         color: Theme.of(context).textTheme.bodyLarge!.color,
       ),
       decoration: InputDecoration(
         prefixIcon: Container(
-          height: responsive.widthPercent(10),
-          width: responsive.widthPercent(10),
+          height: 37.5.w,
+          width: 37.5.w,
           alignment: Alignment.center,
           child: SvgPicture.asset(
             assetImgIcon + widget.prefixIcon,
-            height: widget.iconHeight,
+            height: widget.iconHeight.r,
             color: widget.iconColor,
           ),
         ),
         labelText: widget.labelText,
         labelStyle: TextStyle(
           color: Theme.of(context).primaryColor.withOpacity(0.5),
-          fontSize: responsive.heightPercent(1.4),
+          fontSize: AppTokens.fontBody(context),
           height: 1,
         ),
       ),
