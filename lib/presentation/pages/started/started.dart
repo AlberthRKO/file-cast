@@ -1,10 +1,12 @@
 import 'package:file_cast/core/constants/complemento.dart';
 import 'package:file_cast/core/core.dart';
+import 'package:file_cast/presentation/routes/routes.dart';
 import 'package:file_cast/presentation/utils/responsive.dart';
 import 'package:file_cast/presentation/widgets/custom_button_box.dart';
 import 'package:file_cast/presentation/widgets/custom_heading.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:go_router/go_router.dart';
 
 class StartedPage extends StatelessWidget {
   const StartedPage({super.key});
@@ -40,10 +42,13 @@ class StartedPage extends StatelessWidget {
           ),
           Positioned(
             bottom: responsive.heightPercent(6),
-            child: SvgPicture.asset(
-              '${assetImgIcon}folder.svg',
-              width: responsive.widthPercent(101),
-              color: folder1,
+            child: Hero(
+              tag: 'folder-transition',
+              child: SvgPicture.asset(
+                '${assetImgIcon}folder.svg',
+                width: responsive.widthPercent(101),
+                color: folder1,
+              ),
             ),
           ),
           Positioned(
@@ -129,7 +134,9 @@ class StartedPage extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
                         CustomButtonBoxStyle(
-                          funcion: () async {},
+                          funcion: () {
+                            context.pushNamed(Routes.login);
+                          },
                           fontSize: responsive.heightPercent(1.8),
                           icon: 'paper.svg',
                           sizeHeight: responsive.widthPercent(14),

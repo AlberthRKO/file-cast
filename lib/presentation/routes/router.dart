@@ -1,35 +1,48 @@
 import 'package:file_cast/presentation/pages/home/home.dart';
+import 'package:file_cast/presentation/pages/login/login.dart';
 import 'package:file_cast/presentation/pages/offline/offline.dart';
 import 'package:file_cast/presentation/pages/presentation/mirror/mirror_page.dart';
 import 'package:file_cast/presentation/pages/presentation/mirror/usb_device_list_page.dart';
 import 'package:file_cast/presentation/pages/settings/settings.dart';
+import 'package:file_cast/presentation/pages/started/started.dart';
+import 'package:file_cast/presentation/routes/routes.dart';
 import 'package:go_router/go_router.dart';
 
 final appRouter = GoRouter(
-  initialLocation: '/',
+  initialLocation: '/started',
   routes: [
     GoRoute(
-      name: 'home',
+      name: Routes.started,
+      path: '/started',
+      builder: (context, state) => const StartedPage(),
+    ),
+    GoRoute(
+      name: Routes.login,
+      path: '/login',
+      builder: (context, state) => const LoginPage(),
+    ),
+    GoRoute(
+      name: Routes.home,
       path: '/',
       builder: (context, state) => const HomePage(),
     ),
     GoRoute(
-      name: 'offline',
+      name: Routes.offline,
       path: '/offline',
       builder: (context, state) => const Offline(),
     ),
     GoRoute(
-      name: 'settings',
+      name: Routes.settings,
       path: '/settings',
       builder: (context, state) => const Settings(),
     ),
     GoRoute(
-      name: 'usb-devices',
+      name: Routes.usbDevices,
       path: '/usb-devices',
       builder: (context, state) => const UsbDeviceListPage(),
     ),
     GoRoute(
-      name: 'mirror',
+      name: Routes.mirror,
       path: '/mirror',
       builder: (context, state) {
         final extra = state.extra as Map<String, dynamic>?;
