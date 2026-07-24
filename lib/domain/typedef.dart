@@ -1,15 +1,15 @@
 typedef Json = Map<String, dynamic>;
 String urlCiudadania = 'https://efe.dev.mp.gob.bo/login';
 
-class ValueTipo<T> {
-  ValueTipo({required this.id, this.value});
+class ValueType<T> {
+  ValueType({required this.id, this.value});
   final int id;
   final T? value;
 
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
-    return other is ValueTipo<T> && other.id == id && other.value == value;
+    return other is ValueType<T> && other.id == id && other.value == value;
   }
 
   @override

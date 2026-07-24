@@ -1,10 +1,12 @@
 import 'package:file_cast/core/constants/complemento.dart';
 import 'package:file_cast/core/theme/colors.dart';
 import 'package:file_cast/data/models/user_model.dart';
+import 'package:file_cast/domain/typedef.dart';
 import 'package:file_cast/presentation/routes/routes.dart';
 import 'package:file_cast/presentation/utils/responsive.dart';
 import 'package:file_cast/presentation/widgets/circle_button.dart';
 import 'package:file_cast/presentation/widgets/custom_avatar.dart';
+import 'package:file_cast/presentation/widgets/custom_drop_down.dart';
 import 'package:file_cast/presentation/widgets/custom_heading.dart';
 import 'package:file_cast/presentation/widgets/text_form_custom.dart';
 import 'package:flutter/material.dart';
@@ -25,6 +27,17 @@ class CustomAppbar extends StatelessWidget {
   final int countNoti;
   @override
   Widget build(BuildContext context) {
+    final List<ValueType> listEstado = [
+      ValueType(id: 10, value: 'Todos'),
+      ValueType(id: 0, value: 'Inactivo'),
+      ValueType(id: 1, value: 'Solicitud'),
+      ValueType(id: 2, value: 'Aprobado Jefe'),
+      ValueType(id: 3, value: 'Observado'),
+      ValueType(id: 4, value: 'Aprobado RRHH'),
+      ValueType(id: 5, value: 'Rechazado'),
+      ValueType(id: 6, value: 'Editado'),
+      ValueType(id: 7, value: 'Anulado'),
+    ];
     final responsive = Responsive.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 20),
@@ -147,11 +160,33 @@ class CustomAppbar extends StatelessWidget {
                         iconHeight: responsive.heightPercent(2.4),
                         iconColor: Theme.of(context).primaryColor,
                         onChanged: (text) {},
-                        onTapSearch: () async {},
+                        filterMore: true,
+                        onTapFilterMore: () async {},
                       ),
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(
+                height: 20,
+              ),
+              CustomDropDown<ValueType>(
+                color: Theme.of(context).primaryColor,
+                colorText: Theme.of(context).textTheme.bodyLarge!.color,
+                prefixIcon: true,
+                prefixIconValue: 'estado.svg',
+                lista: listEstado, // Usar la lista dinámica
+                valueExtractor: (item) => item,
+                textExtractor: (item) => item.value.toString(),
+                label: 'Estado',
+                onChanged: (value) {
+                  if (value != null) {
+                    print('Estado seleccionado: ${value.value}');
+                  }
+                },
+              ),
+              const SizedBox(
+                height: 20,
               ),
             ],
           ),

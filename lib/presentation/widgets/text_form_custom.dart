@@ -2,7 +2,6 @@ import 'package:file_cast/core/constants/complemento.dart';
 import 'package:file_cast/core/core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
 import 'package:flutter_svg/svg.dart';
 import 'package:intl/intl.dart';
 
@@ -121,9 +120,7 @@ class _TextFormCustomState extends State<TextFormCustom> {
         ),
         suffixIcon: widget.isPassword
             ? (widget.blockedViewPass ? null : _togglePass())
-            : (widget.isActionField
-                ? _actionVerification()
-                : null),
+            : (widget.isActionField ? _actionVerification() : null),
         errorMaxLines: 2,
       ),
       validator: (text) {
@@ -281,20 +278,21 @@ class TextFieldSearch extends StatelessWidget {
     this.maxLine = 1,
     this.height = 50.0,
     this.keyboardType,
-    this.iconColor = primary,
+    this.iconColor = textWhite,
     this.onChageFunction,
     this.validator,
     this.valor,
     this.inputFormatters,
     this.isNumber,
-    this.search = true,
-    this.onTapSearch,
+    this.filterMore = false,
+    this.filterActive = false,
+    this.onTapFilterMore,
     this.onFieldSubmitted,
   });
 
   final void Function(String) onChanged;
   final String? Function(String?)? validator;
-  final void Function()? onTapSearch;
+  final void Function()? onTapFilterMore;
   final void Function()? onFieldSubmitted;
 
   final String prefixIcon;
@@ -311,7 +309,8 @@ class TextFieldSearch extends StatelessWidget {
   final dynamic onChageFunction;
   final List<TextInputFormatter>? inputFormatters;
   final bool? isNumber;
-  final bool search;
+  final bool filterMore;
+  final bool filterActive;
 
   @override
   Widget build(BuildContext context) {
@@ -348,18 +347,27 @@ class TextFieldSearch extends StatelessWidget {
           color: Theme.of(context).primaryColor.withOpacity(0.5),
           fontSize: AppTokens.fontBody(context),
         ),
-        suffixIcon: search
+        suffixIcon: filterMore
             ? InkWell(
                 borderRadius: BorderRadius.circular(100),
-                onTap: onTapSearch,
-                child: Container(
+                onTap: onTapFilterMore,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
                   width: 45.w,
                   height: 45.w,
+                  decoration: BoxDecoration(
+                    color: filterActive
+                        ? Theme.of(context).primaryColor
+                        : Theme.of(context).primaryColor.withOpacity(0.15),
+                    borderRadius: const BorderRadius.all(Radius.circular(5)),
+                  ),
                   alignment: Alignment.center,
                   child: SvgPicture.asset(
-                    '${assetImgIcon}search.svg',
+                    '${assetImgIcon}filterMore.svg',
                     width: 20.r,
-                    color: iconColor,
+                    color: filterActive
+                        ? Colors.white
+                        : Theme.of(context).primaryColor,
                   ),
                 ),
               )

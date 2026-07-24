@@ -1,8 +1,7 @@
 import 'package:file_cast/core/constants/complemento.dart';
-import 'package:file_cast/core/theme/colors.dart';
-import 'package:file_cast/presentation/utils/responsive.dart';
+import 'package:file_cast/core/core.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
+import 'package:flutter_svg/svg.dart';
 
 class CustomDropDown<T> extends StatelessWidget {
   const CustomDropDown({
@@ -12,8 +11,8 @@ class CustomDropDown<T> extends StatelessWidget {
     required this.valueExtractor,
     required this.textExtractor,
     super.key,
-    this.color = primary,
-    this.colorText = textBlack,
+    this.color,
+    this.colorText,
     this.prefixIcon = false,
     this.prefixIconValue,
     this.validator,
@@ -24,8 +23,8 @@ class CustomDropDown<T> extends StatelessWidget {
   final String label;
   final bool prefixIcon;
   final String? prefixIconValue;
-  final Color color;
-  final Color colorText;
+  final Color? color;
+  final Color? colorText;
   final String? Function(T?)? validator;
   final void Function(dynamic) onChanged;
   final dynamic Function(T) valueExtractor;
@@ -34,67 +33,69 @@ class CustomDropDown<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final responsive = Responsive.of(context);
+    final effectiveColor = color ?? Theme.of(context).primaryColor;
+    final effectiveColorText =
+        colorText ?? Theme.of(context).textTheme.bodyLarge!.color!;
+
     return DropdownButtonFormField<T>(
       value: value,
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(AppDimensions.radiusM),
       elevation: 0,
-      iconEnabledColor: color,
-      dropdownColor: color == Theme.of(context).primaryColor
+      iconEnabledColor: effectiveColor,
+      dropdownColor: effectiveColor == Theme.of(context).primaryColor
           ? Theme.of(context).cardColor
           : Theme.of(context).primaryColor,
       style: TextStyle(
-        fontSize: responsive.heightPercent(1.2),
-        color: color,
+        fontSize: FontTokens.body(context),
+        color: effectiveColor,
         fontWeight: FontWeight.w500,
         letterSpacing: .5,
       ),
       isExpanded: true,
       isDense: false,
       validator: (value) {
-        return validator == null
-            ? null
-            : validator!(value); // Corrección: pasa 'value' directamente
+        return validator == null ? null : validator!(value);
       },
       decoration: InputDecoration(
         prefixIcon: prefixIcon
             ? Container(
-                width: responsive.widthPercent(8),
-                height: responsive.widthPercent(8),
+                width: AppDimensions.iconL,
+                height: AppDimensions.iconL,
                 alignment: Alignment.center,
                 child: SvgPicture.asset(
                   assetImgIcon + prefixIconValue!,
-                  height: responsive.heightPercent(2.2),
-                  color: color,
+                  height: AppDimensions.iconM,
+                  color: effectiveColor,
                 ),
               )
             : null,
         enabledBorder: UnderlineInputBorder(
-          borderSide: BorderSide(width: .8, color: color),
-          borderRadius: BorderRadius.circular(15),
+          borderSide: BorderSide(width: .8, color: effectiveColor),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusL),
         ),
         focusedBorder: UnderlineInputBorder(
-          borderSide: BorderSide(width: .8, color: color),
-          borderRadius: BorderRadius.circular(15),
+          borderSide: BorderSide(width: .8, color: effectiveColor),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusL),
         ),
         focusedErrorBorder: UnderlineInputBorder(
           borderSide: const BorderSide(width: .8, color: Colors.red),
-          borderRadius: BorderRadius.circular(15),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusL),
         ),
         errorBorder: UnderlineInputBorder(
           borderSide: const BorderSide(width: .8, color: Colors.red),
-          borderRadius: BorderRadius.circular(15),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusL),
         ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 15),
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: AppDimensions.spaceM,
+        ),
         border: InputBorder.none,
       ),
       hint: Text(
         label,
         style: TextStyle(
-          color: colorText.withOpacity(0.5),
+          color: effectiveColorText.withOpacity(0.5),
           fontWeight: FontWeight.w400,
-          fontSize: responsive.heightPercent(1.4),
-          fontFamily: 'Montserrat',
+          fontSize: FontTokens.body(context),
         ),
       ),
       items: lista.map((item) {
@@ -103,8 +104,8 @@ class CustomDropDown<T> extends StatelessWidget {
           child: Text(
             textExtractor(item),
             style: TextStyle(
-              color: colorText,
-              fontSize: responsive.heightPercent(1.4),
+              color: effectiveColorText,
+              fontSize: FontTokens.body(context),
               fontFamily: 'Montserrat',
             ),
           ),
@@ -117,17 +118,15 @@ class CustomDropDown<T> extends StatelessWidget {
         children: [
           Container(
             width: 2,
-            height: 20,
-            color: color.withOpacity(.3),
+            height: AppDimensions.iconM,
+            color: effectiveColor.withOpacity(.3),
           ),
-          const SizedBox(
-            width: 10,
-          ),
+          SizedBox(width: AppDimensions.spaceS),
           SvgPicture.asset(
             '${assetImgIcon}arrow_down.svg',
-            width: responsive.heightPercent(2),
-            height: responsive.heightPercent(2),
-            color: color,
+            width: AppDimensions.iconM,
+            height: AppDimensions.iconM,
+            color: effectiveColor,
           ),
         ],
       ),
@@ -142,93 +141,96 @@ class CustomDropDown2<T> extends StatelessWidget {
     required this.label,
     required this.valueExtractor,
     super.key,
-    this.color = primary,
-    this.colorText = textBlack,
+    this.color,
+    this.colorText,
     this.prefixIcon = false,
     this.prefixIconValue,
     this.validator,
     this.value,
-    this.itemBuilder, // Nuevo parámetro para construir widgets personalizados
-    this.textExtractor, // Ahora es opcional si se usa itemBuilder
-    this.selectedItemBuilder, // NUEVO: Para el item seleccionado
+    this.itemBuilder,
+    this.textExtractor,
+    this.selectedItemBuilder,
   });
 
   final List<T> lista;
   final String label;
   final bool prefixIcon;
   final String? prefixIconValue;
-  final Color color;
-  final Color colorText;
+  final Color? color;
+  final Color? colorText;
   final String? Function(T?)? validator;
   final void Function(dynamic) onChanged;
   final dynamic Function(T) valueExtractor;
-  final String Function(T)? textExtractor; // Ahora es opcional
-  final Widget Function(T)? itemBuilder; // Nuevo constructor de items
+  final String Function(T)? textExtractor;
+  final Widget Function(T)? itemBuilder;
   final T? value;
-  final Widget Function(T)? selectedItemBuilder; // NUEVO parámetro
+  final Widget Function(T)? selectedItemBuilder;
 
   @override
   Widget build(BuildContext context) {
-    final responsive = Responsive.of(context);
+    final effectiveColor = color ?? Theme.of(context).primaryColor;
+    final effectiveColorText =
+        colorText ?? Theme.of(context).textTheme.bodyLarge!.color!;
+
     return DropdownButtonFormField<T>(
       value: value,
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(AppDimensions.radiusM),
       elevation: 0,
-      iconEnabledColor: color,
-      dropdownColor: color == Theme.of(context).primaryColor
+      iconEnabledColor: effectiveColor,
+      dropdownColor: effectiveColor == Theme.of(context).primaryColor
           ? Theme.of(context).cardColor
           : Theme.of(context).primaryColor,
       style: TextStyle(
-        fontSize: responsive.heightPercent(1.2),
-        color: color,
+        fontSize: FontTokens.body(context),
+        color: effectiveColor,
         fontWeight: FontWeight.w500,
         letterSpacing: .5,
       ),
       isExpanded: true,
       isDense: false,
       validator: (value) {
-        return validator == null
-            ? null
-            : validator!(value); // Corrección: pasa 'value' directamente
+        return validator == null ? null : validator!(value);
       },
       decoration: InputDecoration(
         prefixIcon: prefixIcon
             ? Container(
-                width: responsive.widthPercent(8),
-                height: responsive.widthPercent(8),
+                width: AppDimensions.iconL,
+                height: AppDimensions.iconL,
                 alignment: Alignment.center,
                 child: SvgPicture.asset(
                   assetImgIcon + prefixIconValue!,
-                  height: responsive.heightPercent(2.2),
-                  color: color,
+                  height: AppDimensions.iconM,
+                  color: effectiveColor,
                 ),
               )
             : null,
         enabledBorder: UnderlineInputBorder(
-          borderSide: BorderSide(width: .8, color: color),
-          borderRadius: BorderRadius.circular(15),
+          borderSide: BorderSide(width: .8, color: effectiveColor),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusL),
         ),
         focusedBorder: UnderlineInputBorder(
-          borderSide: BorderSide(width: .8, color: color),
-          borderRadius: BorderRadius.circular(15),
+          borderSide: BorderSide(width: .8, color: effectiveColor),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusL),
         ),
         focusedErrorBorder: UnderlineInputBorder(
           borderSide: const BorderSide(width: .8, color: Colors.red),
-          borderRadius: BorderRadius.circular(15),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusL),
         ),
         errorBorder: UnderlineInputBorder(
           borderSide: const BorderSide(width: .8, color: Colors.red),
-          borderRadius: BorderRadius.circular(15),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusL),
         ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 15),
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: AppDimensions.spaceM,
+        ),
         border: InputBorder.none,
       ),
       hint: Text(
         label,
         style: TextStyle(
-          color: colorText.withOpacity(0.5),
+          color: effectiveColorText.withOpacity(0.5),
           fontWeight: FontWeight.w400,
-          fontSize: responsive.heightPercent(1.4),
+          fontSize: FontTokens.body(context),
           fontFamily: 'Montserrat',
         ),
       ),
@@ -236,13 +238,12 @@ class CustomDropDown2<T> extends StatelessWidget {
         return DropdownMenuItem<T>(
           value: item,
           child: itemBuilder != null
-              ? itemBuilder!(item) // Usa el widget personalizado
+              ? itemBuilder!(item)
               : Text(
-                  // Mantiene compatibilidad con el método antiguo
                   textExtractor!(item),
                   style: TextStyle(
-                    color: colorText,
-                    fontSize: responsive.heightPercent(1.4),
+                    color: effectiveColorText,
+                    fontSize: FontTokens.body(context),
                     fontFamily: 'Montserrat',
                   ),
                 ),
@@ -262,15 +263,15 @@ class CustomDropDown2<T> extends StatelessWidget {
         children: [
           Container(
             width: 2,
-            height: 20,
-            color: color.withOpacity(.3),
+            height: AppDimensions.iconM,
+            color: effectiveColor.withOpacity(.3),
           ),
-          const SizedBox(width: 10),
+          SizedBox(width: AppDimensions.spaceS),
           SvgPicture.asset(
             '${assetImgIcon}arrow_down.svg',
-            width: responsive.heightPercent(2),
-            height: responsive.heightPercent(2),
-            color: color,
+            width: AppDimensions.iconM,
+            height: AppDimensions.iconM,
+            color: effectiveColor,
           ),
         ],
       ),
@@ -286,8 +287,8 @@ class CustomDropDown3<T> extends StatelessWidget {
     required this.valueExtractor,
     required this.textExtractor,
     super.key,
-    this.color = Colors.red,
-    this.colorText = Colors.blue,
+    this.color,
+    this.colorText,
     this.prefixIcon = false,
     this.prefixIconValue,
     this.validator,
@@ -298,8 +299,8 @@ class CustomDropDown3<T> extends StatelessWidget {
   final String label;
   final bool prefixIcon;
   final String? prefixIconValue;
-  final Color color;
-  final Color colorText;
+  final Color? color;
+  final Color? colorText;
   final String? Function(String?)? validator;
   final void Function(dynamic) onChanged;
   final dynamic Function(T) valueExtractor;
@@ -308,15 +309,21 @@ class CustomDropDown3<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final effectiveColor = color ?? Theme.of(context).primaryColor;
+    final effectiveColorText =
+        colorText ?? Theme.of(context).textTheme.bodyLarge!.color!;
+
     return DropdownButtonFormField<T>(
       value: value,
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(AppDimensions.radiusM),
       elevation: 2,
-      iconEnabledColor: color,
-      dropdownColor: color == Colors.white ? Colors.white : Colors.blue,
+      iconEnabledColor: effectiveColor,
+      dropdownColor: effectiveColor == Colors.white
+          ? Colors.white
+          : Theme.of(context).primaryColor,
       style: TextStyle(
-        fontSize: 12,
-        color: color,
+        fontSize: FontTokens.caption(context),
+        color: effectiveColor,
         fontWeight: FontWeight.w500,
         letterSpacing: .5,
       ),
@@ -325,67 +332,58 @@ class CustomDropDown3<T> extends StatelessWidget {
       validator: (value) {
         return validator == null
             ? null
-            : validator!(
-                value! as String,
-              ); // Corrección: pasa 'value' directamente
+            : validator!(value! as String);
       },
       decoration: InputDecoration(
-        label: Text(
-          label,
-          style: TextStyle(
-            color: colorText.withOpacity(0.5),
-            fontWeight: FontWeight.w400,
-            fontSize: 14,
-            fontFamily: 'Montserrat',
-          ),
-        ),
         prefixIcon: prefixIcon
             ? Container(
-                height: 50,
-                width: 40,
+                height: AppDimensions.inputHeight,
+                width: AppDimensions.iconL,
                 alignment: Alignment.center,
                 child: SvgPicture.asset(
                   assetImgIcon + prefixIconValue!,
-                  height: 20,
-                  color: colorText,
+                  height: AppDimensions.iconM,
+                  color: effectiveColorText,
                 ),
               )
             : null,
         enabledBorder: OutlineInputBorder(
-          borderSide: BorderSide(width: .8, color: color),
-          borderRadius: BorderRadius.circular(15),
+          borderSide: BorderSide(width: .8, color: effectiveColor),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusL),
         ),
         focusedBorder: OutlineInputBorder(
-          borderSide: BorderSide(width: .8, color: color),
-          borderRadius: BorderRadius.circular(15),
+          borderSide: BorderSide(width: .8, color: effectiveColor),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusL),
         ),
         focusedErrorBorder: OutlineInputBorder(
           borderSide: const BorderSide(width: .8, color: Colors.red),
-          borderRadius: BorderRadius.circular(15),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusL),
         ),
         errorBorder: OutlineInputBorder(
           borderSide: const BorderSide(width: .8, color: Colors.red),
-          borderRadius: BorderRadius.circular(15),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusL),
         ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 15),
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: AppDimensions.spaceM,
+        ),
         border: InputBorder.none,
       ),
-      /*hint: Text(
+      hint: Text(
         label,
         style: TextStyle(
-          color: colorText.withOpacity(0.5),
+          color: effectiveColorText.withOpacity(0.5),
           fontWeight: FontWeight.w400,
-          fontSize: 14.0,
-          fontFamily: "Montserrat",
+          fontSize: FontTokens.body(context),
+          fontFamily: 'Montserrat',
         ),
-      ),*/
+      ),
       items: lista.map((item) {
         return DropdownMenuItem<T>(
           value: item,
           child: Text(
             textExtractor(item),
             style: TextStyle(
-              color: color,
+              color: effectiveColor,
               fontFamily: 'Montserrat',
             ),
           ),
@@ -398,17 +396,15 @@ class CustomDropDown3<T> extends StatelessWidget {
         children: [
           Container(
             width: 2,
-            height: 20,
-            color: color.withOpacity(.3),
+            height: AppDimensions.iconM,
+            color: effectiveColor.withOpacity(.3),
           ),
-          const SizedBox(
-            width: 10,
-          ),
+          SizedBox(width: AppDimensions.spaceS),
           SvgPicture.asset(
             '${assetImgIcon}arrow-down.svg',
-            width: 15,
-            height: 15,
-            color: color,
+            width: AppDimensions.iconS,
+            height: AppDimensions.iconS,
+            color: effectiveColor,
           ),
         ],
       ),
