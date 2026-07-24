@@ -34,7 +34,7 @@ class LoginPage extends StatelessWidget {
     return Row(
       children: [
         SizedBox(
-          width: 0.35.sw,
+          width: 0.4.sw,
           child: _buildHeader(context, device),
         ),
         Expanded(child: _buildCardBody(context, device)),
@@ -45,48 +45,34 @@ class LoginPage extends StatelessWidget {
   Widget _buildHeader(BuildContext context, DeviceInfo device) {
     final isLandscape = device.isLandscape;
     return Container(
-      width: isLandscape ? 0.35.sw : 1.sw,
-      height: isLandscape ? 1.sh : 0.28.sh,
-      decoration: const BoxDecoration(
+      width: isLandscape ? 0.4.sw : 1.sw,
+      decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [violet, violet2],
+          colors: [
+            const Color(0xFF312C69),
+            Theme.of(context).scaffoldBackgroundColor,
+          ],
         ),
       ),
       child: SafeArea(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
-              width: isLandscape ? 0.14.sw : 0.22.sw,
-              height: isLandscape ? 0.14.sw : 0.22.sw,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.15),
-                shape: BoxShape.circle,
-              ),
-              child: Center(
-                child: SvgPicture.asset(
-                  '${assetImgIllustration}upload.svg',
-                  width: isLandscape ? 0.07.sw : 0.12.sw,
-                ),
+            Center(
+              child: SvgPicture.asset(
+                '${assetImgIllustration}fileCast.svg',
+                width: isLandscape ? 0.3.sw : 0.6.sw,
               ),
             ),
-            SizedBox(height: AppTokens.spaceLg(context)),
+            SizedBox(height: AppTokens.spaceMd(context)),
             Text(
               Config.appName,
               style: TextStyle(
                 fontSize: AppTokens.fontTitle(context),
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
-              ),
-            ),
-            SizedBox(height: AppTokens.spaceSm(context)),
-            Text(
-              'Ingresa tus credenciales',
-              style: TextStyle(
-                fontSize: AppTokens.fontCaption(context),
-                color: Colors.white.withOpacity(0.7),
               ),
             ),
           ],
@@ -101,27 +87,26 @@ class LoginPage extends StatelessWidget {
 
     final formContent = Padding(
       padding: EdgeInsets.only(
-        top: isLandscape ? 0.03.sh : 0.06.sh,
+        top: isLandscape ? 0.2.sh : 0.02.sh,
         left: isLandscape ? 0.06.sw : 0.06.sw,
         right: isLandscape ? 0.06.sw : 0.06.sw,
-        bottom: AppTokens.spaceXl(context),
+        bottom: AppTokens.spaceLg(context),
       ),
       child: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(height: AppTokens.spaceLg(context)),
             Text(
-              'Bienvenido',
+              'Iniciar Sesión',
               style: TextStyle(
                 fontSize: AppTokens.fontTitle(context),
                 fontWeight: FontWeight.bold,
-                color: textWhite,
+                color: Colors.white,
               ),
             ),
             SizedBox(height: AppTokens.spaceXs(context)),
             Text(
-              'Inicia sesión para continuar',
+              'Ingresa tus credenciales para continuar',
               style: TextStyle(
                 fontSize: AppTokens.fontCaption(context),
                 color: Colors.white.withOpacity(0.7),
@@ -134,7 +119,7 @@ class LoginPage extends StatelessWidget {
             ),
             TextFormCustom(
               onChanged: (text) {},
-              iconColor: Colors.white,
+              iconColor: Theme.of(context).primaryColor,
               prefixIcon: 'cardEmployee.svg',
               labelText: 'Número de Documento',
               validator: (text) {
@@ -150,7 +135,7 @@ class LoginPage extends StatelessWidget {
             SizedBox(height: AppTokens.spaceMd(context)),
             TextFormCustom(
               onChanged: (text) {},
-              iconColor: Colors.white,
+              iconColor: Theme.of(context).primaryColor,
               prefixIcon: 'lock.svg',
               labelText: 'Contraseña',
               isPassword: true,
@@ -164,47 +149,14 @@ class LoginPage extends StatelessWidget {
                 return null;
               },
             ),
-            SizedBox(height: AppTokens.spaceSm(context)),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.check_circle_outline,
-                      color: Colors.white.withOpacity(0.7),
-                      size: AppTokens.iconMd(context),
-                    ),
-                    SizedBox(width: AppTokens.spaceSm(context)),
-                    Text(
-                      'Recordarme',
-                      style: TextStyle(
-                        fontSize: AppTokens.fontCaption(context),
-                        color: Colors.white.withOpacity(0.7),
-                      ),
-                    ),
-                  ],
-                ),
-                TextButton(
-                  onPressed: () {},
-                  child: Text(
-                    '¿Olvidaste tu contraseña?',
-                    style: TextStyle(
-                      fontSize: AppTokens.fontCaption(context),
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            SizedBox(height: AppTokens.spaceMd(context)),
+            SizedBox(height: AppTokens.spaceXl(context)),
+
             Center(
               child: CustomButtonBoxStyle(
                 title: 'Iniciar Sesión',
-                sizeWidth: 0.70.sw,
+                sizeWidth: 0.85.sw,
                 sizeHeight: isLandscape
-                    ? 40.h
+                    ? 30.h
                     : AppTokens.buttonHeightMd(context),
                 icon: 'paper.svg',
                 iconActive: true,
@@ -212,52 +164,16 @@ class LoginPage extends StatelessWidget {
                 funcion: () {
                   context.pushNamed(Routes.home);
                 },
-              ),
-            ),
-            SizedBox(height: AppTokens.spaceMd(context)),
-            Row(
-              children: [
-                const Expanded(child: Divider(color: Colors.white24)),
-                Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: AppTokens.spaceMd(context),
-                  ),
-                  child: Text(
-                    'O',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.7),
-                      fontSize: AppTokens.fontCaption(context),
-                    ),
-                  ),
-                ),
-                const Expanded(child: Divider(color: Colors.white24)),
-              ],
-            ),
-            SizedBox(height: AppTokens.spaceMd(context)),
-            Center(
-              child: TextButton(
-                onPressed: () {},
-                child: RichText(
-                  text: TextSpan(
-                    text: '¿No tienes cuenta? ',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.7),
-                      fontSize: AppTokens.fontCaption(context),
-                    ),
-                    children: [
-                      TextSpan(
-                        text: 'Regístrate',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: AppTokens.fontCaption(context),
-                        ),
-                      ),
-                    ],
-                  ),
+                isGradient: true,
+                gradient: const LinearGradient(
+                  colors: [
+                    Color(0xFF1E50A5),
+                    Color(0xFF2662DE),
+                  ],
                 ),
               ),
             ),
+            SizedBox(height: AppTokens.spaceMd(context)),
           ],
         ),
       ),

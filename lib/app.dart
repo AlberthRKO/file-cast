@@ -12,15 +12,13 @@ class App extends StatelessWidget {
         final isPortrait = orientation == Orientation.portrait;
 
         return ScreenUtilInit(
-          designSize: isPortrait
-              ? const Size(375, 812)
-              : const Size(812, 375),
+          designSize: isPortrait ? const Size(375, 812) : const Size(812, 375),
           minTextAdapt: true,
           splitScreenMode: true,
           builder: (context, child) {
             return MaterialApp.router(
               title: 'File Cast',
-              theme: light,
+              theme: dark,
               darkTheme: dark,
               routerConfig: appRouter,
               debugShowCheckedModeBanner: false,

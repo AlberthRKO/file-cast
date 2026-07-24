@@ -181,6 +181,8 @@ class CustomButtonBoxStyle extends StatelessWidget {
     this.reverse = false,
     this.isShadowCustom = false,
     this.isShadow = false,
+    this.isGradient = false,
+    this.gradient,
   });
 
   final bool reverse;
@@ -203,6 +205,8 @@ class CustomButtonBoxStyle extends StatelessWidget {
   final bool isLoading;
   final bool isShadowCustom;
   final bool isShadow;
+  final Gradient? gradient;
+  final bool isGradient;
 
   @override
   Widget build(BuildContext context) {
@@ -216,17 +220,26 @@ class CustomButtonBoxStyle extends StatelessWidget {
         height: sizeHeight,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: cancel ? Theme.of(context).cardColor : color,
+          color: isGradient
+              ? null
+              : cancel
+              ? Theme.of(context).cardColor
+              : color,
+          gradient: isGradient ? gradient : null,
           borderRadius: BorderRadius.circular(AppDimensions.radiusL),
           border: Border.all(
-            width: cancel ? 1 : isBorder ? 1 : 0,
+            width: cancel
+                ? 1
+                : isBorder
+                ? 1
+                : 0,
             color: cancel
                 ? deleteColor
                 : isBorder
                 ? colorBorder
                 : color,
           ),
-          boxShadow: isShadow
+          boxShadow: isShadow || isGradient
               ? null
               : isShadowCustom
               ? [
