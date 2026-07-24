@@ -116,7 +116,7 @@ class _CustomMSAvatarState extends State<CustomMSAvatar> {
   @override
   Widget build(BuildContext context) {
     Widget getUserProfileImage() {
-      if (_isLoading) return _buildLoadingIndicator();
+      //if (_isLoading) return _buildLoadingIndicator();
       if (_profileImage != null) {
         try {
           return Image.memory(

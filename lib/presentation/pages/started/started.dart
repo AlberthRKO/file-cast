@@ -12,123 +12,214 @@ class StartedPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isLandscape = DeviceInfo.of(context).isLandscape;
-    return Scaffold(
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final height = constraints.maxHeight;
-          final folderHeight = height * 0.12;
+    final device = DeviceInfo.of(context);
 
-          return Stack(
-            children: [
-              Positioned(
-                bottom: folderHeight * 3.2,
-                child: SvgPicture.asset(
-                  '${assetImgIcon}folder.svg',
-                  width: 1.01.sw,
-                  color: folder4,
+    return Scaffold(
+      body: device.isLandscape
+          ? _buildLandscape(context, device)
+          : _buildPortrait(context, device),
+    );
+  }
+
+  Widget _buildPortrait(BuildContext context, DeviceInfo device) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final height = constraints.maxHeight;
+        final folderHeight = height * 0.12;
+
+        return Stack(
+          children: [
+            _buildFolders(folderHeight),
+            SafeArea(
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: AppDimensions.spaceL,
+                  vertical: AppDimensions.spaceL,
                 ),
-              ),
-              Positioned(
-                bottom: folderHeight * 2.3,
-                child: SvgPicture.asset(
-                  '${assetImgIcon}folder.svg',
-                  width: 1.01.sw,
-                  color: folder3,
-                ),
-              ),
-              Positioned(
-                bottom: folderHeight * 1.4,
-                child: SvgPicture.asset(
-                  '${assetImgIcon}folder.svg',
-                  width: 1.01.sw,
-                  color: folder2,
-                ),
-              ),
-              Positioned(
-                bottom: folderHeight * 0.5,
-                child: Hero(
-                  tag: 'folder-transition',
-                  child: SvgPicture.asset(
-                    '${assetImgIcon}folder.svg',
-                    width: 1.01.sw,
-                    color: folder1,
-                  ),
-                ),
-              ),
-              Positioned(
-                bottom: 0,
-                child: Container(
-                  width: 1.sw,
-                  height: folderHeight,
-                  color: folder1,
-                ),
-              ),
-              SafeArea(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: AppTokens.spaceLg(context),
-                    vertical: AppTokens.spaceLg(context),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        Config.appName,
-                        style: TextStyle(
-                          fontSize: AppTokens.fontTitle(context),
-                          fontWeight: FontWeight.bold,
-                          color: Theme.of(context).textTheme.bodyLarge!.color,
-                        ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      Config.appName,
+                      style: TextStyle(
+                        fontSize: FontTokens.title(context),
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).textTheme.bodyLarge!.color,
                       ),
-                      Column(
+                    ),
+                    Column(
+                      children: [
+                        CustomHeading(
+                          title: 'La forma más fácil de registrar evidencias',
+                          subTitle:
+                              'Registra y monitorea las evidencias que obtienes',
+                          color2: Theme.of(context).hintColor,
+                          fontWeightSubtitle: FontWeight.w600,
+                          fonsizeTitle: FontTokens.title(context),
+                          fonsizesubTitle: FontTokens.caption(context),
+                          fontWeight: FontWeight.w700,
+                          color: textWhite,
+                        ),
+                        SizedBox(height: AppDimensions.spaceM),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: CustomButtonBoxStyle(
+                            funcion: () {
+                              context.pushNamed(Routes.login);
+                            },
+                            fontSize: FontTokens.body(context),
+                            icon: 'paper.svg',
+                            sizeHeight: ComponentTokens.buttonHeight(context),
+                            sizeWidth: 0.50.sw,
+                            iconActive: true,
+                            isShadow: true,
+                            titleColor: textColor,
+                            color: textWhite,
+                            title: 'Empezar',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildLandscape(BuildContext context, DeviceInfo device) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final height = constraints.maxHeight;
+        final folderHeight = height * 0.12;
+
+        return Stack(
+          children: [
+            _buildFolders(folderHeight),
+            SafeArea(
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: AppDimensions.spaceL,
+                  vertical: AppDimensions.spaceM,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 4,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          Text(
+                            Config.appName,
+                            style: TextStyle(
+                              fontSize: FontTokens.title(context),
+                              fontWeight: FontWeight.bold,
+                              color:
+                                  Theme.of(context).textTheme.bodyLarge!.color,
+                            ),
+                          ),
+                          SizedBox(height: AppDimensions.spaceS),
                           CustomHeading(
-                            title: 'La forma más fácil de registrar evidencias',
+                            title:
+                                'La forma más fácil de registrar evidencias',
                             subTitle:
                                 'Registra y monitorea las evidencias que obtienes',
                             color2: Theme.of(context).hintColor,
                             fontWeightSubtitle: FontWeight.w600,
-                            fonsizeTitle: AppTokens.fontTitle(context),
-                            fonsizesubTitle: AppTokens.fontCaption(context),
+                            fonsizeTitle: FontTokens.title(context),
+                            fonsizesubTitle: FontTokens.caption(context),
                             fontWeight: FontWeight.w700,
                             color: textWhite,
                           ),
-                          SizedBox(height: AppTokens.spaceMd(context)),
-                          Row(
-                            mainAxisAlignment: isLandscape
-                                ? MainAxisAlignment.center
-                                : MainAxisAlignment.end,
-                            children: [
-                              CustomButtonBoxStyle(
-                                funcion: () {
-                                  context.pushNamed(Routes.login);
-                                },
-                                fontSize: AppTokens.fontBody(context),
-                                icon: 'paper.svg',
-                                sizeHeight: isLandscape
-                                    ? 30.h
-                                    : AppTokens.buttonHeightMd(context),
-                                sizeWidth: isLandscape ? 0.3.sw : 0.50.sw,
-                                iconActive: true,
-                                isShadow: true,
-                                titleColor: textColor,
-                                color: textWhite,
-                                title: 'Empezar',
-                              ),
-                            ],
+                        ],
+                      ),
+                    ),
+                    SizedBox(width: AppDimensions.spaceL),
+                    Expanded(
+                      flex: 3,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          CustomButtonBoxStyle(
+                            funcion: () {
+                              context.pushNamed(Routes.login);
+                            },
+                            fontSize: FontTokens.body(context),
+                            icon: 'paper.svg',
+                            sizeHeight: ComponentTokens.buttonHeight(context),
+                            sizeWidth: 0.5.sw,
+                            iconActive: true,
+                            isShadow: true,
+                            titleColor: textColor,
+                            color: textWhite,
+                            title: 'Empezar',
                           ),
                         ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          );
-        },
-      ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildFolders(double folderHeight) {
+    return Stack(
+      children: [
+        Positioned(
+          bottom: folderHeight * 3.2,
+          child: SvgPicture.asset(
+            '${assetImgIcon}folder.svg',
+            width: 1.01.sw,
+            color: folder4,
+          ),
+        ),
+        Positioned(
+          bottom: folderHeight * 2.3,
+          child: SvgPicture.asset(
+            '${assetImgIcon}folder.svg',
+            width: 1.01.sw,
+            color: folder3,
+          ),
+        ),
+        Positioned(
+          bottom: folderHeight * 1.4,
+          child: SvgPicture.asset(
+            '${assetImgIcon}folder.svg',
+            width: 1.01.sw,
+            color: folder2,
+          ),
+        ),
+        Positioned(
+          bottom: folderHeight * 0.5,
+          child: Hero(
+            tag: 'folder-transition',
+            child: SvgPicture.asset(
+              '${assetImgIcon}folder.svg',
+              width: 1.01.sw,
+              color: folder1,
+            ),
+          ),
+        ),
+        Positioned(
+          bottom: 0,
+          child: Container(
+            width: 1.sw,
+            height: folderHeight,
+            color: folder1,
+          ),
+        ),
+      ],
     );
   }
 }

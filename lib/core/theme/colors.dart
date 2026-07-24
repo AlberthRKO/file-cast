@@ -46,8 +46,8 @@ const Color colorAgetic = Color(0xFF2B3486);
 //Colors dark:
 const Color fondoColorDark2 = Color.fromARGB(255, 39, 36, 56);
 //const Color fondoColorDark = Color(0xff1F1D2B);
-const Color fondoColorDark = Color(0xff131323);
-const Color colorCardDark = Color(0xff252837);
+const Color fondoColorDark = Color(0xff161D31);
+const Color colorCardDark = Color(0xFF283046);
 const Color textDark = Color(0xFFEEEEEE);
 const Color primaryDark = Color(0xFF89A878);
 const Color textDarkBold = Color(0xFF89A878);
@@ -89,7 +89,8 @@ const Color grapBar2 = Color(0xFFD93131);
 const Color grapBar3 = Color(0xFF0078EB);
 const Color grapBar4 = Color(0xFFE74777);
 
-const Color folder1 = Color(0xFF011734);
+//const Color folder1 = Color(0xFF011734);
+const Color folder1 = Color(0xFF283046);
 //const Color folder1 = Color(0xFF0E1E4B);
 const Color folder2 = Color(0xFF014DAA);
 const Color folder3 = Color(0xFF0075FF);

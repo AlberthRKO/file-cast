@@ -66,11 +66,11 @@ class LoginPage extends StatelessWidget {
                 width: isLandscape ? 0.3.sw : 0.6.sw,
               ),
             ),
-            SizedBox(height: AppTokens.spaceMd(context)),
+            SizedBox(height: AppDimensions.spaceM),
             Text(
               Config.appName,
               style: TextStyle(
-                fontSize: AppTokens.fontTitle(context),
+                fontSize: FontTokens.title(context),
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
               ),
@@ -83,14 +83,14 @@ class LoginPage extends StatelessWidget {
 
   Widget _buildCardBody(BuildContext context, DeviceInfo device) {
     final isLandscape = device.isLandscape;
-    final maxFormWidth = 500.w;
+    const maxFormWidth = 500.0;
 
     final formContent = Padding(
       padding: EdgeInsets.only(
         top: isLandscape ? 0.2.sh : 0.02.sh,
-        left: isLandscape ? 0.06.sw : 0.06.sw,
-        right: isLandscape ? 0.06.sw : 0.06.sw,
-        bottom: AppTokens.spaceLg(context),
+        left: 0.06.sw,
+        right: 0.06.sw,
+        bottom: AppDimensions.spaceL,
       ),
       child: SingleChildScrollView(
         child: Column(
@@ -99,23 +99,23 @@ class LoginPage extends StatelessWidget {
             Text(
               'Iniciar Sesión',
               style: TextStyle(
-                fontSize: AppTokens.fontTitle(context),
+                fontSize: FontTokens.title(context),
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
               ),
             ),
-            SizedBox(height: AppTokens.spaceXs(context)),
+            SizedBox(height: AppDimensions.spaceXS),
             Text(
               'Ingresa tus credenciales para continuar',
               style: TextStyle(
-                fontSize: AppTokens.fontCaption(context),
+                fontSize: FontTokens.caption(context),
                 color: Colors.white.withOpacity(0.7),
               ),
             ),
             SizedBox(
               height: isLandscape
-                  ? AppTokens.spaceLg(context)
-                  : AppTokens.spaceXl(context),
+                  ? AppDimensions.spaceL
+                  : AppDimensions.spaceXL,
             ),
             TextFormCustom(
               onChanged: (text) {},
@@ -132,7 +132,7 @@ class LoginPage extends StatelessWidget {
                 return null;
               },
             ),
-            SizedBox(height: AppTokens.spaceMd(context)),
+            SizedBox(height: AppDimensions.spaceM),
             TextFormCustom(
               onChanged: (text) {},
               iconColor: Theme.of(context).primaryColor,
@@ -149,18 +149,16 @@ class LoginPage extends StatelessWidget {
                 return null;
               },
             ),
-            SizedBox(height: AppTokens.spaceXl(context)),
+            SizedBox(height: AppDimensions.spaceXL),
 
             Center(
               child: CustomButtonBoxStyle(
                 title: 'Iniciar Sesión',
                 sizeWidth: 0.85.sw,
-                sizeHeight: isLandscape
-                    ? 30.h
-                    : AppTokens.buttonHeightMd(context),
+                sizeHeight: ComponentTokens.buttonHeight(context),
                 icon: 'paper.svg',
                 iconActive: true,
-                fontSize: AppTokens.fontBody(context),
+                fontSize: FontTokens.body(context),
                 funcion: () {
                   context.pushNamed(Routes.home);
                 },
@@ -173,7 +171,7 @@ class LoginPage extends StatelessWidget {
                 ),
               ),
             ),
-            SizedBox(height: AppTokens.spaceMd(context)),
+            SizedBox(height: AppDimensions.spaceM),
           ],
         ),
       ),
@@ -210,7 +208,7 @@ class LoginPage extends StatelessWidget {
         ),
         Center(
           child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: maxFormWidth),
+            constraints: const BoxConstraints(maxWidth: maxFormWidth),
             child: formContent,
           ),
         ),

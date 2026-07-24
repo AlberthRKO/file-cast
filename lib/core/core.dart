@@ -20,5 +20,7 @@ export 'theme/colors.dart';
 export 'theme/padding.dart';
 export 'theme/theme_dark.dart';
 export 'theme/theme_light.dart';
+export 'theme/tokens/component_tokens.dart';
+export 'theme/tokens/font_tokens.dart';
 export 'utils/constants.dart';
 export 'utils/funciones.dart';
