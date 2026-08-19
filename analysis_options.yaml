@@ -24,6 +24,7 @@ analyzer:
     avoid_positional_boolean_parameters: ignore
     avoid_equals_and_hash_code_on_mutable_classes: ignore
     prefer_const_declarations: ignore
+    strict_raw_type: ignore
 linter:
   rules:
     public_member_api_docs: false

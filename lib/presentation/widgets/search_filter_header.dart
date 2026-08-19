@@ -29,17 +29,16 @@ class SearchFilterHeader extends StatelessWidget {
   final void Function(String) onSearchChanged;
   final void Function(dynamic) onFilterChanged;
   final void Function(String?) onDateRangeChanged;
-  final List<ValueType<dynamic>> listEstado;
+  final List<ValueTipo<dynamic>> listEstado;
   final bool isFilterOpen;
   final VoidCallback? onToggleFilter;
   final String searchQuery;
-  final ValueType<dynamic>? selectedEstado;
+  final ValueTipo<dynamic>? selectedEstado;
   final DateTimeRange? dateRange;
 
   @override
   Widget build(BuildContext context) {
-    final String userName =
-        (user as dynamic).nombreCompleto?.toString() ?? '';
+    final String userName = (user as dynamic).nombreCompleto?.toString() ?? '';
 
     return Container(
       decoration: BoxDecoration(
@@ -163,9 +162,9 @@ class SearchFilterHeader extends StatelessWidget {
       padding: EdgeInsets.only(top: AppDimensions.spaceM),
       child: Column(
         children: [
-          CustomDropDown<ValueType<dynamic>>(
+          CustomDropDown<ValueTipo<dynamic>>(
             color: Theme.of(context).primaryColor,
-            colorText: Theme.of(context).textTheme.bodyLarge!.color!,
+            colorText: Theme.of(context).textTheme.bodyLarge!.color,
             prefixIcon: true,
             prefixIconValue: 'estado.svg',
             lista: listEstado,

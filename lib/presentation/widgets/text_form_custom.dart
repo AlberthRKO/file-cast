@@ -1030,8 +1030,9 @@ class _DateRangePickerFormCustomState extends State<DateRangePickerFormCustom> {
         }
       },
       style: TextStyle(
-        fontSize: AppTokens.fontBody(context),
         color: Theme.of(context).textTheme.bodyLarge!.color,
+        fontSize: AppTokens.fontBody(context),
+        fontFamily: 'Montserrat',
       ),
       decoration: InputDecoration(
         prefixIcon: Container(

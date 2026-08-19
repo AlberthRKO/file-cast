@@ -46,17 +46,21 @@ class CustomDropDown<T> extends StatelessWidget {
           ? Theme.of(context).cardColor
           : Theme.of(context).primaryColor,
       style: TextStyle(
-        fontSize: FontTokens.body(context),
-        color: effectiveColor,
-        fontWeight: FontWeight.w500,
-        letterSpacing: .5,
+        color: Theme.of(context).textTheme.bodyLarge!.color,
+        fontSize: AppTokens.fontBody(context),
+        fontFamily: 'Montserrat',
       ),
       isExpanded: true,
-      isDense: false,
       validator: (value) {
         return validator == null ? null : validator!(value);
       },
       decoration: InputDecoration(
+        labelText: label,
+        labelStyle: TextStyle(
+          color: Theme.of(context).primaryColor.withOpacity(0.5),
+          fontSize: AppTokens.fontBody(context),
+          height: 1,
+        ),
         prefixIcon: prefixIcon
             ? Container(
                 width: AppDimensions.iconL,
@@ -69,35 +73,44 @@ class CustomDropDown<T> extends StatelessWidget {
                 ),
               )
             : null,
+        suffixIcon: prefixIcon
+            ? Container(
+                margin: EdgeInsets.only(right: AppDimensions.spaceS),
+                width: AppDimensions.iconL,
+                height: AppDimensions.iconL,
+                alignment: Alignment.center,
+                child: SvgPicture.asset(
+                  '${assetImgIcon}arrow_down.svg',
+                  height: AppDimensions.iconM,
+                  color: effectiveColor,
+                ),
+              )
+            : null,
         enabledBorder: UnderlineInputBorder(
-          borderSide: BorderSide(width: .8, color: effectiveColor),
-          borderRadius: BorderRadius.circular(AppDimensions.radiusL),
+          borderSide: const BorderSide(width: .8, color: primaryDark),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusM),
         ),
         focusedBorder: UnderlineInputBorder(
-          borderSide: BorderSide(width: .8, color: effectiveColor),
-          borderRadius: BorderRadius.circular(AppDimensions.radiusL),
+          borderSide: const BorderSide(width: .8, color: primaryDark),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusM),
         ),
-        focusedErrorBorder: UnderlineInputBorder(
-          borderSide: const BorderSide(width: .8, color: Colors.red),
-          borderRadius: BorderRadius.circular(AppDimensions.radiusL),
+        disabledBorder: UnderlineInputBorder(
+          borderSide: const BorderSide(width: .8, color: Colors.grey),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusM),
         ),
         errorBorder: UnderlineInputBorder(
-          borderSide: const BorderSide(width: .8, color: Colors.red),
-          borderRadius: BorderRadius.circular(AppDimensions.radiusL),
+          borderSide: const BorderSide(width: .8, color: deleteColor),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusM),
         ),
-        contentPadding: EdgeInsets.symmetric(
-          horizontal: AppDimensions.spaceM,
+        focusedErrorBorder: UnderlineInputBorder(
+          borderSide: const BorderSide(width: .8, color: deleteColor),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusM),
         ),
-        border: InputBorder.none,
-      ),
-      hint: Text(
-        label,
-        style: TextStyle(
-          color: effectiveColorText.withOpacity(0.5),
-          fontWeight: FontWeight.w400,
-          fontSize: FontTokens.body(context),
+        border: UnderlineInputBorder(
+          borderRadius: BorderRadius.circular(AppDimensions.radiusM),
         ),
       ),
+
       items: lista.map((item) {
         return DropdownMenuItem<T>(
           value: item,
@@ -105,7 +118,7 @@ class CustomDropDown<T> extends StatelessWidget {
             textExtractor(item),
             style: TextStyle(
               color: effectiveColorText,
-              fontSize: FontTokens.body(context),
+              fontSize: AppTokens.fontBody(context),
               fontFamily: 'Montserrat',
             ),
           ),
@@ -114,22 +127,6 @@ class CustomDropDown<T> extends StatelessWidget {
       onChanged: (value) {
         onChanged(value == null ? null : valueExtractor(value));
       },
-      icon: Row(
-        children: [
-          Container(
-            width: 2,
-            height: AppDimensions.iconM,
-            color: effectiveColor.withOpacity(.3),
-          ),
-          SizedBox(width: AppDimensions.spaceS),
-          SvgPicture.asset(
-            '${assetImgIcon}arrow_down.svg',
-            width: AppDimensions.iconM,
-            height: AppDimensions.iconM,
-            color: effectiveColor,
-          ),
-        ],
-      ),
     );
   }
 }
@@ -159,8 +156,8 @@ class CustomDropDown2<T> extends StatelessWidget {
   final Color? color;
   final Color? colorText;
   final String? Function(T?)? validator;
-  final void Function(dynamic) onChanged;
-  final dynamic Function(T) valueExtractor;
+  final void Function(T?) onChanged;
+  final T Function(T) valueExtractor;
   final String Function(T)? textExtractor;
   final Widget Function(T)? itemBuilder;
   final T? value;
@@ -330,9 +327,7 @@ class CustomDropDown3<T> extends StatelessWidget {
       isExpanded: true,
       isDense: false,
       validator: (value) {
-        return validator == null
-            ? null
-            : validator!(value! as String);
+        return validator == null ? null : validator!(value! as String);
       },
       decoration: InputDecoration(
         prefixIcon: prefixIcon

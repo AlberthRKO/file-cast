@@ -27,16 +27,16 @@ class CustomAppbar extends StatelessWidget {
   final int countNoti;
   @override
   Widget build(BuildContext context) {
-    final List<ValueType> listEstado = [
-      ValueType(id: 10, value: 'Todos'),
-      ValueType(id: 0, value: 'Inactivo'),
-      ValueType(id: 1, value: 'Solicitud'),
-      ValueType(id: 2, value: 'Aprobado Jefe'),
-      ValueType(id: 3, value: 'Observado'),
-      ValueType(id: 4, value: 'Aprobado RRHH'),
-      ValueType(id: 5, value: 'Rechazado'),
-      ValueType(id: 6, value: 'Editado'),
-      ValueType(id: 7, value: 'Anulado'),
+    final List<ValueTipo> listEstado = [
+      ValueTipo(id: 10, value: 'Todos'),
+      ValueTipo(id: 0, value: 'Inactivo'),
+      ValueTipo(id: 1, value: 'Solicitud'),
+      ValueTipo(id: 2, value: 'Aprobado Jefe'),
+      ValueTipo(id: 3, value: 'Observado'),
+      ValueTipo(id: 4, value: 'Aprobado RRHH'),
+      ValueTipo(id: 5, value: 'Rechazado'),
+      ValueTipo(id: 6, value: 'Editado'),
+      ValueTipo(id: 7, value: 'Anulado'),
     ];
     final responsive = Responsive.of(context);
     return Container(
@@ -170,7 +170,7 @@ class CustomAppbar extends StatelessWidget {
               const SizedBox(
                 height: 20,
               ),
-              CustomDropDown<ValueType>(
+              CustomDropDown<ValueTipo>(
                 color: Theme.of(context).primaryColor,
                 colorText: Theme.of(context).textTheme.bodyLarge!.color,
                 prefixIcon: true,

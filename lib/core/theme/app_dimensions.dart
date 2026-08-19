@@ -2,7 +2,6 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class AppDimensions {
   AppDimensions._();
-
   // Spacing
   static double get spaceXXS => 2.w;
   static double get spaceXS => 4.w;
