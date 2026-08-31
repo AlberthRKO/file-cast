@@ -2,6 +2,8 @@
 
 Esta es la referencia operativa para crear y migrar features de File Cast. Complementa el plan general de [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md), la UI adaptive de [RESPONSIVE_GUIDE.md](RESPONSIVE_GUIDE.md) y las rutas de [ROUTING_GUIDE.md](ROUTING_GUIDE.md).
 
+El estado y orden real de migración se mantiene en [MIGRATION_TRACKER.md](MIGRATION_TRACKER.md). No asumir que una carpeta legacy puede retirarse solo porque una vista equivalente ya existe.
+
 ## Decisión arquitectónica
 
 File Cast usa MVVM con repositorios y una capa de dominio opcional:
@@ -154,6 +156,10 @@ Los flags de operaciones independientes pueden convivir dentro del snapshot, por
 
 No dispersar el estado de una feature entre varios `setState` de widgets. El estado puramente visual y local, como una animación expandida o el foco de un campo, sí puede permanecer en la View.
 
+ScrollController, TextEditingController, FocusNode y AnimationController pertenecen a la View y deben liberarse en `dispose`. Búsqueda, filtros, página/cursor, `hasMore`, prevención de cargas duplicadas y combinación de resultados pertenecen al ViewModel/repositorio.
+
+Los bottom sheets y dialogs creados sobre un `Navigator` pueden quedar fuera del scope de un Provider registrado dentro de la ruta. No consultar providers profundos desde esos overlays. Pasar estado/comandos explícitos, usar el ViewModel ya inyectado como `Listenable` o crear un scope deliberado con `.value` cuando corresponda.
+
 ## Inyección de dependencias
 
 - Registrar Services, Repository implementations, Use Cases y ViewModels en el composition root.
@@ -176,6 +182,22 @@ No dispersar el estado de una feature entre varios `setState` de widgets. El est
 8. elimina solo los archivos heredados que quedaron sin consumidores.
 
 No crear wrappers nuevos alrededor de una pantalla monolítica manteniendo toda su lógica interna; eso cambia la carpeta, no la arquitectura.
+
+### Vista completa frente a archivo individual
+
+- Preferir migrar una View y sus widgets directos como una vertical pequeña.
+- Un archivo individual solo se refactoriza aisladamente cuando su API permite mantener separación de responsabilidades.
+- Si un widget heredado mezcla datos, provider, navegación y responsive, crear un widget nuevo en la feature y dejar el antiguo para consumidores aún no migrados.
+- No convertir automáticamente todos los widgets de `presentation/widgets` en widgets de `ui/core`; primero demostrar que son realmente compartidos por al menos dos features migradas.
+- Actualizar [MIGRATION_TRACKER.md](MIGRATION_TRACKER.md) al cambiar la ruta o retirar compatibilidad.
+
+## Diseño y tema como dependencia de UI
+
+- Las Views consumen `ThemeData`; no importan paletas privadas para reconstruir el mismo diseño en cada feature.
+- Los componentes de feature pueden usar tokens lógicos de `ui/core/theme` para spacing, radius, tamaños mínimos y anchos máximos.
+- Colores de negocio compartidos se modelan con `ThemeExtension` y variantes light/dark.
+- `ThemeController` controla `ThemeMode`; no debe contener reglas de layout.
+- La limpieza de temas ScreenUtil es transversal y se realiza al final, después de migrar todos sus consumidores.
 
 ## Reglas específicas por feature
 

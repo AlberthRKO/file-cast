@@ -22,7 +22,7 @@ La recomendación es construir primero un MVP Android de extremo a extremo y man
 |---|---|---|
 | Flavors Flutter | `development`, `staging`, `production`, `cliente1`, `cliente2` | Base disponible |
 | Login | Formulario visual; el botón navega directamente al home | Mock, sin autenticación real |
-| Listado de requisas | Feature MVVM adaptativa con lista/grid/tabla, filtros y paginación | Mock detrás de `RequisitionRepository` in-memory; API pendiente |
+| Listado de requisas | Feature MVVM adaptativa con lista/grid/tabla, filtros y carga progresiva | Mock detrás de `RequisitionRepository` in-memory; paginación real de API pendiente |
 | Crear requisa | FAB sin acción funcional | No implementado |
 | Detalle de requisa | No hay ruta, modelo ni pantalla | No implementado |
 | Archivos/evidencias por requisa | No hay modelo, almacenamiento ni backend | No implementado |
@@ -71,6 +71,8 @@ La documentación [ADB_HANDSHAKE.md](ADB_HANDSHAKE.md) describe las fases 1 a 5,
 - La inyección todavía necesita repositorios reales para autenticación, API, caché, evidencias y adquisición; el repositorio de listado actual es reemplazable y solo conserva el prototipo visual.
 
 La separación de carpetas sugiere Clean Architecture, pero no está conectada de extremo a extremo. Hoy buena parte de la lógica de adquisición reside en un `StatefulWidget` de más de 1.200 líneas.
+
+El listado/Home ya funciona como referencia de migración: consume tema light/dark, usa constraints, ViewModel y repositorio in-memory, y carga resultados progresivamente. No significa que el responsive global esté terminado: Started, Login, Offline, Settings, USB y Mirror siguen en `presentation`, mientras `app.dart`, tipografía y tokens legacy aún mantienen ScreenUtil para sus consumidores. El orden y gate de retiro se documentan en [MIGRATION_TRACKER.md](MIGRATION_TRACKER.md).
 
 ### iOS
 

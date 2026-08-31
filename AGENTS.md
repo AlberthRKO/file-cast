@@ -11,6 +11,7 @@ Antes de implementar o refactorizar Flutter, leer:
 - `docs/ARCHITECTURE_GUIDE.md`
 - `docs/RESPONSIVE_GUIDE.md`
 - `docs/ROUTING_GUIDE.md`
+- `docs/MIGRATION_TRACKER.md` para conocer qué vistas ya fueron migradas, cuál sigue y si la limpieza global está habilitada.
 - `docs/SINGLE_VIEW_REFACTOR_PROMPT.md` cuando el alcance sea una sola View o archivo.
 - `docs/HARDWARE_REQUIREMENTS.md` cuando el cambio involucre adquisición o conexiones.
 
@@ -148,6 +149,19 @@ Reglas:
 - No introducir backend ficticio dentro de Views. Si se necesita conservar un mock, colocarlo detrás de un repositorio in-memory reemplazable.
 - No ampliar el alcance a deep links universales, Android App Links o iOS Universal Links sin dominio, hosts y credenciales aprobados.
 - Mantener la compatibilidad conceptual con funcionamiento offline y sesiones ligadas a una requisa.
+- Migrar una vista junto con sus widgets directos; no mover masivamente widgets compartidos o sin consumidor confirmado.
+- Actualizar `docs/MIGRATION_TRACKER.md` cuando una ruta cambie a su View nueva o se retire deuda heredada.
+- La limpieza global de ScreenUtil, `OrientationBuilder`, helpers responsive, temas/tokens legacy y `presentation/routes` es una fase final separada.
+- No ejecutar esa limpieza final hasta cumplir completamente el gate definido en `docs/MIGRATION_TRACKER.md`.
+- Antes de borrar un archivo heredado, buscar imports, referencias, exports y rutas. Si conserva consumidores, dejarlo y documentar quién lo usa.
+
+## Tema y diseño visual
+
+- `theme_light.dart` y `theme_dark.dart` son la fuente visual durante la transición; toda View consume colores y tipografía desde `Theme.of(context)`.
+- Los colores semánticos nuevos se agregan a `ColorScheme` o a una `ThemeExtension`; no crear paletas privadas duplicadas dentro de una feature.
+- Preservar la identidad visual existente al migrar: jerarquía, colores, iconografía, radios y acciones. Responsive no autoriza rediseñar arbitrariamente.
+- El objetivo final es que ThemeData y sus tokens usen píxeles lógicos constantes y no dependan de ScreenUtil, tipo de dispositivo u orientación.
+- No retirar la inicialización global legacy mientras queden vistas que dependan de ella.
 
 ## Entrega de cada refactorización
 

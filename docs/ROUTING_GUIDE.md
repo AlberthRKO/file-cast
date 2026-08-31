@@ -2,6 +2,8 @@
 
 File Cast usa `go_router` y `MaterialApp.router`. Esta guía reemplaza la navegación fragmentada actual y define cómo deben registrarse nuevas vistas.
 
+La ruta de una vista solo cambia cuando su migración está completa. Registrar el avance en [MIGRATION_TRACKER.md](MIGRATION_TRACKER.md); no retirar `presentation/routes` mientras conserve consumidores.
+
 ## Estado actual
 
 La aplicación ya usa `MaterialApp.router`, pero todavía existen estos problemas:
@@ -174,6 +176,8 @@ Cuando esos datos existan, seguir la skill `flutter-setup-declarative-routing` y
 6. Migrar Settings/Offline.
 7. Migrar USB/connect/mirror reemplazando `Navigator.push` y mapas dinámicos.
 8. Eliminar `lib/presentation/routes/` cuando no tenga consumidores.
+
+El paso 8 pertenece a la limpieza global final de [RESTRUCTURING_PROMPT.md](RESTRUCTURING_PROMPT.md). Antes de ejecutarlo se deben buscar imports, exports, nombres de ruta y navegaciones heredadas; una ruta nueva no demuestra por sí sola que el adaptador antiguo ya no se usa.
 
 ## Checklist de revisión
 

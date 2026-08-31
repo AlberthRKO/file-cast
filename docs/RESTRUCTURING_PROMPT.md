@@ -4,6 +4,8 @@ Copiar el siguiente prompt en una nueva sesión que trabaje sobre este mismo rep
 
 Para migrar únicamente una pantalla o un archivo, usar [SINGLE_VIEW_REFACTOR_PROMPT.md](SINGLE_VIEW_REFACTOR_PROMPT.md).
 
+Consultar [MIGRATION_TRACKER.md](MIGRATION_TRACKER.md) antes de elegir una fase. El prompt final de limpieza al final de este documento no sustituye la migración vista por vista.
+
 ## Prompt maestro
 
 ```text
@@ -18,6 +20,7 @@ Antes de cambiar código:
    - docs/ARCHITECTURE_GUIDE.md
    - docs/RESPONSIVE_GUIDE.md
    - docs/ROUTING_GUIDE.md
+   - docs/MIGRATION_TRACKER.md
 3. Usa obligatoriamente y lee completamente estas skills:
    - $flutter-apply-architecture-best-practices
    - $flutter-build-responsive-layout
@@ -157,3 +160,70 @@ Migra la UI de USB/connect/mirror detrás de AcquisitionViewModel y servicios na
 ## Orden recomendado
 
 Si `lib/ui/core/adaptive/` y `lib/ui/core/navigation/` están presentes, comenzar con Fase 2 o utilizar el prompt de una sola vista. Abrir una sesión por fase y no combinar Fase 3 con Fase 6.
+
+## Fase 7 — limpieza global final
+
+Esta fase se ejecuta **una sola vez**, después de migrar y validar todas las vistas necesarias. No usarla para “adelantar” trabajo mientras `MIGRATION_TRACKER.md` tenga filas pendientes que consuman infraestructura legacy.
+
+### Prompt global de limpieza
+
+```text
+Completa la limpieza global final de la migración Flutter de File Cast.
+
+Antes de modificar código:
+
+1. Lee AGENTS.md y todos los documentos obligatorios, especialmente docs/MIGRATION_TRACKER.md.
+2. Usa y lee completamente $flutter-apply-architecture-best-practices, $flutter-build-responsive-layout y $flutter-setup-declarative-routing.
+3. Inspecciona git status y preserva cambios existentes.
+4. Audita imports, exports, rutas y consumidores de presentation/, ScreenUtil, DeviceInfo, Responsive, OrientationBuilder, extensiones responsive, tokens/temas legacy y navegación antigua.
+5. Verifica cada condición del “Gate para la limpieza global” de MIGRATION_TRACKER.md.
+
+Regla de seguridad:
+
+- Si alguna condición del gate falla, no elimines compatibilidad global ni amplíes silenciosamente el alcance. Informa los consumidores exactos que bloquean el retiro, actualiza el tracker y detén la limpieza para que sean migrados en sesiones dedicadas.
+- No borres archivos solo por su carpeta o nombre. Cada eliminación exige búsqueda de referencias sin consumidores.
+- Conserva completamente USB/ADB/scrcpy y configuración nativa salvo imports UI obsoletos confirmados.
+- Preserva identidad visual, ThemeMode y comportamiento light/dark.
+
+Si el gate está cumplido, realiza esta limpieza:
+
+1. Reemplaza ScreenUtilInit y OrientationBuilder de lib/app.dart por MaterialApp.router directo, conservando theme, darkTheme, themeMode y appRouter.
+2. Consolida spacing, radius, icon sizes, touch targets, anchos máximos y tipografía como valores lógicos en lib/ui/core/theme, sin BuildContext ni ScreenUtil.
+3. Migra theme_light.dart y theme_dark.dart al sistema definitivo. Usa ColorScheme para Material y ThemeExtension para estados de negocio/gradientes compartidos; elimina paletas duplicadas en features.
+4. Retira, solo sin consumidores, AppDimensions/AppTextStyles/AppTokens/FontTokens/tokens de componentes legacy y actualiza exports.
+5. Elimina imports y archivos de lib/core/responsive/, responsive_extension.dart y lib/presentation/utils/responsive.dart que hayan quedado sin consumidores.
+6. Retira flutter_screenutil del pubspec únicamente cuando no exista ningún uso requerido.
+7. Elimina adaptadores de lib/presentation/routes y páginas/widgets legacy únicamente cuando el router canónico y las features nuevas sean sus únicos reemplazos y no haya consumidores.
+8. Deja una sola configuración de go_router en lib/ui/core/navigation; elimina nombres/paths duplicados y conserva fallbacks tipados.
+9. Revisa DI para eliminar registros legacy sin consumidores y mantener dependencias por constructor/scope.
+10. Actualiza AGENTS.md, RESPONSIVE_GUIDE.md, ARCHITECTURE_GUIDE.md, ROUTING_GUIDE.md, IMPLEMENTATION_PLAN.md y MIGRATION_TRACKER.md para reflejar el estado final, retirando únicamente notas transitorias que ya no sean ciertas.
+
+Criterios de salida por inspección:
+
+- no existen imports necesarios de flutter_screenutil ni usos .sw/.sh/.sp/.w/.h/.r;
+- no existen decisiones de UI por DeviceInfo, Responsive u OrientationBuilder;
+- app.dart contiene MaterialApp.router directo;
+- todas las rutas de producto resuelven Views bajo lib/ui/features;
+- ninguna feature migrada importa presentation/;
+- ThemeData no depende de ScreenUtil/BuildContext para tamaños;
+- no existen Navigator.push, MaterialPageRoute ni Map<String,dynamic> en features migradas;
+- no quedan archivos eliminados referenciados por imports, exports, rutas o DI;
+- docs/MIGRATION_TRACKER.md marca la limpieza como completada.
+
+Restricciones del propietario:
+
+- No ejecutes flutter test, flutter analyze, flutter run, flutter build ni compilaciones nativas.
+- No ejecutes generadores ni agregues tests.
+- Puedes usar búsquedas, inspección del diff y dart format.
+- No edites archivos *.freezed.dart o *.g.dart manualmente.
+
+Entrega:
+
+1. resultado del gate y evidencia de búsquedas;
+2. infraestructura retirada y reemplazo definitivo;
+3. archivos eliminados y por qué estaban sin consumidores;
+4. tema/navigation/DI finales;
+5. deuda que permanezca, si alguna;
+6. comandos de validación que debo ejecutar yo;
+7. confirmación de que no ejecutaste validadores, compilación o generadores.
+```

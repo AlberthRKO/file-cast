@@ -1,6 +1,6 @@
 # Plan de implementación de File Cast
 
-Este documento convierte el objetivo del producto y los tres mockups en un plan técnico. Debe leerse junto con [PROJECT_STATUS_AND_FEASIBILITY.md](PROJECT_STATUS_AND_FEASIBILITY.md), [HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md), [ARCHITECTURE_GUIDE.md](ARCHITECTURE_GUIDE.md), [RESPONSIVE_GUIDE.md](RESPONSIVE_GUIDE.md) y [ROUTING_GUIDE.md](ROUTING_GUIDE.md). Para ejecutar la migración por sesiones, usar [RESTRUCTURING_PROMPT.md](RESTRUCTURING_PROMPT.md).
+Este documento convierte el objetivo del producto y los tres mockups en un plan técnico. Debe leerse junto con [PROJECT_STATUS_AND_FEASIBILITY.md](PROJECT_STATUS_AND_FEASIBILITY.md), [HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md), [ARCHITECTURE_GUIDE.md](ARCHITECTURE_GUIDE.md), [RESPONSIVE_GUIDE.md](RESPONSIVE_GUIDE.md) y [ROUTING_GUIDE.md](ROUTING_GUIDE.md). El avance concreto se registra en [MIGRATION_TRACKER.md](MIGRATION_TRACKER.md). Para migrar una vista usar [SINGLE_VIEW_REFACTOR_PROMPT.md](SINGLE_VIEW_REFACTOR_PROMPT.md); para fases amplias y limpieza final usar [RESTRUCTURING_PROMPT.md](RESTRUCTURING_PROMPT.md).
 
 > Límite de ejecución: las pruebas, compilaciones y validadores mencionados en este plan son criterios de aceptación a cargo del propietario o de una tarea futura que los autorice expresamente. Las sesiones de reestructuración deben limitarse al código y a la inspección del diff.
 
@@ -483,9 +483,12 @@ Salida: ADR iOS con demostración repetible; no continuar si el criterio no se c
 ### Fase 8 — UI adaptive y accesibilidad
 
 - aplicar [RESPONSIVE_GUIDE.md](RESPONSIVE_GUIDE.md);
+- migrar una vista por sesión según [MIGRATION_TRACKER.md](MIGRATION_TRACKER.md);
 - construir list/detail, modal y adquisición a partir de mockups;
 - teclado, mouse/trackpad, foco y shortcuts en tablet;
 - text scaling, contraste, targets y golden tests.
+
+La eliminación transversal de ScreenUtil, `OrientationBuilder`, helpers responsive, temas/tokens legacy y rutas de `presentation` ocurre solo después de completar el gate del tracker. No forma parte automática de la migración de una vista.
 
 Salida: cero overflow y UX usable en la matriz de viewports.
 
@@ -540,15 +543,15 @@ Ejecutar cada capacidad en la matriz de [HARDWARE_REQUIREMENTS.md](HARDWARE_REQU
 
 ## Orden inmediato recomendado
 
-1. Corregir el SDK reproducible y crear CI.
-2. Congelar el prototipo ADB como referencia con una prueba física documentada.
-3. Implementar dominio/almacenamiento/ledger antes de los botones de captura.
-4. Completar login/requisas reales.
-5. Refactorizar adquisición detrás de repositorios/ViewModels.
-6. Implementar screenshot y recording Android.
-7. Implementar pull/selección de archivos.
-8. Ejecutar PoC iOS y decidir ruta.
-9. Aplicar UI adaptive, hardening y piloto.
+1. Migrar Started y Login con los prompts directos, manteniendo Home/listado como referencia de la arquitectura nueva.
+2. Migrar Offline y Settings; decidir el shell solo con destinos reales.
+3. Implementar crear/detalle de requisa antes de conectar adquisición a IDs reales.
+4. Congelar el prototipo ADB como referencia y migrar Connect/Mirror sin reescribir el protocolo.
+5. Implementar dominio/almacenamiento/ledger antes de los botones probatorios.
+6. Implementar screenshot, recording y pull Android.
+7. Ejecutar PoC iOS y decidir ruta.
+8. Cumplir el gate y ejecutar la limpieza global final del responsive/tema/rutas legacy.
+9. Corregir el SDK reproducible, aplicar hardening, validación y piloto según autorización del propietario.
 
 ## Referencias
 

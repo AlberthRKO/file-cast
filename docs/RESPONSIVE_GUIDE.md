@@ -6,6 +6,8 @@ Esta guía es obligatoria junto con [ARCHITECTURE_GUIDE.md](ARCHITECTURE_GUIDE.m
 
 Esta guía reemplaza la estrategia anterior basada en `OrientationBuilder`, “móvil/tablet” y escalado global con `flutter_screenutil`. La implementación nueva toma decisiones por **espacio disponible en la ventana o en el padre**, en píxeles lógicos.
 
+El avance por vista se registra en [MIGRATION_TRACKER.md](MIGRATION_TRACKER.md). No confundir una vista ya adaptada con una migración global terminada: durante la transición todavía existe infraestructura legacy para pantallas no migradas.
+
 ## Principios obligatorios
 
 1. Usar `MediaQuery.sizeOf(context)` cuando una pantalla necesite conocer el tamaño de la ventana completa.
@@ -35,6 +37,8 @@ Responsive.widthPercent / heightPercent para tipografía
 
 `flutter_screenutil`, `DeviceInfo` y `presentation/utils/responsive.dart` permanecen temporalmente solo para no romper widgets heredados. Se eliminan después de migrar sus consumidores y pruebas.
 
+También permanecen temporalmente `ScreenUtilInit`/`OrientationBuilder` en `app.dart` y varios archivos de tema/tokens antiguos. Una View nueva no debe utilizarlos como justificación para importar responsive legacy.
+
 ## Frontera obligatoria entre código nuevo y legado
 
 Los helpers responsive actuales son exclusivamente compatibilidad heredada. No deben importarse desde ninguna View o widget nuevo ni desde un archivo que ya haya sido migrado.
@@ -51,6 +55,14 @@ lib/ui/core/adaptive/
 Los tokens lógicos nuevos viven en `lib/ui/core/theme/` y no dependen de `BuildContext`, `MediaQuery` o ScreenUtil. Durante la transición pueden coexistir ambos sistemas, pero nunca mezclarse dentro de una feature migrada.
 
 Una migración no se considera terminada si la nueva View todavía importa directa o indirectamente `device_type.dart`, `responsive_extension.dart`, `presentation/utils/responsive.dart` o `flutter_screenutil`.
+
+### Decisiones de ventana y decisiones locales
+
+- La View puede usar `AdaptiveLayout` una vez para conocer la clase general de ventana.
+- Cada toolbar, card compleja, formulario o panel que dependa de su espacio propio usa `LayoutBuilder` local.
+- No propagar decenas de booleanos como `isTablet` o `isLandscape`. Pasar estado y comandos; la composición visual se resuelve cerca del widget afectado.
+- Ancho y altura son señales independientes. Un viewport puede ser `medium` y tener altura compacta.
+- Mantener las mismas acciones y semántica en todas las variantes; solo cambia su colocación.
 
 ## Clases de espacio
 
@@ -231,6 +243,28 @@ Text(
 
 No usar `FontTokens.body(context)` que cambia por supuesto tipo de equipo. Material/Flutter trabaja en píxeles lógicos y `MediaQuery.textScalerOf(context)` aplica la preferencia del usuario.
 
+### Migración del tema
+
+La migración del tema ocurre en dos tiempos:
+
+1. **Durante la migración por vista:** consumir `Theme.of(context).colorScheme`, `cardColor`, `scaffoldBackgroundColor`, `textTheme` e `inputDecorationTheme`. No copiar colores ni tamaños legacy dentro de la View.
+2. **En la limpieza global:** reemplazar `AppTextStyles`, `AppDimensions`, `AppTokens`, `FontTokens` y tokens de componentes que dependan de ScreenUtil/BuildContext por tokens lógicos en `lib/ui/core/theme/`.
+
+Los estados semánticos que no pertenecen al `ColorScheme` estándar —por ejemplo `inProgress`, `finalized`, `offline`, `evidencePending` o el gradiente de acción— deben centralizarse en una `ThemeExtension`, con variantes light/dark y `copyWith`/`lerp`. Una feature no crea su propia paleta duplicada.
+
+El estado final de `app.dart` será un `MaterialApp.router` directo:
+
+```dart
+return MaterialApp.router(
+  theme: light,
+  darkTheme: dark,
+  themeMode: themeController.darkMode ? ThemeMode.dark : ThemeMode.light,
+  routerConfig: appRouter,
+);
+```
+
+No retirar `ScreenUtilInit` antes de que la búsqueda de consumidores legacy dé cero.
+
 Reglas:
 
 - no fijar altura de contenedores que llevan texto variable;
@@ -400,6 +434,11 @@ Cuando no tengan consumidores:
 - borrar `lib/presentation/utils/responsive.dart`;
 - retirar `flutter_screenutil` del `pubspec.yaml`;
 - reemplazar `ScreenUtilInit`/`OrientationBuilder` de `app.dart` por `MaterialApp.router` directo.
+- consolidar `theme_light.dart`/`theme_dark.dart` sobre tokens lógicos y `ThemeExtension` semánticas;
+- retirar `AppDimensions`, `AppTextStyles`, `AppTokens`, `FontTokens` y tokens antiguos únicamente si no tienen consumidores;
+- eliminar widgets/páginas legacy solo después de verificar imports, exports, rutas y referencias.
+
+Este paso se ejecuta con el prompt final de [RESTRUCTURING_PROMPT.md](RESTRUCTURING_PROMPT.md) y requiere cumplir el gate de [MIGRATION_TRACKER.md](MIGRATION_TRACKER.md).
 
 ## Matriz de pruebas de viewport
 

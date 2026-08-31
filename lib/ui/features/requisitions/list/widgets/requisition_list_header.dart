@@ -237,7 +237,7 @@ class _SearchField extends StatelessWidget {
         style: theme.textTheme.bodyMedium,
         cursorColor: theme.primaryColor,
         decoration: InputDecoration(
-          labelText: 'Buscar por CUD, persona o caso',
+          labelText: 'Buscar por CUD',
           labelStyle: theme.textTheme.bodyMedium?.copyWith(
             color: theme.primaryColor.withValues(alpha: 0.55),
           ),

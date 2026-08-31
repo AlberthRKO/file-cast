@@ -1,89 +1,145 @@
-# Prompt para refactorizar una vista o archivo
+# Prompts directos para migrar una vista
 
-Usar este prompt cuando el alcance sea una sola pantalla o un solo archivo. Sustituir los campos entre corchetes antes de enviarlo.
+Estos prompts están diseñados para nuevas sesiones sobre este repositorio. `AGENTS.md` y las guías contienen las reglas extensas, por lo que el prompt de trabajo puede ser corto.
 
-## Una vista completa
+Usar **una vista por sesión**. La unidad incluye el archivo de entrada, sus widgets directos, su ViewModel/estado y la actualización de su ruta. No combinar vistas sin solicitarlo expresamente.
 
-```text
-Refactoriza únicamente la vista [RUTA_ACTUAL_DEL_ARCHIVO] y los widgets que utiliza directamente.
+## Prompt mínimo recomendado
 
-Antes de modificar código:
-
-1. Lee AGENTS.md completo.
-2. Lee docs/ARCHITECTURE_GUIDE.md, docs/RESPONSIVE_GUIDE.md y docs/ROUTING_GUIDE.md.
-3. Usa y lee completamente:
-   - $flutter-apply-architecture-best-practices
-   - $flutter-build-responsive-layout
-   - $flutter-setup-declarative-routing
-4. Inspecciona sus dependencias, ruta actual y consumidores.
-5. Preserva todos los cambios existentes del worktree.
-
-Objetivo:
-
-- Migra la pantalla a lib/ui/features/[FEATURE]/[SUBFEATURE]/.
-- Crea una View pequeña, widgets de feature, estado inmutable y ViewModel.
-- Usa Freezed para modelos y estados nuevos; crea sus fuentes y `part`, pero no ejecutes `build_runner` ni escribas generados manualmente.
-- Mueve lógica de negocio, filtros, mocks, IO y coordinación fuera de la View.
-- Si necesita datos temporales, utiliza un repositorio in-memory detrás de un contrato.
-- Inyecta dependencias por constructor/provider en el scope apropiado.
-- Usa únicamente lib/ui/core/adaptive y los tokens lógicos nuevos.
-- No uses DeviceInfo, Responsive, ScreenUtil, .sw/.sh/.sp/.w/.h/.r ni OrientationBuilder.
-- Decide variantes con LayoutBuilder y constraints disponibles.
-- Compact: [COMPORTAMIENTO_COMPACT].
-- Medium: [COMPORTAMIENTO_MEDIUM].
-- Expanded/Large: [COMPORTAMIENTO_EXPANDED].
-- Conserva la identidad visual y las acciones actuales.
-- Migra su navegación a go_router usando una ruta declarativa y argumentos tipados.
-- No uses Navigator.push, MaterialPageRoute ni Map<String,dynamic>.
-- Cambia la ruta a la nueva View solo cuando su migración esté completa.
-- Elimina únicamente código heredado que quede sin consumidores.
-- No modifiques otras features ni USB/ADB/scrcpy.
-
-Restricciones:
-
-- No ejecutes tests, flutter analyze, flutter run, flutter build ni generadores.
-- No agregues tests.
-- Revisa el resultado únicamente por inspección del código y diff.
-
-Entrega:
-
-1. Archivos creados, modificados y retirados.
-2. Responsabilidades movidas al ViewModel/repositorio.
-3. Comportamiento adaptive de cada clase de ancho.
-4. Ruta declarativa resultante.
-5. Compatibilidad heredada que permanece.
-6. Riesgos o trabajo pendiente para que yo lo valide.
-7. Confirma que no ejecutaste tests, analyze ni compilación.
-```
-
-## Un archivo individual sin migrar toda la feature
+Copiar, completar los cuatro campos y enviar:
 
 ```text
-Refactoriza únicamente [RUTA_DEL_ARCHIVO]. No amplíes el alcance a una migración completa de la feature.
+Migra únicamente [ARCHIVO_ACTUAL] y sus widgets directos a [DESTINO_FEATURE].
 
-Lee AGENTS.md y las guías aplicables antes de editar. Inspecciona todos los consumidores del archivo.
+Sigue AGENTS.md, docs/MIGRATION_TRACKER.md y las guías del proyecto. Usa obligatoriamente $flutter-apply-architecture-best-practices, $flutter-build-responsive-layout y $flutter-setup-declarative-routing.
 
-Objetivo concreto: [DESCRIBIR_QUÉ_SE_DESEA_MEJORAR].
+Conserva el diseño, tema, textos y comportamiento actual. Aplica MVVM + Freezed, constraints responsive y go_router. Compact: [COMPACT]. Medium: [MEDIUM]. Expanded/Large: [EXPANDED]. Altura menor a 480: prioriza contenido y scroll, sin decidir por orientación.
 
-Reglas:
-
-- Conserva su API pública siempre que no contradiga AGENTS.md.
-- Si la API actual obliga a mantener lógica de negocio o responsive heredado, crea una API nueva y deja un adaptador temporal documentado.
-- No introduzcas DeviceInfo, ScreenUtil, OrientationBuilder, Navigator.push ni Map<String,dynamic>.
-- No muevas archivos no relacionados.
-- No cambies el comportamiento visual o funcional salvo lo solicitado.
-- Informa qué parte no puede quedar correctamente en MVVM sin migrar la ViewModel/repositorio de la feature.
-- No ejecutes tests, analyze, build, run ni generadores; yo realizaré la validación.
-
-Entrega un diff acotado, lista de consumidores actualizados y deuda pendiente.
+No reutilices responsive legacy ni agregues otro sistema. Cambia la ruta solo al completar la nueva View, conserva adaptadores con consumidores y actualiza docs/MIGRATION_TRACKER.md. No modifiques otras features ni ejecutes tests, analyze, build, run o generadores.
 ```
 
-## Ejemplo para Home/listado de requisas
+Este prompt ya implica:
+
+- leer completamente `AGENTS.md` y documentos obligatorios;
+- inspeccionar `git status`, ruta, providers y consumidores;
+- usar `lib/ui/features`, `lib/ui/core/adaptive`, tokens lógicos y tema activo;
+- no usar ScreenUtil, DeviceInfo, Responsive, OrientationBuilder, `.sw/.sh/.sp/.w/.h/.r`;
+- mover negocio, mocks, filtrado, IO y coordinación fuera de la View;
+- usar repositorios/servicios por constructor y estados Freezed;
+- no usar `Navigator.push`, `MaterialPageRoute` ni `Map<String,dynamic>`;
+- preservar USB/ADB/scrcpy salvo que la vista solicitada sea adquisición.
+
+## Prompt para un widget aislado
+
+Usarlo solo si no corresponde migrar toda la pantalla:
 
 ```text
-Refactoriza el Home/listado de requisas siguiendo AGENTS.md.
+Refactoriza únicamente [ARCHIVO_WIDGET] y actualiza solo sus consumidores directos.
 
-Migra la implementación a ui/features/requisitions/list, conserva home.dart solo como compatibilidad y usa MVVM + Freezed. Mueve el mock detrás de RequisitionRepository in-memory. Haz la vista adaptativa: cards y filtros en bottom sheet en compact/altura compacta, grid o lista en medium y tabla en expanded/large. Registra /requisitions con go_router.
+Sigue AGENTS.md y docs/MIGRATION_TRACKER.md. Conserva su diseño/API cuando sea viable, usa ThemeData y constraints locales, y elimina responsive legacy del widget. Si su API obliga a mezclar provider, navegación o negocio, crea una API nueva y deja un adaptador temporal para consumidores no migrados.
 
-No implementes backend, detalle, creación ni adquisición. No ejecutes tests, analyze, build, run ni generadores.
+No lo conviertas en widget global salvo que lo usen al menos dos features migradas. No ejecutes tests, analyze, build, run ni generadores. Informa consumidores actualizados y deuda restante.
 ```
+
+## Prompts listos para las vistas actuales
+
+### 1. Started
+
+```text
+Migra únicamente lib/presentation/pages/started/started.dart y sus widgets directos a lib/ui/features/onboarding/started/.
+
+Sigue AGENTS.md y docs/MIGRATION_TRACKER.md. Usa las skills obligatorias de arquitectura, responsive y routing. Conserva el diseño actual. Compact: composición vertical scrollable. Medium+: contenido centrado o dos zonas limitadas. Altura menor a 480: reduce decoración y prioriza CTA. No uses ramas portrait/landscape, ScreenUtil ni DeviceInfo. Registra /started en el router canónico y actualiza el tracker.
+
+No migres Login ni otras vistas. No ejecutes tests, analyze, build, run o generadores.
+```
+
+### 2. Login
+
+```text
+Migra únicamente lib/presentation/pages/login/login.dart y sus widgets directos a lib/ui/features/auth/login/.
+
+Sigue AGENTS.md y docs/MIGRATION_TRACKER.md. Usa las skills obligatorias. Conserva tema y diseño. Crea LoginState/LoginViewModel con Freezed; formulario y autenticación salen de la View. Compact: formulario scrollable y ancho completo. Medium+: formulario centrado maxWidth 480–640 y decoración opcional. Altura menor a 480: ocultar decoración no esencial y respetar teclado. Registra /login; la sesión/redirect pertenece al router y la View no simula autenticación.
+
+No migres Started ni implementes backend ficticio. No ejecutes tests, analyze, build, run o generadores.
+```
+
+### 3. Offline
+
+```text
+Migra únicamente lib/presentation/pages/offline/offline.dart y sus widgets directos a lib/ui/features/sync/offline/.
+
+Sigue AGENTS.md y docs/MIGRATION_TRACKER.md. Usa las skills obligatorias. Primero determina por consumidores si Offline es ruta, estado transversal o ambos; no inventes un shell. Conserva diseño/tema y representa estados offline, sincronizando, error y recuperado mediante ViewModel Freezed. Compact: contenido vertical scrollable. Medium+: bloque centrado de ancho legible. Migra /offline a go_router y actualiza el tracker.
+
+No implementes sincronización real ni modifiques otras features. No ejecutes tests, analyze, build, run o generadores.
+```
+
+### 4. Settings
+
+```text
+Migra únicamente lib/presentation/pages/settings/settings.dart y sus widgets directos a lib/ui/features/settings/.
+
+Sigue AGENTS.md y docs/MIGRATION_TRACKER.md. Usa las skills obligatorias. Crea una View responsive y un ViewModel solo para preferencias reales existentes. Integra ThemeController sin duplicar paletas. Compact: lista/formulario vertical. Medium+: contenido centrado con maxWidth. Expanded/Large: no estirar controles; supporting pane solo si aporta información. Migra /settings a go_router y actualiza el tracker.
+
+No inventes configuraciones ni crees shell salvo solicitud explícita. No ejecutes tests, analyze, build, run o generadores.
+```
+
+### 5. Crear requisa
+
+```text
+Implementa únicamente la vertical de crear requisa en lib/ui/features/requisitions/create/ siguiendo AGENTS.md, mockups y docs/MIGRATION_TRACKER.md. Usa las skills obligatorias.
+
+Crea estado/ViewModel Freezed y usa RequisitionRepository; la View no crea mocks ni reglas. Compact o altura menor a 480: página full-screen scrollable con footer seguro. Medium+: diálogo/ruta con maxWidth 680, maxHeight limitado, cuerpo scrollable y footer separado. Conserva tema e inputs del proyecto. Registra /requisitions/new con go_router y actualiza el tracker.
+
+No implementes backend, detalle o adquisición. No ejecutes tests, analyze, build, run o generadores.
+```
+
+### 6. Detalle de requisa
+
+```text
+Implementa únicamente el detalle en lib/ui/features/requisitions/detail/ siguiendo AGENTS.md, mockups y docs/MIGRATION_TRACKER.md. Usa las skills obligatorias.
+
+Crea RequisitionDetailState/ViewModel Freezed y carga por requisitionId mediante repositorio. Compact: resumen, evidencia y acciones en una columna/tabs. Medium: grid o panel de apoyo si hay altura. Expanded/Large con altura regular: dos paneles limitados. Acciones dependen del estado/capacidades; no contienen lógica falsa en la View. Registra /requisitions/:requisitionId y actualiza el tracker.
+
+No implementes todavía protocolo USB ni backend. No ejecutes tests, analyze, build, run o generadores.
+```
+
+### 7. Conexión USB
+
+```text
+Migra únicamente lib/presentation/pages/presentation/mirror/usb_device_list_page.dart y sus widgets directos a lib/ui/features/acquisition/connect/.
+
+Sigue AGENTS.md, documentos de adquisición y docs/MIGRATION_TRACKER.md. Usa las skills obligatorias. Extrae estado/orquestación de la View hacia AcquisitionConnectViewModel y servicios/adaptadores, pero conserva sin reescribir el protocolo USB/ADB nativo. Toda sesión recibe requisitionId y sessionId. Compact/altura compacta: flujo vertical scrollable y diagnóstico secundario colapsable. Medium+: pasos y diagnóstico distribuidos por constraints. Migra la ruta jerárquica con go_router, argumentos tipados y cleanup idempotente; actualiza el tracker.
+
+No implementes captura, grabación o transferencia en esta sesión. No ejecutes tests, analyze, build, run o generadores.
+```
+
+### 8. Mirror
+
+```text
+Migra únicamente lib/presentation/pages/presentation/mirror/mirror_page.dart y sus widgets directos a lib/ui/features/acquisition/mirror/.
+
+Sigue AGENTS.md, documentos de adquisición y docs/MIGRATION_TRACKER.md. Usa las skills obligatorias. Conserva decoder/control nativo y mueve ciclo de vida/comandos a ViewModel/servicios. La ruta incluye requisitionId y sessionId; handles efímeros usan un argumento tipado con fallback. Compact: mirror principal y controles persistentes, evidencia secundaria en tab/bottom sheet. Medium: composición según ancho y altura. Expanded/Large con altura regular: mirror + panel de evidencias. Calcula aspect-fit y coordenadas con LayoutBuilder; cleanup idempotente al salir. Actualiza el tracker.
+
+No reescribas ADB/scrcpy ni implementes transferencia. No ejecutes tests, analyze, build, run o generadores.
+```
+
+## Prompt de corrección posterior
+
+Después de que el propietario compile una vista y entregue errores:
+
+```text
+Corrige únicamente los errores reportados de la última vista migrada. Lee AGENTS.md y conserva su arquitectura, responsive, tema y ruta. No amplíes el alcance ni sustituyas Freezed por clases manuales. Inspecciona el error y sus consumidores; modifica solo lo necesario. Ejecuta analyze/build/tests/generadores únicamente si te lo autorizo expresamente en este mensaje.
+```
+
+## Entrega obligatoria de cada sesión
+
+La respuesta debe indicar:
+
+1. vista/ruta migrada;
+2. archivos creados, modificados y retirados;
+3. lógica movida al ViewModel/repositorio;
+4. comportamiento compact/medium/expanded/altura compacta;
+5. imports/rutas legacy retirados y compatibilidad que permanece;
+6. fila actualizada en `MIGRATION_TRACKER.md`;
+7. validación que debe realizar el propietario;
+8. confirmación de que no se ejecutaron comandos prohibidos.

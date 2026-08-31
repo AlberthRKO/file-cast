@@ -16,7 +16,7 @@ abstract final class AppRadius {
 }
 
 abstract final class AppSize {
-  static const minTouchTarget = 48.0;
+  static const minTouchTarget = 45.0;
   static const iconS = 16.0;
   static const iconM = 20.0;
   static const iconL = 24.0;
