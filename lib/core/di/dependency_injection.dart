@@ -2,6 +2,8 @@ import 'package:file_cast/core/config/config.dart';
 import 'package:file_cast/core/network/http.dart';
 import 'package:file_cast/core/storage/local_storage_service.dart';
 import 'package:file_cast/core/storage/secure_storage_service.dart';
+import 'package:file_cast/data/repositories/in_memory_requisition_repository.dart';
+import 'package:file_cast/domain/repositories/requisition_repository.dart';
 import 'package:file_cast/presentation/providers/theme_controller.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -34,8 +36,11 @@ class DependencyInjection {
           ip: '',
         ),
       ),
+      Provider<RequisitionRepository>(
+        create: (_) => const InMemoryRequisitionRepository(),
+      ),
       ChangeNotifierProvider<ThemeController>(
-        create: (_) => ThemeController(false),
+        create: (_) => ThemeController(true)..loadTheme(),
       ),
     ];
   }

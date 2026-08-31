@@ -13,3 +13,7 @@ targets:
             - lib/data/models/**/*
             - lib/domain/failures/*
             - lib/domain/failures/**/*
+            - lib/domain/models/*
+            - lib/domain/models/**/*
+            - lib/ui/features/**/view_models/*
+            - lib/ui/features/**/view_models/**/*

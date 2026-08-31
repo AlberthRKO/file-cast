@@ -1,5 +1,7 @@
 # ADB Handshake - Documentacion Completa (Fase 1-5)
 
+> **Documento histórico del prototipo.** Describe las fases 1 a 5. El código actual también contiene mirror/decoder y control (fases 6–7), e inicia scrcpy con `control=true`. Captura de pantalla, grabación a archivo y pull objetivo -> inspector todavía no están implementados. Para el estado vigente y el plan de producto, consultar [PROJECT_STATUS_AND_FEASIBILITY.md](PROJECT_STATUS_AND_FEASIBILITY.md) e [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
+
 ## Fase 1: Deteccion USB y Permisos
 
 ### Objetivo

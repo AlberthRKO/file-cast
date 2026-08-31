@@ -6,6 +6,7 @@ const Color primary = Color(0xFF6e9631);
 //const Color primary = Color(0xFF598c15);
 const Color violet = Color(0xFF513c86);
 const Color violet2 = Color(0xFF382a64);
+const Color actionGradientStart = Color(0xFF7178EB);
 const Color labelGraph = Color(0xFFA3AED0);
 const Color esam = Color(0xFFFFAF32);
 const Color esamPrimary = Color(0xFF255CFF);
