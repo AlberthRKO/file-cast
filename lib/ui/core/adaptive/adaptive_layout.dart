@@ -1,10 +1,11 @@
 import 'package:file_cast/ui/core/adaptive/window_size_class.dart';
 import 'package:flutter/widgets.dart';
 
-typedef AdaptiveWidgetBuilder = Widget Function(
-  BuildContext context,
-  AppWindowSize window,
-);
+typedef AdaptiveWidgetBuilder =
+    Widget Function(
+      BuildContext context,
+      AppWindowSize window,
+    );
 
 class AdaptiveLayout extends StatelessWidget {
   const AdaptiveLayout({

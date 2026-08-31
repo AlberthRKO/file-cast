@@ -1,4 +1,10 @@
 export 'core/adaptive/adaptive.dart';
 export 'core/navigation/app_route.dart';
 export 'core/navigation/route_args/mirror_route_args.dart';
+export 'core/theme/brand_theme.dart';
 export 'core/theme/layout_tokens.dart';
+export 'core/theme/app_text_theme.dart';
+export 'core/theme/theme_controller.dart';
+export 'core/widgets/app_action_button.dart';
+export 'core/widgets/app_section_heading.dart';
+export 'core/widgets/folder_background.dart';

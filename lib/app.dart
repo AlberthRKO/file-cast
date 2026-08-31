@@ -1,7 +1,8 @@
-import 'package:file_cast/core/core.dart';
-import 'package:file_cast/presentation/providers/theme_controller.dart';
-import 'package:file_cast/ui/core/navigation/app_router.dart';
+import 'package:file_cast/core/theme/theme_dark.dart';
+import 'package:file_cast/core/theme/theme_light.dart';
+import 'package:file_cast/ui/core/theme/theme_controller.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 class App extends StatelessWidget {
@@ -10,29 +11,15 @@ class App extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final themeController = context.watch<ThemeController>();
+    final router = context.watch<GoRouter>();
 
-    return OrientationBuilder(
-      builder: (context, orientation) {
-        final isPortrait = orientation == Orientation.portrait;
-
-        return ScreenUtilInit(
-          designSize: isPortrait ? const Size(375, 812) : const Size(812, 375),
-          minTextAdapt: true,
-          splitScreenMode: true,
-          builder: (context, child) {
-            return MaterialApp.router(
-              title: 'File Cast',
-              theme: light,
-              darkTheme: dark,
-              themeMode: themeController.darkMode
-                  ? ThemeMode.dark
-                  : ThemeMode.light,
-              routerConfig: appRouter,
-              debugShowCheckedModeBanner: false,
-            );
-          },
-        );
-      },
+    return MaterialApp.router(
+      title: 'File Cast',
+      theme: light,
+      darkTheme: dark,
+      themeMode: themeController.darkMode ? ThemeMode.dark : ThemeMode.light,
+      routerConfig: router,
+      debugShowCheckedModeBanner: false,
     );
   }
 }

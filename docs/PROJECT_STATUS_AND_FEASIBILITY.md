@@ -2,6 +2,7 @@
 
 Fecha de revisión inicial: 27 de agosto de 2026  
 Actualización de arquitectura UI: 31 de agosto de 2026  
+Limpieza de infraestructura Flutter: 31 de agosto de 2026
 Alcance revisado: Flutter/Dart, Android nativo Kotlin, configuración iOS, documentación, historial Git reciente, mockups adjuntos y validadores locales.
 
 ## Dictamen ejecutivo
@@ -50,8 +51,8 @@ La prueba técnica está concentrada en:
 - `android/app/src/main/kotlin/com/fiscalia/file_cast/scrcpy/ScrcpyDecoder.kt`: decodificación H.264 hacia una superficie.
 - `android/app/src/main/kotlin/com/fiscalia/file_cast/scrcpy/ScrcpyControl.kt`: paquetes touch, key y scroll.
 - `lib/core/adb/adb_client.dart`: fachada Dart sobre `MethodChannel`/`EventChannel`.
-- `lib/presentation/pages/presentation/mirror/usb_device_list_page.dart`: consola técnica que orquesta todas las fases.
-- `lib/presentation/pages/presentation/mirror/mirror_page.dart`: textura, traducción de coordenadas y controles.
+- `lib/ui/features/acquisition/connect/views/usb_device_list_view.dart`: consola técnica que orquesta las fases USB/ADB/scrcpy.
+- `lib/ui/features/acquisition/mirror/`: View responsive, ViewModel de controles/logs, textura y traducción de coordenadas.
 
 El asset incluido es `scrcpy-server-v2.7.jar`, de aproximadamente 70 KiB, con SHA-256 actual:
 
@@ -63,16 +64,12 @@ La documentación [ADB_HANDSHAKE.md](ADB_HANDSHAKE.md) describe las fases 1 a 5,
 
 ### Flujo Flutter de negocio
 
-- `lib/presentation/pages/login/login.dart` valida campos solo en UI y llama `context.pushNamed(Routes.home)`; no usa `AuthProvider` ni un repositorio.
-- `lib/presentation/providers/auth_provider.dart` cambia a `unauthenticated` y nunca autentica.
-- La interfaz `AuthRepository` y los casos de uso existen, pero no hay implementación registrada.
-- `lib/presentation/pages/home/home.dart` quedó como adaptador de compatibilidad; la implementación vive en `lib/ui/features/requisitions/list/`.
+- Login y Started viven en `lib/ui/features/`, con navegación declarativa y estado separado de la composición visual.
+- La interfaz `AuthRepository` y los casos de uso existen, pero todavía no hay una implementación real registrada.
 - El listado usa un `RequisitionListViewModel`, estado Freezed y un `RequisitionRepository` in-memory registrado por inyección. Crear y abrir detalle siguen pendientes de sus rutas/features reales.
 - La inyección todavía necesita repositorios reales para autenticación, API, caché, evidencias y adquisición; el repositorio de listado actual es reemplazable y solo conserva el prototipo visual.
 
-La separación de carpetas sugiere Clean Architecture, pero no está conectada de extremo a extremo. Hoy buena parte de la lógica de adquisición reside en un `StatefulWidget` de más de 1.200 líneas.
-
-El listado/Home ya funciona como referencia de migración: consume tema light/dark, usa constraints, ViewModel y repositorio in-memory, y carga resultados progresivamente. No significa que el responsive global esté terminado: Started, Login, Offline, Settings, USB y Mirror siguen en `presentation`, mientras `app.dart`, tipografía y tokens legacy aún mantienen ScreenUtil para sus consumidores. El orden y gate de retiro se documentan en [MIGRATION_TRACKER.md](MIGRATION_TRACKER.md).
+La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto, `MaterialApp.router`, `go_router`, tema central y adaptación por constraints. Se retiraron `lib/presentation`, ScreenUtil, los helpers por porcentaje/orientación y las rutas imperativas. La deuda arquitectónica principal que permanece es la consola técnica de conexión: aún concentra parte de la orquestación USB/ADB/scrcpy en su `StatefulWidget` y debe extraerse a ViewModel/servicios antes del MVP operativo.
 
 ### iOS
 
@@ -93,7 +90,7 @@ El listado/Home ya funciona como referencia de migración: consume tema light/da
 1. **No hay screenshot, recording ni pull.** `pushFile()` solo envía inspector -> objetivo. No existe el camino requerido objetivo -> inspector.
 2. **El cliente `_readExact()` descarta cualquier excedente del último chunk.** Esto puede perder bytes si metadatos y el inicio del video llegan juntos. Debe existir un buffer por stream o toda la lectura exacta debe quedar del lado nativo.
 3. **Backpressure insuficiente.** El reader ADB encola `ByteArray` sin límite y el loop de video hace `copyOf(size)` por paquete. Una desaceleración del decoder puede agotar memoria.
-4. **Ciclo de vida incompleto.** Salir de `UsbDeviceListPage` no garantiza `stopMirror()`/`disconnectAdb()`. El proceso scrcpy y recursos nativos pueden quedar activos.
+4. **Ciclo de vida sensible.** `UsbDeviceListView.dispose()` solicita `stopMirror()` y `disconnectAdb()`, pero el cleanup nativo debe hacerse idempotente y validarse ante cierre de proceso, cable retirado y background.
 5. **Errores de control se ocultan.** `sendTouch()` y `sendKey()` capturan `PlatformException` y no la propagan; la UI no puede confirmar que la acción funcionó.
 6. **Coordenadas y rotación necesitan un modelo único.** Se mezclan dimensiones del header, `wm size` y la textura. Deben contemplarse rotación, letterboxing, recorte, densidad y cambio de tamaño durante la sesión.
 7. **Autenticación ADB sin endurecimiento.** La clave privada se persiste en `SharedPreferences`; para una herramienta sensible debe protegerse con Android Keystore y validarse contra vectores/pruebas AOSP. La generación de `n0inv` y la firma deben ser revisadas con pruebas de protocolo, no solo con un modelo de teléfono.
@@ -112,12 +109,9 @@ El listado/Home ya funciona como referencia de migración: consume tema light/da
 
 ### P2 — arquitectura, responsive y mantenibilidad
 
-1. La UI contiene estado, orquestación nativa, IO, navegación y presentación en las mismas clases.
-2. Hay archivos de widgets heredados de 500 a 1.300 líneas sin relación clara con el producto actual.
-3. `core` depende de `presentation` en al menos un helper y `domain/menu.dart` depende de rutas de presentación, rompiendo la dirección de dependencias.
-4. El responsive actual usa `OrientationBuilder`, `DeviceInfo.isMobile/isTablet`, `.w/.h/.sp/.sw/.sh` y porcentajes de altura para fuentes. Esto contradice el diseño por espacio disponible y genera tipografía más pequeña en tablet.
-5. `RESPONSIVE_GUIDE.md` no coincide con el código: varios valores documentados de fuente/botón son diferentes de los tokens reales.
-6. `android.hardware.usb.host` está declarado `required=true`; esto impide distribuir el módulo de gestión de requisas a Android sin OTG. Conviene separar capacidad de adquisición de capacidad de gestión o marcar la feature como opcional y bloquear solo la acción.
+1. La consola USB aún mezcla orquestación nativa, IO temporal y presentación; debe dividirse antes del MVP operativo.
+2. Los flujos de captura, grabación, transferencia y cadena de custodia todavía no tienen verticales MVVM/repositorios.
+3. `android.hardware.usb.host` está declarado `required=true`; esto impide distribuir el módulo de gestión de requisas a Android sin OTG. Conviene separar capacidad de adquisición de capacidad de gestión o marcar la feature como opcional y bloquear solo la acción.
 
 ### P2 — validación y toolchain
 
@@ -134,7 +128,7 @@ Esto debe resolverse fijando una única versión de Flutter en CI y desarrollo a
 El worktree estaba limpio para el código del producto al iniciar la revisión; solo `.agents/` y `skills-lock.json` aparecían sin seguimiento. El historial reciente muestra:
 
 - 9–16 de julio: creación de USB/ADB, autenticación, streams, scrcpy, decoder, control y páginas de laboratorio.
-- 23–24 de julio: login, started, tokens responsive y `RESPONSIVE_GUIDE.md`.
+- 23–24 de julio: login, started y primera infraestructura responsive, retirada después de la migración final.
 - 24 de julio–19 de agosto: listado/filtros/cards de requisas simuladas.
 
 Los commits más relevantes son `8fca950` (USB fase 1), `b39d77a` (ADB fase 2), `b04e0f6` (streams), `2451e1e` (mirror), `15e3c63`/`c0f7333` (control), `bb11b02` (responsive) y `5fed146` (cards de requisas).

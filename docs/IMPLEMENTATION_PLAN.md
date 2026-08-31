@@ -1,6 +1,6 @@
 # Plan de implementación de File Cast
 
-Este documento convierte el objetivo del producto y los tres mockups en un plan técnico. Debe leerse junto con [PROJECT_STATUS_AND_FEASIBILITY.md](PROJECT_STATUS_AND_FEASIBILITY.md), [HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md), [ARCHITECTURE_GUIDE.md](ARCHITECTURE_GUIDE.md), [RESPONSIVE_GUIDE.md](RESPONSIVE_GUIDE.md) y [ROUTING_GUIDE.md](ROUTING_GUIDE.md). El avance concreto se registra en [MIGRATION_TRACKER.md](MIGRATION_TRACKER.md). Para migrar una vista usar [SINGLE_VIEW_REFACTOR_PROMPT.md](SINGLE_VIEW_REFACTOR_PROMPT.md); para fases amplias y limpieza final usar [RESTRUCTURING_PROMPT.md](RESTRUCTURING_PROMPT.md).
+Este documento convierte el objetivo del producto y los tres mockups en un plan técnico. Debe leerse junto con [PROJECT_STATUS_AND_FEASIBILITY.md](PROJECT_STATUS_AND_FEASIBILITY.md), [HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md), `AGENTS.md` y las skills Flutter del repositorio. Para trabajar una vista en otra sesión puede usarse [SINGLE_VIEW_REFACTOR_PROMPT.md](SINGLE_VIEW_REFACTOR_PROMPT.md).
 
 > Límite de ejecución: las pruebas, compilaciones y validadores mencionados en este plan son criterios de aceptación a cargo del propietario o de una tarea futura que los autorice expresamente. Las sesiones de reestructuración deben limitarse al código y a la inspección del diff.
 
@@ -115,7 +115,7 @@ lib/
         └── settings/
 ```
 
-`presentation/` se migrará progresivamente a `ui/`. No se recomienda un rename masivo antes de tener pruebas; cada feature nueva entra con la estructura objetivo y reemplaza la pantalla anterior al completar su vertical.
+La UI activa vive en `lib/ui/`; `lib/presentation/` y su infraestructura responsive heredada fueron retirados. Toda feature nueva entra directamente con la estructura objetivo.
 
 ### Límites del código nativo
 
@@ -144,7 +144,7 @@ Usar una única configuración declarativa con `MaterialApp.router` y `go_router
 
 No crear rutas nuevas con `Navigator.push`/`MaterialPageRoute` ni pasar contratos con `Map<String, dynamic>`. Handles efímeros como `textureId` pueden viajar únicamente en un argumento tipado y siempre acompañados por los IDs de requisa/sesión que permitan recuperar o mostrar un fallback. Los redirects de autenticación viven en el router y observan un estado de sesión, no ejecutan HTTP.
 
-El detalle y las reglas de migración están en [ROUTING_GUIDE.md](ROUTING_GUIDE.md).
+Las reglas obligatorias de navegación están en `AGENTS.md` y en la skill `flutter-setup-declarative-routing`.
 
 ## Modelo de dominio mínimo
 
@@ -482,13 +482,13 @@ Salida: ADR iOS con demostración repetible; no continuar si el criterio no se c
 
 ### Fase 8 — UI adaptive y accesibilidad
 
-- aplicar [RESPONSIVE_GUIDE.md](RESPONSIVE_GUIDE.md);
-- migrar una vista por sesión según [MIGRATION_TRACKER.md](MIGRATION_TRACKER.md);
+- aplicar la infraestructura de `lib/ui/core/adaptive/` y la skill responsive;
+- trabajar una vertical pequeña por sesión;
 - construir list/detail, modal y adquisición a partir de mockups;
 - teclado, mouse/trackpad, foco y shortcuts en tablet;
 - text scaling, contraste, targets y golden tests.
 
-La eliminación transversal de ScreenUtil, `OrientationBuilder`, helpers responsive, temas/tokens legacy y rutas de `presentation` ocurre solo después de completar el gate del tracker. No forma parte automática de la migración de una vista.
+La limpieza transversal de ScreenUtil, `OrientationBuilder`, helpers responsive, tokens legacy y rutas de `presentation` se completó el 31 de agosto de 2026. No reintroducir infraestructura paralela.
 
 Salida: cero overflow y UX usable en la matriz de viewports.
 

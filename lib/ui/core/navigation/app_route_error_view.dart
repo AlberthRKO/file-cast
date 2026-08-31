@@ -43,8 +43,7 @@ class AppRouteErrorView extends StatelessWidget {
                   ),
                   const SizedBox(height: AppSpace.l),
                   FilledButton(
-                    onPressed: () =>
-                        context.goNamed(AppRouteName.requisitions),
+                    onPressed: () => context.goNamed(AppRouteName.requisitions),
                     child: const Text('Ir a requisas'),
                   ),
                 ],

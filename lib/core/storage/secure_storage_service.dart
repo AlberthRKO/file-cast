@@ -6,6 +6,10 @@ class SecureStorageService {
 
   final FlutterSecureStorage _storage;
 
+  Future<String?> read(String key) => _storage.read(key: key);
+  Future<void> write(String key, String value) =>
+      _storage.write(key: key, value: value);
+
   Future<String?> getToken() => _storage.read(key: StorageKeys.token);
   Future<void> saveToken(String token) =>
       _storage.write(key: StorageKeys.token, value: token);
