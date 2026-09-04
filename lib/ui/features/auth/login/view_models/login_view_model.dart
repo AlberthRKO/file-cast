@@ -7,12 +7,12 @@ import 'package:flutter/foundation.dart';
 
 class LoginViewModel extends ChangeNotifier {
   LoginViewModel({
-    required AuthRepository? authRepository,
+    required AuthRepository authRepository,
     required AuthSessionController sessionController,
   }) : _authRepository = authRepository,
        _sessionController = sessionController;
 
-  final AuthRepository? _authRepository;
+  final AuthRepository _authRepository;
   final AuthSessionController _sessionController;
 
   LoginState _state = const LoginState();
@@ -78,16 +78,6 @@ class LoginViewModel extends ChangeNotifier {
       return;
     }
 
-    final repository = _authRepository;
-    if (repository == null) {
-      _state = _state.copyWith(
-        errorMessage: 'La autenticación todavía no está configurada.',
-        phase: LoginPhase.error,
-      );
-      notifyListeners();
-      return;
-    }
-
     _state = _state.copyWith(
       documentError: null,
       passwordError: null,
@@ -96,7 +86,7 @@ class LoginViewModel extends ChangeNotifier {
     );
     notifyListeners();
 
-    final result = await repository.login(
+    final result = await _authRepository.login(
       usuario: _state.documentNumber,
       password: _state.password,
     );

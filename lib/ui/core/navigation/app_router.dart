@@ -1,12 +1,16 @@
+import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/ui/core/navigation/app_route.dart';
 import 'package:file_cast/ui/core/navigation/app_route_error_view.dart';
 import 'package:file_cast/ui/core/navigation/route_args/mirror_route_args.dart';
+import 'package:file_cast/ui/features/acquisition/connect/views/usb_device_list_view.dart';
+import 'package:file_cast/ui/features/acquisition/mirror/views/mirror_view.dart';
 import 'package:file_cast/ui/features/auth/login/views/login_view.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
-import 'package:file_cast/ui/features/acquisition/mirror/views/mirror_view.dart';
-import 'package:file_cast/ui/features/acquisition/connect/views/usb_device_list_view.dart';
 import 'package:file_cast/ui/features/connectivity/offline/views/offline_view.dart';
 import 'package:file_cast/ui/features/onboarding/started/views/started_view.dart';
+import 'package:file_cast/ui/features/requisitions/create/views/create_requisition_view.dart';
+import 'package:file_cast/ui/features/requisitions/detail/views/file_transfer_placeholder_view.dart';
+import 'package:file_cast/ui/features/requisitions/detail/views/requisition_detail_view.dart';
 import 'package:file_cast/ui/features/requisitions/list/views/requisition_list_view.dart';
 import 'package:file_cast/ui/features/settings/views/settings_view.dart';
 import 'package:go_router/go_router.dart';
@@ -64,6 +68,32 @@ GoRouter createAppRouter({
         name: AppRouteName.requisitions,
         path: AppRoutePath.requisitions,
         builder: (context, state) => const RequisitionListRoute(),
+      ),
+      GoRoute(
+        name: AppRouteName.createRequisition,
+        path: AppRoutePath.createRequisition,
+        builder: (context, state) {
+          final mode = state.uri.queryParameters['mode'];
+          return CreateRequisitionRoute(
+            initialMode: mode == 'person'
+                ? RequisitionRegistrationMode.withoutCud
+                : RequisitionRegistrationMode.existingCud,
+          );
+        },
+      ),
+      GoRoute(
+        name: AppRouteName.requisitionDetail,
+        path: AppRoutePath.requisitionDetail,
+        builder: (context, state) => RequisitionDetailRoute(
+          requisitionId: state.pathParameters['requisitionId']!,
+        ),
+      ),
+      GoRoute(
+        name: AppRouteName.fileTransfer,
+        path: AppRoutePath.fileTransfer,
+        builder: (context, state) => FileTransferPlaceholderView(
+          requisitionId: state.pathParameters['requisitionId']!,
+        ),
       ),
       GoRoute(
         name: AppRouteName.offline,

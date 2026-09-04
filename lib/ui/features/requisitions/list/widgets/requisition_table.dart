@@ -1,4 +1,5 @@
 import 'package:file_cast/domain/models/requisition.dart';
+import 'package:file_cast/core/theme/colors.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_status_badge.dart';
 import 'package:flutter/material.dart';
@@ -121,80 +122,93 @@ class _RequisitionTableRow extends StatelessWidget {
     final identifier =
         requisition.cud ?? requisition.subjectName ?? requisition.id;
 
-    return InkWell(
-      onTap: onPressed,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 68),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpace.m),
-          child: Row(
-            children: [
-              Expanded(
-                flex: 2,
-                child: Text(
-                  DateFormat(
-                    'dd/MM/yyyy – HH:mm',
-                  ).format(requisition.registeredAt),
-                  style: theme.textTheme.bodySmall,
-                ),
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 68),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: AppSpace.m),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 2,
+              child: Text(
+                DateFormat(
+                  'dd/MM/yyyy – HH:mm',
+                ).format(requisition.registeredAt),
+                style: theme.textTheme.bodySmall,
               ),
-              Expanded(
-                flex: 4,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      identifier,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+            ),
+            Expanded(
+              flex: 4,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    identifier,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
                     ),
-                    Text(
-                      requisition.caseName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall,
+                  ),
+                  Text(
+                    requisition.caseName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              flex: 2,
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: RequisitionStatusBadge(status: requisition.status),
+              ),
+            ),
+            Expanded(
+              flex: 2,
+              child: Wrap(
+                spacing: AppSpace.m,
+                children: [
+                  _EvidenceCount(
+                    icon: Icons.photo_camera_outlined,
+                    count: requisition.imageEvidenceCount,
+                  ),
+                  _EvidenceCount(
+                    icon: Icons.videocam_outlined,
+                    count: requisition.videoEvidenceCount,
+                  ),
+                ],
+              ),
+            ),
+            Tooltip(
+              message: 'Abrir requisa',
+              child: InkWell(
+                onTap: onPressed,
+                customBorder: const CircleBorder(),
+                child: Container(
+                  width: AppSize.minTouchTarget,
+                  height: AppSize.minTouchTarget,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(
+                      colors: [actionGradientStart, violet],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
                     ),
-                  ],
+                  ),
+                  child: const Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    size: 14,
+                    color: textWhite,
+                  ),
                 ),
               ),
-              Expanded(
-                flex: 2,
-                child: Align(
-                  alignment: AlignmentDirectional.centerStart,
-                  child: RequisitionStatusBadge(status: requisition.status),
-                ),
-              ),
-              Expanded(
-                flex: 2,
-                child: Wrap(
-                  spacing: AppSpace.m,
-                  children: [
-                    _EvidenceCount(
-                      icon: Icons.photo_camera_outlined,
-                      count: requisition.imageEvidenceCount,
-                    ),
-                    _EvidenceCount(
-                      icon: Icons.videocam_outlined,
-                      count: requisition.videoEvidenceCount,
-                    ),
-                  ],
-                ),
-              ),
-              SizedBox(
-                width: AppSize.minTouchTarget,
-                height: AppSize.minTouchTarget,
-                child: IconButton(
-                  onPressed: onPressed,
-                  tooltip: 'Abrir requisa',
-                  icon: const Icon(Icons.chevron_right_rounded),
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

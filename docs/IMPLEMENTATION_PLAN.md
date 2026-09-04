@@ -398,6 +398,7 @@ Requisitos:
 - tablet: dialog centrado y limitado de ancho;
 - elegir CUD y registrar persona son estados del ViewModel, no dos formularios independientes;
 - GPS, fecha y almacenamiento offline deben mostrar procedencia y permisos.
+- Estado actual: implementado como vertical UI/MVVM inicial en [modules/requisitions_create.md](modules/requisitions_create.md), con registro simulado y mapa/GPS nativo pendientes.
 
 ## Fases de entrega
 
@@ -427,6 +428,7 @@ Salida: una evidencia fixture se registra, recupera y verifica offline.
 - implementar AuthRepository/API/tokens/guards;
 - listado con cursor, filtros y cache;
 - crear/editar detalle;
+- detalle mock actual documentado en `docs/modules/requisitions_detail.md`; falta persistencia, API y cadena de custodia;
 - estados y finalización inicial;
 - reemplazar mocks del home.
 

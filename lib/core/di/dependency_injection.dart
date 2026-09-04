@@ -1,8 +1,16 @@
-import 'package:file_cast/core/config/config.dart';
 import 'package:file_cast/core/adb/adb_client.dart';
+import 'package:file_cast/core/config/config.dart';
 import 'package:file_cast/core/network/http.dart';
 import 'package:file_cast/core/storage/secure_storage_service.dart';
+import 'package:file_cast/data/repositories/in_memory_auth_repository.dart';
 import 'package:file_cast/data/repositories/in_memory_requisition_repository.dart';
+import 'package:file_cast/data/repositories/in_memory_requisition_detail_repository.dart';
+import 'package:file_cast/data/repositories/requisition_creation_repository_impl.dart';
+import 'package:file_cast/data/services/requisition_creation_service.dart';
+import 'package:file_cast/data/services/evidence_picker_service.dart';
+import 'package:file_cast/domain/repositories/auth_repository.dart';
+import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
+import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
 import 'package:file_cast/ui/core/navigation/app_router.dart';
 import 'package:file_cast/ui/core/theme/theme_controller.dart';
@@ -30,8 +38,27 @@ class DependencyInjection {
           ip: '',
         ),
       ),
+      Provider<AuthRepository>(
+        create: (_) => InMemoryAuthRepository(),
+      ),
       Provider<RequisitionRepository>(
         create: (_) => const InMemoryRequisitionRepository(),
+      ),
+      Provider<EvidencePickerService>(
+        create: (_) => EvidencePickerService(),
+      ),
+      Provider<RequisitionDetailRepository>(
+        create: (context) => InMemoryRequisitionDetailRepository(
+          pickerService: context.read<EvidencePickerService>(),
+        ),
+      ),
+      ProxyProvider<Http, RequisitionCreationService>(
+        update: (_, http, _) => RequisitionCreationService(http: http),
+      ),
+      ProxyProvider<RequisitionCreationService, RequisitionCreationRepository>(
+        update: (_, service, _) => RequisitionCreationRepositoryImpl(
+          service: service,
+        ),
       ),
       Provider<AdbClient>(create: (_) => AdbClient()),
       ChangeNotifierProvider<AuthSessionController>(

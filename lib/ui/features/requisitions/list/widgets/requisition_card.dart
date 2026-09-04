@@ -43,91 +43,88 @@ class RequisitionCard extends StatelessWidget {
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(AppRadius.l),
         clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onPressed,
-          child: Padding(
-            padding: const EdgeInsets.all(AppSpace.m),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    SvgPicture.asset(
-                      '${assetImgIcon}calendar.svg',
-                      width: AppSize.iconS,
-                      colorFilter: ColorFilter.mode(
-                        textColor.withValues(alpha: 0.5),
-                        BlendMode.srcIn,
-                      ),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpace.m),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  SvgPicture.asset(
+                    '${assetImgIcon}calendar.svg',
+                    width: AppSize.iconS,
+                    colorFilter: ColorFilter.mode(
+                      textColor.withValues(alpha: 0.5),
+                      BlendMode.srcIn,
                     ),
-                    const SizedBox(width: AppSpace.xs),
-                    Expanded(
-                      child: Text(
-                        DateFormat(
-                          'dd/MM/yyyy HH:mm',
-                        ).format(requisition.registeredAt),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: textColor.withValues(alpha: 0.6),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: AppSpace.s),
-                    RequisitionStatusBadge(status: requisition.status),
-                  ],
-                ),
-                const SizedBox(height: AppSpace.m),
-                Text(
-                  identifierLabel,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.primaryColor,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.5,
                   ),
-                ),
-                const SizedBox(height: AppSpace.xs),
-                Text(
-                  requisition.caseName,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyLarge?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    height: 1.2,
+                  const SizedBox(width: AppSpace.xs),
+                  Expanded(
+                    child: Text(
+                      DateFormat(
+                        'dd/MM/yyyy HH:mm',
+                      ).format(requisition.registeredAt),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: textColor.withValues(alpha: 0.6),
+                      ),
+                    ),
                   ),
+                  const SizedBox(width: AppSpace.s),
+                  RequisitionStatusBadge(status: requisition.status),
+                ],
+              ),
+              const SizedBox(height: AppSpace.m),
+              Text(
+                identifierLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.primaryColor,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
                 ),
-                const SizedBox(height: AppSpace.m),
-                Divider(
-                  height: 1,
-                  thickness: 1,
-                  color: textColor.withValues(alpha: 0.08),
+              ),
+              const SizedBox(height: AppSpace.xs),
+              Text(
+                requisition.caseName,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  height: 1.2,
                 ),
-                const SizedBox(height: AppSpace.m),
-                Row(
-                  children: [
-                    Flexible(
-                      child: _EvidencePill(
-                        assetName: 'camera.svg',
-                        count: requisition.imageEvidenceCount,
-                        label: 'Capturas',
-                      ),
+              ),
+              const SizedBox(height: AppSpace.m),
+              Divider(
+                height: 1,
+                thickness: 1,
+                color: textColor.withValues(alpha: 0.08),
+              ),
+              const SizedBox(height: AppSpace.m),
+              Row(
+                children: [
+                  Flexible(
+                    child: _EvidencePill(
+                      assetName: 'camera.svg',
+                      count: requisition.imageEvidenceCount,
+                      label: 'Capturas',
                     ),
-                    const SizedBox(width: AppSpace.s),
-                    Flexible(
-                      child: _EvidencePill(
-                        assetName: 'video.svg',
-                        count: requisition.videoEvidenceCount,
-                        label: 'Videos',
-                      ),
+                  ),
+                  const SizedBox(width: AppSpace.s),
+                  Flexible(
+                    child: _EvidencePill(
+                      assetName: 'video.svg',
+                      count: requisition.videoEvidenceCount,
+                      label: 'Videos',
                     ),
-                    const Spacer(),
-                    _DetailsButton(onTap: onPressed),
-                  ],
-                ),
-              ],
-            ),
+                  ),
+                  const Spacer(),
+                  _DetailsButton(onTap: onPressed),
+                ],
+              ),
+            ],
           ),
         ),
       ),

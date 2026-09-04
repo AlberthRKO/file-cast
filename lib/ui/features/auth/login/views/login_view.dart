@@ -14,21 +14,13 @@ class LoginRoute extends StatelessWidget {
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
       create: (context) => LoginViewModel(
-        authRepository: _maybeAuthRepositoryOf(context),
+        authRepository: context.read<AuthRepository>(),
         sessionController: context.read<AuthSessionController>(),
       ),
       child: Consumer<LoginViewModel>(
         builder: (context, viewModel, _) => LoginView(viewModel: viewModel),
       ),
     );
-  }
-
-  AuthRepository? _maybeAuthRepositoryOf(BuildContext context) {
-    try {
-      return context.read<AuthRepository>();
-    } on ProviderNotFoundException {
-      return null;
-    }
   }
 }
 

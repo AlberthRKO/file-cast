@@ -91,6 +91,12 @@ class _UsbDeviceListViewState extends State<UsbDeviceListView> {
   }
 
   Future<void> _init() async {
+    // iOS no registra el canal USB/ADB nativo: evitar invocarlo y mostrar una
+    // capacidad honesta en vez de tratarlo como fallo de OTG.
+    if (Platform.isIOS) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
     _isOtgSupported = await _adbClient.isOtgSupported();
     _devices = await _adbClient.getConnectedDevices();
     if (!mounted) return;
@@ -1013,6 +1019,9 @@ class _UsbDeviceListViewState extends State<UsbDeviceListView> {
   }
 
   Widget _buildContent() {
+    if (Platform.isIOS) {
+      return _buildIosCapabilityState();
+    }
     if (!_isOtgSupported) {
       return _buildNoOtgSupport();
     }
@@ -1022,6 +1031,37 @@ class _UsbDeviceListViewState extends State<UsbDeviceListView> {
     }
 
     return _buildDeviceList();
+  }
+
+  Widget _buildIosCapabilityState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpace.xl),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.phone_iphone_rounded,
+              size: 72,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(height: AppSpace.m),
+            Text('Conexión iOS', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: AppSpace.s),
+            Text(
+              'La captura ADB/OTG solo está disponible para Android. Para iPhone o iPad usa Importar archivos desde el detalle de la requisa.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: AppSpace.m),
+            FilledButton(
+              onPressed: () => context.pop(),
+              child: const Text('Volver al detalle'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildNoOtgSupport() {

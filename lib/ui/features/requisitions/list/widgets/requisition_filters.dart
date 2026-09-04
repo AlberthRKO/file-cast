@@ -34,6 +34,7 @@ class RequisitionFilters extends StatelessWidget {
     final statusField = DropdownButtonFormField<RequisitionStatus?>(
       key: ValueKey(status),
       initialValue: status,
+      isExpanded: true,
       style: theme.textTheme.bodyMedium,
       dropdownColor: theme.cardColor,
       iconEnabledColor: theme.primaryColor,
@@ -53,6 +54,20 @@ class RequisitionFilters extends StatelessWidget {
         DropdownMenuItem(
           value: RequisitionStatus.finalized,
           child: Text('Finalizada'),
+        ),
+      ],
+      selectedItemBuilder: (context) => const [
+        Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: Text('Todos los estados', overflow: TextOverflow.ellipsis),
+        ),
+        Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: Text('En curso', overflow: TextOverflow.ellipsis),
+        ),
+        Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: Text('Finalizada', overflow: TextOverflow.ellipsis),
         ),
       ],
       onChanged: onStatusChanged,
@@ -97,7 +112,7 @@ class RequisitionFilters extends StatelessWidget {
       runSpacing: AppSpace.s,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        SizedBox(width: 190, child: statusField),
+        SizedBox(width: 230, child: statusField),
         SizedBox(width: 240, child: dateField),
         SizedBox(height: AppSize.minTouchTarget, child: clearButton),
       ],

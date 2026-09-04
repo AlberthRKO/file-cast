@@ -42,7 +42,9 @@ class LoginLayout extends StatelessWidget {
       builder: (context, constraints) {
         final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
         final compactHeight = constraints.maxHeight < 480 || keyboardOpen;
-        final useTwoPanes = constraints.maxWidth >= 720 && !keyboardOpen;
+        // No cambiar el árbol al abrir el teclado: hacerlo destruye el foco y
+        // provoca que el teclado se cierre inmediatamente en pantallas anchas.
+        final useTwoPanes = constraints.maxWidth >= 720;
 
         if (useTwoPanes) {
           final brand = BrandTheme.of(context);
@@ -51,8 +53,6 @@ class LoginLayout extends StatelessWidget {
           return DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                begin: Alignment.centerLeft,
-                end: Alignment.centerRight,
                 colors: [
                   brand.headerGradientStart,
                   theme.scaffoldBackgroundColor,
@@ -96,9 +96,7 @@ class LoginLayout extends StatelessWidget {
             if (!compactHeight)
               SizedBox(
                 width: double.infinity,
-                height: (constraints.maxHeight * 0.27)
-                    .clamp(210.0, 260.0)
-                    .toDouble(),
+                height: constraints.maxHeight * 0.4,
                 child: _LoginBrandPane(
                   appName: appName,
                   compact: window.isCompact,
@@ -159,7 +157,6 @@ class _LoginBrandPane extends StatelessWidget {
                 child: SvgPicture.asset(
                   'assets/images/illustrations/fileCast.svg',
                   width: compact ? 180 : 280,
-                  fit: BoxFit.contain,
                 ),
               ),
               SizedBox(height: compact ? AppSpace.s : AppSpace.m),

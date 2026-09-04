@@ -1,4 +1,5 @@
 import 'package:file_cast/core/theme/colors.dart';
+import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
 import 'package:file_cast/ui/core/adaptive/adaptive_layout.dart';
@@ -12,6 +13,7 @@ import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_card
 import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_filters.dart';
 import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_list_header.dart';
 import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_table.dart';
+import 'package:file_cast/ui/features/requisitions/create/views/create_requisition_view.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -90,7 +92,11 @@ class _RequisitionListViewState extends State<RequisitionListView> {
 
     return Scaffold(
       floatingActionButton: useCompactActions
-          ? _CreateRequisitionButton(onPressed: _showCreatePlaceholder)
+          ? _CreateRequisitionLauncher(
+              onPressed: () => _openCreateRequisition(
+                RequisitionRegistrationMode.existingCud,
+              ),
+            )
           : null,
       body: AdaptiveLayout(
         builder: (context, window) {
@@ -121,7 +127,9 @@ class _RequisitionListViewState extends State<RequisitionListView> {
                           onStatusChanged: _updateStatus,
                           onDatePressed: () => _selectDateRange(context),
                           onClear: _clearFilters,
-                          onCreate: _showCreatePlaceholder,
+                          onCreate: () => _openCreateRequisition(
+                            RequisitionRegistrationMode.existingCud,
+                          ),
                         ),
                         const SizedBox(height: AppSpace.s),
                       ],
@@ -271,12 +279,39 @@ class _RequisitionListViewState extends State<RequisitionListView> {
     });
   }
 
-  void _showCreatePlaceholder() {
-    _showPlaceholder('El flujo para registrar una requisa se migrará después.');
+  Future<void> _openCreateRequisition(RequisitionRegistrationMode mode) async {
+    var completionHandled = false;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => CreateRequisitionSheet(
+        initialMode: mode,
+        onClose: () => Navigator.of(sheetContext).pop(),
+        onCompleted: (result) {
+          if (completionHandled) return;
+          completionHandled = true;
+          Navigator.of(sheetContext).pop();
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            context.pushNamed(
+              AppRouteName.requisitionDetail,
+              pathParameters: {
+                'requisitionId': result.requisitionId,
+              },
+            );
+          });
+        },
+      ),
+    );
   }
 
   void _showDetailsPlaceholder(Requisition requisition) {
-    _showPlaceholder('Detalle de ${requisition.id}: migración pendiente.');
+    context.pushNamed(
+      AppRouteName.requisitionDetail,
+      pathParameters: {'requisitionId': requisition.id},
+    );
   }
 
   void _showPlaceholder(String message) {
@@ -499,8 +534,10 @@ class _MessageState extends StatelessWidget {
   }
 }
 
-class _CreateRequisitionButton extends StatelessWidget {
-  const _CreateRequisitionButton({required this.onPressed});
+class _CreateRequisitionLauncher extends StatelessWidget {
+  const _CreateRequisitionLauncher({
+    required this.onPressed,
+  });
 
   final VoidCallback onPressed;
 

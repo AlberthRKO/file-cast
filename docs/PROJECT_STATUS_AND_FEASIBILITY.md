@@ -24,9 +24,9 @@ La recomendación es construir primero un MVP Android de extremo a extremo y man
 | Flavors Flutter | `development`, `staging`, `production`, `cliente1`, `cliente2` | Base disponible |
 | Login | Formulario visual; el botón navega directamente al home | Mock, sin autenticación real |
 | Listado de requisas | Feature MVVM adaptativa con lista/grid/tabla, filtros y carga progresiva | Mock detrás de `RequisitionRepository` in-memory; paginación real de API pendiente |
-| Crear requisa | FAB sin acción funcional | No implementado |
-| Detalle de requisa | No hay ruta, modelo ni pantalla | No implementado |
-| Archivos/evidencias por requisa | No hay modelo, almacenamiento ni backend | No implementado |
+| Crear requisa | Ruta `/requisitions/new` con modo CUD/persona, busquedas, fecha/hora, ubicacion visual y navegacion a conexion | Parcial; registro simulado, mapa/GPS nativo y persistencia offline reales pendientes |
+| Detalle de requisa | Ruta, card de caso, secciones de evidencias mock y acciones desde hoja inferior | Parcial; backend y persistencia pendientes |
+| Archivos/evidencias por requisa | Resumen por categoría/peso, selector de imágenes, videos, audios y documentos, y carga simulada en memoria | Parcial; sin almacenamiento probatorio ni backend |
 | Offline y sincronización | Existen servicios generales de almacenamiento/conectividad, pero no un outbox de negocio | No implementado |
 | USB host Android | Detección, permisos, attach/detach | Implementado como prototipo |
 | ADB por USB | Handshake RSA, streams multiplexados, shell y push | Implementado como prototipo |
