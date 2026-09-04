@@ -1,7 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-feature android:name="android.hardware.usb.host" android:required="true" />
-    <uses-permission android:name="android.permission.HARDWARE_TEST" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
     <application
         android:label="${appName}"
@@ -32,15 +31,6 @@
                 android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
                 android:resource="@xml/device_filter" />
         </activity>
-
-        <receiver
-            android:name=".usb.UsbReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
-                <action android:name="android.hardware.usb.action.USB_DEVICE_DETACHED" />
-            </intent-filter>
-        </receiver>
 
         <meta-data
             android:name="flutterEmbedding"

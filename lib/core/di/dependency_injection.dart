@@ -3,12 +3,15 @@ import 'package:file_cast/core/config/config.dart';
 import 'package:file_cast/core/network/http.dart';
 import 'package:file_cast/core/storage/secure_storage_service.dart';
 import 'package:file_cast/data/repositories/in_memory_auth_repository.dart';
+import 'package:file_cast/data/repositories/acquisition_repository_impl.dart';
 import 'package:file_cast/data/repositories/in_memory_requisition_repository.dart';
 import 'package:file_cast/data/repositories/in_memory_requisition_detail_repository.dart';
 import 'package:file_cast/data/repositories/requisition_creation_repository_impl.dart';
 import 'package:file_cast/data/services/requisition_creation_service.dart';
+import 'package:file_cast/data/services/android_acquisition_platform_service.dart';
 import 'package:file_cast/data/services/evidence_picker_service.dart';
 import 'package:file_cast/domain/repositories/auth_repository.dart';
+import 'package:file_cast/domain/repositories/acquisition_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
@@ -61,6 +64,23 @@ class DependencyInjection {
         ),
       ),
       Provider<AdbClient>(create: (_) => AdbClient()),
+      ProxyProvider<AdbClient, AndroidAcquisitionPlatformService>(
+        update: (_, adbClient, previousService) =>
+            previousService ??
+            AndroidAcquisitionPlatformService(adbClient: adbClient),
+      ),
+      ProxyProvider2<
+        AndroidAcquisitionPlatformService,
+        RequisitionDetailRepository,
+        AcquisitionRepository
+      >(
+        update: (_, platformService, detailRepository, previousRepository) =>
+            previousRepository ??
+            AcquisitionRepositoryImpl(
+              platformService: platformService,
+              detailRepository: detailRepository,
+            ),
+      ),
       ChangeNotifierProvider<AuthSessionController>(
         create: (_) => AuthSessionController(),
       ),

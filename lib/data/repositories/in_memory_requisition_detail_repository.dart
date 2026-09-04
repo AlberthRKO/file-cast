@@ -46,6 +46,8 @@ class InMemoryRequisitionDetailRepository
     required RequisitionEvidenceType type,
     required String sizeLabel,
     required int byteLength,
+    String? localPath,
+    String? sha256,
   }) async {
     final next = RequisitionEvidence(
       id: 'EVI-${DateTime.now().microsecondsSinceEpoch}',
@@ -54,6 +56,8 @@ class InMemoryRequisitionDetailRepository
       createdAt: DateTime.now(),
       sizeLabel: sizeLabel,
       byteLength: byteLength,
+      localPath: localPath,
+      sha256: sha256,
     );
     _imported.update(
       requisitionId,

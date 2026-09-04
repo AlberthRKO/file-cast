@@ -633,10 +633,17 @@ class UsbAdbTransport(
                         // Device puts our local_id in arg1, device's remote_id in arg0
                         val stream = streams[message.arg1]
                         if (stream != null) {
-                            stream.okayRemoteId = message.arg0
-                            stream.okayReceived.countDown()
-                            stream.writeOkayQueue.offer(message.arg0)
-                            log("OKAY dispatched to stream ${message.arg1} (remoteId=${message.arg0})")
+                            if (stream.openAcknowledged.compareAndSet(false, true)) {
+                                // The first A_OKAY completes A_OPEN. It must not also
+                                // acknowledge the first A_WRTE: doing so allows two
+                                // writes in flight and desynchronizes touch sequences.
+                                stream.okayRemoteId = message.arg0
+                                stream.okayReceived.countDown()
+                                log("OPEN OKAY dispatched to stream ${message.arg1} (remoteId=${message.arg0})")
+                            } else {
+                                stream.writeOkayQueue.offer(message.arg0)
+                                log("WRITE OKAY dispatched to stream ${message.arg1} (remoteId=${message.arg0})")
+                            }
                         } else {
                             log("OKAY for unknown stream arg1=${message.arg1} arg0=${message.arg0}")
                         }
@@ -949,33 +956,75 @@ class UsbAdbTransport(
 
     // --- Control write queue (serialized, flow-control compliant) ---
 
-    private val controlWriteQueue = LinkedBlockingQueue<Pair<Int, ByteArray>>()
+    private val controlWriteQueue = LinkedBlockingQueue<Pair<Int, ByteArray>>(256)
     private var controlWriterThread: Thread? = null
     private val controlWriterRunning = AtomicBoolean(false)
+    private val controlPacketsQueued = AtomicInteger(0)
+    private val controlPacketsAcknowledged = AtomicInteger(0)
+    private val controlPacketFailures = AtomicInteger(0)
 
     /**
      * Enqueue a control packet to be sent in order, respecting ADB flow control
      * (1 unconfirmed A_WRTE per stream at a time). Does not block the caller.
      */
     fun enqueueControlWrite(localId: Int, packet: ByteArray) {
-        controlWriteQueue.offer(localId to packet)
+        val isTouchMove = packet.size > 1 && packet[0] == 2.toByte() && packet[1] == 2.toByte()
+        if (isTouchMove && controlWriteQueue.size > 8) {
+            val iterator = controlWriteQueue.iterator()
+            while (iterator.hasNext()) {
+                val queued = iterator.next()
+                if (queued.first == localId && queued.second.size > 1 &&
+                    queued.second[0] == 2.toByte() && queued.second[1] == 2.toByte()) {
+                    iterator.remove()
+                }
+            }
+        }
+
+        if (!controlWriteQueue.offer(localId to packet)) {
+            if (isTouchMove) return
+            // DOWN/UP/key packets must not be lost or the target may retain a
+            // pressed pointer. Prefer discarding a stale move packet.
+            val iterator = controlWriteQueue.iterator()
+            while (iterator.hasNext()) {
+                val queued = iterator.next()
+                if (queued.second.size > 1 && queued.second[0] == 2.toByte() && queued.second[1] == 2.toByte()) {
+                    iterator.remove()
+                    break
+                }
+            }
+            if (!controlWriteQueue.offer(localId to packet)) {
+                controlWriteQueue.poll()
+                controlWriteQueue.offer(localId to packet)
+            }
+        }
+        controlPacketsQueued.incrementAndGet()
         startControlWriterIfNeeded()
     }
 
     private fun startControlWriterIfNeeded() {
-        if (controlWriterRunning.get()) return
-        controlWriterRunning.set(true)
+        if (!controlWriterRunning.compareAndSet(false, true)) return
         controlWriterThread = thread(name = "AdbControlWriter", isDaemon = true) {
             log("ControlWriter: started")
-            while (controlWriterRunning.get() && !disconnected.get()) {
-                try {
+            try {
+                while (controlWriterRunning.get() && !disconnected.get()) {
                     val (localId, packet) = controlWriteQueue.poll(2, TimeUnit.SECONDS) ?: continue
                     writeStream(localId, packet, waitForOkay = true, timeoutMs = 3000)
-                } catch (e: Exception) {
-                    log("ControlWriter error: ${e.message}")
+                    controlPacketsAcknowledged.incrementAndGet()
+                }
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+            } catch (e: Exception) {
+                controlPacketFailures.incrementAndGet()
+                // A delayed acknowledgement could otherwise be applied to the
+                // wrong control packet, so let session recovery replace the stream.
+                log("ControlWriter error: ${e.message}")
+            } finally {
+                controlWriterRunning.set(false)
+                log("ControlWriter: exiting")
+                if (controlWriteQueue.isNotEmpty() && !disconnected.get()) {
+                    startControlWriterIfNeeded()
                 }
             }
-            log("ControlWriter: exiting")
         }
     }
 
@@ -984,7 +1033,16 @@ class UsbAdbTransport(
         controlWriteQueue.clear()
         controlWriterThread?.interrupt()
         controlWriterThread = null
+        controlPacketsQueued.set(0)
+        controlPacketsAcknowledged.set(0)
+        controlPacketFailures.set(0)
     }
+
+    fun getControlWriteStats(): String =
+        "queued=${controlPacketsQueued.get()} " +
+            "acknowledged=${controlPacketsAcknowledged.get()} " +
+            "failed=${controlPacketFailures.get()} " +
+            "pending=${controlWriteQueue.size}"
 
     // --- Video read loop ---
 
@@ -1108,6 +1166,7 @@ data class AdbStream(
     var remoteId: Int? = null,
     val dataQueue: LinkedBlockingDeque<ByteArray> = LinkedBlockingDeque(),
     val okayReceived: CountDownLatch = CountDownLatch(1),
+    val openAcknowledged: AtomicBoolean = AtomicBoolean(false),
     val closed: AtomicBoolean = AtomicBoolean(false),
     val closeReceived: CountDownLatch = CountDownLatch(1),
     val writeOkayQueue: LinkedBlockingQueue<Int> = LinkedBlockingQueue()

@@ -436,6 +436,8 @@ Salida: flujo login -> lista -> crear -> detalle, online/offline, probado.
 
 ### Fase 3 — sesión de adquisición
 
+Estado al 4 de septiembre de 2026: vertical arquitectónica inicial implementada. Conexión y preparación scrcpy están detrás de `AcquisitionRepository`/servicio, ligadas a IDs de requisa/sesión y sin consola técnica en la View. Continúan pendientes el ledger, recuperación de proceso y pruebas repetidas de cleanup.
+
 - contrato de capacidades y estado;
 - refactor de `AdbClient`/plugin detrás de repositorio;
 - conexión obligatoriamente ligada a requisa/sesión;
@@ -445,6 +447,8 @@ Salida: flujo login -> lista -> crear -> detalle, online/offline, probado.
 Salida: conectar/desconectar repetidamente sin fugas y con ledger.
 
 ### Fase 4 — evidencia de pantalla Android
+
+Estado al 4 de septiembre de 2026: screenshot binario, control táctil validado, muxer MP4, SHA-256 local, contador de grabación, feedback flotante y galería en vivo implementados como primera integración. El recorder conserva un GOP acotado desde el último keyframe, precarga SPS/PPS y muestras sincronizables, normaliza PTS y valida el archivo antes de registrarlo. Continúan pendientes la revalidación física del MP4 corregido, persistencia transaccional, cifrado, cuotas/espacio, segmentación y manifiesto.
 
 - screenshot binario;
 - recording/muxer;

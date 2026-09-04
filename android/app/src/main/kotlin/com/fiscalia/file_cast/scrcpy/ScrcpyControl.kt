@@ -5,7 +5,7 @@ import java.nio.ByteOrder
 
 /**
  * Builds scrcpy control packets (touch, key, scroll) per v2.7 protocol.
- * Reference: https://github.com/Genymobile/scrcpy/blob/master/app/src/main/java/com/genymobile/scrcpy/ControlMessage.java
+ * Reference: https://github.com/Genymobile/scrcpy/blob/v2.7/app/src/control_msg.c
  *
  * All packets are written to the control ADB stream (second socket).
  */
@@ -17,10 +17,13 @@ object ScrcpyControl {
     const val TYPE_INJECT_TOUCH = 2
     const val TYPE_INJECT_SCROLL = 3
     const val TYPE_BACK_OR_SCREEN_ON = 4
-    const val TYPE_GET_CLIPBOARD = 5
-    const val TYPE_SET_CLIPBOARD = 6
-    const val TYPE_SET_SCREEN_POWER_MODE = 7
-    const val TYPE_APP_SWITCH = 8
+    const val TYPE_EXPAND_NOTIFICATION_PANEL = 5
+    const val TYPE_EXPAND_SETTINGS_PANEL = 6
+    const val TYPE_COLLAPSE_PANELS = 7
+    const val TYPE_GET_CLIPBOARD = 8
+    const val TYPE_SET_CLIPBOARD = 9
+    const val TYPE_SET_SCREEN_POWER_MODE = 10
+    const val TYPE_ROTATE_DEVICE = 11
 
     // Android KeyEvent action
     const val ACTION_DOWN = 0
@@ -31,9 +34,6 @@ object ScrcpyControl {
     const val ACTION_UP_TOUCH = 1
     const val ACTION_MOVE = 2
 
-    // Pointer id for single touch
-    private const val POINTER_ID = 1L
-
     /**
      * Build a touch event packet (32 bytes).
      *
@@ -42,6 +42,7 @@ object ScrcpyControl {
      * screen_height(2) + pressure(2) + action_button(4) + buttons(4) = 32
      *
      * @param action ACTION_DOWN_TOUCH, ACTION_UP_TOUCH, or ACTION_MOVE
+     * @param pointerId Stable pointer identifier for the complete gesture
      * @param x Touch X in device screen coordinates
      * @param y Touch Y in device screen coordinates
      * @param screenWidth Device screen width
@@ -50,6 +51,7 @@ object ScrcpyControl {
      */
     fun buildTouchPacket(
         action: Int,
+        pointerId: Long,
         x: Int,
         y: Int,
         screenWidth: Int,
@@ -59,7 +61,7 @@ object ScrcpyControl {
         val buf = ByteBuffer.allocate(32).order(ByteOrder.BIG_ENDIAN)
         buf.put(TYPE_INJECT_TOUCH.toByte())        // 1
         buf.put(action.toByte())                    // 1
-        buf.putLong(POINTER_ID)                     // 8
+        buf.putLong(pointerId)                      // 8
         buf.putInt(x)                               // 4
         buf.putInt(y)                               // 4
         buf.putShort(screenWidth.toShort())         // 2
@@ -92,7 +94,7 @@ object ScrcpyControl {
     }
 
     /**
-     * Build a scroll event packet (23 bytes).
+     * Build a scroll event packet (21 bytes).
      *
      * @param x Scroll position X
      * @param y Scroll position Y
@@ -109,15 +111,15 @@ object ScrcpyControl {
         screenWidth: Int,
         screenHeight: Int
     ): ByteArray {
-        val buf = ByteBuffer.allocate(23).order(ByteOrder.BIG_ENDIAN)
+        val buf = ByteBuffer.allocate(21).order(ByteOrder.BIG_ENDIAN)
         buf.put(TYPE_INJECT_SCROLL.toByte())
         buf.putInt(x)
         buf.putInt(y)
         buf.putShort(screenWidth.toShort())
         buf.putShort(screenHeight.toShort())
-        buf.putInt(scrollX)
-        buf.putInt(scrollY)
-        buf.putShort(0) // buttons = 0
+        buf.putShort(scrollX.coerceIn(-0x7FFF, 0x7FFF).toShort())
+        buf.putShort(scrollY.coerceIn(-0x7FFF, 0x7FFF).toShort())
+        buf.putInt(0) // buttons = 0
         return buf.array()
     }
 
@@ -125,14 +127,7 @@ object ScrcpyControl {
      * Build a back or screen on packet (TYPE_BACK_OR_SCREEN_ON = 4).
      */
     fun buildBackOrScreenOn(): ByteArray {
-        return byteArrayOf(TYPE_BACK_OR_SCREEN_ON.toByte())
-    }
-
-    /**
-     * Build an app switch packet (TYPE_APP_SWITCH = 8).
-     */
-    fun buildAppSwitch(): ByteArray {
-        return byteArrayOf(TYPE_APP_SWITCH.toByte())
+        return byteArrayOf(TYPE_BACK_OR_SCREEN_ON.toByte(), ACTION_DOWN.toByte())
     }
 
     /**

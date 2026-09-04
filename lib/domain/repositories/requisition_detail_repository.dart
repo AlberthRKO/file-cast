@@ -8,6 +8,8 @@ abstract interface class RequisitionDetailRepository {
     required RequisitionEvidenceType type,
     required String sizeLabel,
     required int byteLength,
+    String? localPath,
+    String? sha256,
   });
   Future<RequisitionDetail?> importFromDevice({
     required String requisitionId,

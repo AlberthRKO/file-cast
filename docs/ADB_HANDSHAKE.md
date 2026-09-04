@@ -1,6 +1,6 @@
 # ADB Handshake - Documentacion Completa (Fase 1-5)
 
-> **Documento histórico del prototipo.** Describe las fases 1 a 5. El código actual también contiene mirror/decoder y control (fases 6–7), e inicia scrcpy con `control=true`. Captura de pantalla, grabación a archivo y pull objetivo -> inspector todavía no están implementados. Para el estado vigente y el plan de producto, consultar [PROJECT_STATUS_AND_FEASIBILITY.md](PROJECT_STATUS_AND_FEASIBILITY.md) e [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
+> **Documento histórico del prototipo.** Describe las fases 1 a 5. El código actual también contiene mirror/decoder y control táctil validado (fases 6–7), dimensiones dinámicas desde MediaCodec, captura PNG por `exec:screencap -p` y remultiplexado H.264 a MP4 con GOP/keyframe inicial. Pull objetivo -> inspector continúa pendiente. Para el flujo vigente consultar [modules/acquisition_capture.md](modules/acquisition_capture.md), [PROJECT_STATUS_AND_FEASIBILITY.md](PROJECT_STATUS_AND_FEASIBILITY.md) e [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
 
 ## Fase 1: Deteccion USB y Permisos
 
@@ -139,7 +139,7 @@ Host (app)                              Device
 - **A_CLSE**: Marca stream como cerrado, remueve del mapa
 
 #### Flow Control (writeOkayQueue)
-Cada `AdbStream` tiene una `writeOkayQueue: LinkedBlockingQueue<Int>`. Cuando el device envia A_OKAY, el reader thread encola el remoteId. `writeStream()` espera en esta cola con timeout, logrando control de flujo por-stream.
+Cada `AdbStream` tiene una `writeOkayQueue: LinkedBlockingQueue<Int>`. El primer A_OKAY confirma exclusivamente `A_OPEN`; los siguientes se encolan para confirmar `A_WRTE`. `writeStream()` espera en esta cola con timeout, logrando control de flujo por-stream sin permitir que dos escrituras queden en vuelo.
 
 #### Multiplexacion de streams
 ```kotlin
@@ -219,7 +219,7 @@ CLASSPATH=/data/local/tmp/scrcpy-server.jar \
   app_process / com.genymobile.scrcpy.Server 2.7 \
   tunnel_forward=true \
   audio=false \
-  control=false \
+  control=true \
   log_level=debug
 ```
 
@@ -228,7 +228,7 @@ CLASSPATH=/data/local/tmp/scrcpy-server.jar \
 |--------|-------|-------------|
 | `tunnel_forward` | `true` | Server crea LocalServerSocket y escucha |
 | `audio` | `false` | Deshabilita captura de audio |
-| `control` | `false` | Deshabilita canal de control |
+| `control` | `true` | Habilita el segundo socket para touch y teclas |
 | `log_level` | `debug` | Logging detallado |
 | `send_dummy_byte` | `true` | Envio de byte 0x00 al conectar (default) |
 | `send_device_meta` | `true` | Envio de nombre de device (default) |
@@ -343,7 +343,7 @@ Starting Phase 4: Push & Execute scrcpy-server...
 #### 1. v3.3.4 - Opciones invalidas
 v3.3.4 no reconoce `no_audio` ni `no_control`. El server imprime warning y puede fallar durante init de MediaCodec/AudioRecord.
 
-Fix: Usar v2.7 con opciones validas `audio=false control=false`.
+Fix: Usar v2.7 con opciones validas `audio=false control=true`.
 
 #### 2. v3.3.4 - Server hang despues de dummy byte
 Con v3.3.4, el server enviaba el dummy byte pero nunca el device info. El server colgaba durante MediaCodec init.

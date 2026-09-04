@@ -14,10 +14,17 @@ import android.util.Log
 import android.view.Surface
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.view.TextureRegistry
 import com.fiscalia.file_cast.adb.AdbAuth
 import com.fiscalia.file_cast.scrcpy.ScrcpyDecoder
+import com.fiscalia.file_cast.scrcpy.ScrcpyRecorder
+import java.io.File
+import java.io.FileOutputStream
+import java.security.MessageDigest
+import java.util.ArrayDeque
+import java.util.concurrent.TimeUnit
 
 class UsbPlugin(private val context: Context, private val flutterEngine: FlutterEngine) {
 
@@ -26,6 +33,9 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         private const val METHOD_CHANNEL = "com.fiscalia.file_cast/usb"
         private const val EVENT_CHANNEL = "com.fiscalia.file_cast/usb/events"
         private const val ACTION_USB_PERMISSION = "com.fiscalia.file_cast.USB_PERMISSION"
+        private const val FLAG_VIDEO_CONFIG = Long.MIN_VALUE
+        private const val FLAG_VIDEO_KEY_FRAME = 1L shl 62
+        private const val MAX_RECORDING_PREROLL_BYTES = 24 * 1024 * 1024
     }
 
     private val usbManager: UsbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -41,18 +51,28 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     private var pendingHandshakeResult: MethodChannel.Result? = null
     private var pendingHandshakeDevice: UsbDevice? = null
     private var waitingForReattach = false
+    private var handshakeGeneration = 0
 
     // Mirror components
     private var mirrorTextureEntry: TextureRegistry.SurfaceTextureEntry? = null
     private var scrcpyDecoder: ScrcpyDecoder? = null
     private var controlStreamLocalId: Int? = null
     private var scrcpyServerShellLocalId: Int? = null
-    private var deviceScreenWidth: Int = 0
-    private var deviceScreenHeight: Int = 0
+    @Volatile private var deviceScreenWidth: Int = 0
+    @Volatile private var deviceScreenHeight: Int = 0
+    @Volatile private var mirrorVideoWidth: Int = 0
+    @Volatile private var mirrorVideoHeight: Int = 0
+    private var scrcpyHeaderWidth: Int = 0
+    private var scrcpyHeaderHeight: Int = 0
     private var wmSizeWidth: Int = 0
     private var wmSizeHeight: Int = 0
     private var wmSizeRaw: String = ""
     private var lastTouchInfo: String = "none"
+    @Volatile private var recorder: ScrcpyRecorder? = null
+    private var lastCodecConfig: ByteArray? = null
+    private val recorderLock = Any()
+    private val recentVideoPackets = ArrayDeque<BufferedVideoPacket>()
+    private var recentVideoBytes = 0
 
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -82,7 +102,8 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                             val savedResult = pendingHandshakeResult
                             pendingHandshakeResult = null
                             mainHandler.post {
-                                connectAdbInternal(device, savedResult!!)
+                                handshakeGeneration += 1
+                                connectAdbInternal(device, savedResult!!, handshakeGeneration)
                             }
                         }
                     }
@@ -371,6 +392,10 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                 }
                 "createMirrorTexture" -> {
                     try {
+                        if (mirrorTextureEntry != null || scrcpyDecoder != null) {
+                            result.error("MIRROR_ALREADY_ACTIVE", "Ya existe una sesión de espejo activa", null)
+                            return@setMethodCallHandler
+                        }
                         val entry = flutterEngine.renderer.createSurfaceTexture()
                         mirrorTextureEntry = entry
                         val textureId = entry.id()
@@ -395,15 +420,39 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                         result.error("NOT_READY", "Texture o transporte no inicializado", null)
                         return@setMethodCallHandler
                     }
+                    if (scrcpyDecoder != null) {
+                        result.error("MIRROR_ALREADY_ACTIVE", "El decoder de espejo ya está activo", null)
+                        return@setMethodCallHandler
+                    }
                     Thread {
                         try {
                             val surfaceTexture = entry.surfaceTexture()
+                            mirrorVideoWidth = width
+                            mirrorVideoHeight = height
                             surfaceTexture.setDefaultBufferSize(width, height)
                             val surface = Surface(surfaceTexture)
 
                             val decoder = ScrcpyDecoder()
                             scrcpyDecoder = decoder
-                            val started = decoder.start(width, height, surface)
+                            val started = decoder.start(
+                                width = width,
+                                height = height,
+                                surface = surface,
+                                onOutputSizeChanged = { outputWidth, outputHeight ->
+                                    mirrorVideoWidth = outputWidth
+                                    mirrorVideoHeight = outputHeight
+                                    deviceScreenWidth = outputWidth
+                                    deviceScreenHeight = outputHeight
+                                    mainHandler.post {
+                                        surfaceTexture.setDefaultBufferSize(outputWidth, outputHeight)
+                                        sendEvent("mirror_state", mapOf(
+                                            "state" to "video_size",
+                                            "width" to outputWidth,
+                                            "height" to outputHeight
+                                        ))
+                                    }
+                                }
+                            )
                             if (!started) {
                                 Log.e(TAG, "Decoder failed to start after retries")
                                 mainHandler.post {
@@ -419,6 +468,15 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                                 localId = localId,
                                 onPacket = { headerValue, payload ->
                                     decoder.feedPacket(payload, headerValue)
+                                    synchronized(recorderLock) {
+                                        if ((headerValue and FLAG_VIDEO_CONFIG) != 0L) {
+                                            lastCodecConfig = (lastCodecConfig ?: byteArrayOf()) + payload
+                                            clearRecordingPreroll()
+                                        } else {
+                                            cacheRecordingPacket(headerValue, payload)
+                                            recorder?.writePacket(headerValue, payload)
+                                        }
+                                    }
                                 },
                                 onError = { msg ->
                                     Log.e(TAG, "Video error: $msg")
@@ -452,15 +510,27 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     adbTransport?.stopControlWriter()
                     scrcpyDecoder?.stop()
                     scrcpyDecoder = null
+                    stopRecorderSafely()
+                    synchronized(recorderLock) {
+                        lastCodecConfig = null
+                        clearRecordingPreroll()
+                    }
                     scrcpyServerShellLocalId = null
                     wmSizeWidth = 0
                     wmSizeHeight = 0
                     wmSizeRaw = ""
+                    scrcpyHeaderWidth = 0
+                    scrcpyHeaderHeight = 0
+                    mirrorVideoWidth = 0
+                    mirrorVideoHeight = 0
                     mirrorTextureEntry?.release()
                     mirrorTextureEntry = null
                     Log.d(TAG, "Mirror stopped")
                     result.success(mapOf("stopped" to true))
                 }
+                "captureScreenshot" -> captureScreenshot(call, result)
+                "startScreenRecording" -> startScreenRecording(call, result)
+                "stopScreenRecording" -> stopScreenRecording(result)
                 "getMirrorLog" -> {
                     val decoder = scrcpyDecoder
                     val transport = adbTransport
@@ -474,20 +544,39 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     if (controlId != null && transport != null) {
                         val open = transport.isStreamOpen(controlId)
                         log.appendLine("Control stream: localId=$controlId open=$open")
+                        log.appendLine("Control writes: ${transport.getControlWriteStats()}")
                     } else {
                         log.appendLine("Control stream: not set")
                     }
-                    log.appendLine("Header size: ${deviceScreenWidth}x${deviceScreenHeight}")
+                    log.appendLine("Header size: ${scrcpyHeaderWidth}x${scrcpyHeaderHeight}")
+                    log.appendLine("MediaCodec size: ${mirrorVideoWidth}x${mirrorVideoHeight}")
+                    log.appendLine("Touch packet size: ${deviceScreenWidth}x${deviceScreenHeight}")
+                    synchronized(recorderLock) {
+                        log.appendLine(
+                            "Recording: active=${recorder != null} " +
+                                "prerollPackets=${recentVideoPackets.size} " +
+                                "prerollBytes=$recentVideoBytes " +
+                                "codecConfigBytes=${lastCodecConfig?.size ?: 0}"
+                        )
+                    }
                     if (wmSizeWidth > 0) {
                         log.appendLine("wm size: ${wmSizeWidth}x${wmSizeHeight}")
-                        if (wmSizeWidth != deviceScreenWidth || wmSizeHeight != deviceScreenHeight) {
-                            log.appendLine("NOTE: header and wm size DIFFER!")
+                        if (wmSizeWidth != scrcpyHeaderWidth || wmSizeHeight != scrcpyHeaderHeight) {
+                            log.appendLine("NOTE: header and wm size differ (this may be expected).")
                         }
                     } else if (wmSizeRaw.isNotEmpty()) {
                         log.appendLine("wm size: $wmSizeRaw")
                     }
                     log.appendLine("Last touch: $lastTouchInfo")
-                    result.success(mapOf("log" to log.toString()))
+                    result.success(mapOf(
+                        "log" to log.toString(),
+                        "videoWidth" to mirrorVideoWidth,
+                        "videoHeight" to mirrorVideoHeight,
+                        "touchWidth" to deviceScreenWidth,
+                        "touchHeight" to deviceScreenHeight,
+                        "wmWidth" to wmSizeWidth,
+                        "wmHeight" to wmSizeHeight
+                    ))
                 }
                 "getServerLog" -> {
                     val localId = scrcpyServerShellLocalId
@@ -554,18 +643,25 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                         return@setMethodCallHandler
                     }
                     val action = call.argument<Number>("action")?.toInt() ?: 0
+                    val pointerId = call.argument<Number>("pointerId")?.toLong() ?: 1L
                     val x = call.argument<Number>("x")?.toInt() ?: 0
                     val y = call.argument<Number>("y")?.toInt() ?: 0
-                    // Always use the screen dimensions from the video header (set by setControlStream)
-                    // These match what the server reports and expects in touch packets
+                    // Use the current decoded video dimensions. They begin with
+                    // the scrcpy header and are updated after target rotation.
                     val screenWidth = deviceScreenWidth
                     val screenHeight = deviceScreenHeight
+                    if (screenWidth <= 0 || screenHeight <= 0) {
+                        result.error("INVALID_VIDEO_SIZE", "scrcpy video size is not available", null)
+                        return@setMethodCallHandler
+                    }
                     val pressure = if (action == 1) 0 else 0xFFFF
-                    Log.d(TAG, "sendTouch: action=$action x=$x y=$y screen=${screenWidth}x${screenHeight}")
-                    lastTouchInfo = "action=$action x=$x y=$y screen=${screenWidth}x${screenHeight}"
+                    if (action != 2) {
+                        Log.d(TAG, "sendTouch: action=$action pointer=$pointerId x=$x y=$y screen=${screenWidth}x${screenHeight}")
+                    }
+                    lastTouchInfo = "action=$action pointer=$pointerId x=$x y=$y screen=${screenWidth}x${screenHeight}"
                     try {
                         val packet = com.fiscalia.file_cast.scrcpy.ScrcpyControl.buildTouchPacket(
-                            action, x, y, screenWidth, screenHeight, pressure
+                            action, pointerId, x, y, screenWidth, screenHeight, pressure
                         )
                         transport.enqueueControlWrite(controlId, packet)
                         result.success(true)
@@ -639,8 +735,14 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     } else false
                     Log.d(TAG, "setControlStream: localId=$controlId ${width}x$height streamOpen=$streamOpen")
                     controlStreamLocalId = controlId
-                    if (width != null) deviceScreenWidth = width
-                    if (height != null) deviceScreenHeight = height
+                    if (width != null) {
+                        scrcpyHeaderWidth = width
+                        deviceScreenWidth = width
+                    }
+                    if (height != null) {
+                        scrcpyHeaderHeight = height
+                        deviceScreenHeight = height
+                    }
 
                     // Query wm size ONCE (async) to compare with header dimensions
                     Thread {
@@ -648,26 +750,25 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                             if (transport != null && transport.isAdbConnected()) {
                                 val output = transport.shellCommand("wm size")
                                 wmSizeRaw = output.trim()
-                                val match = Regex("Physical size: (\\d+)x(\\d+)").find(wmSizeRaw)
-                                if (match != null) {
-                                    wmSizeWidth = match.groupValues[1].toInt()
-                                    wmSizeHeight = match.groupValues[2].toInt()
+                                val overrideMatch = Regex("Override size: (\\d+)x(\\d+)").find(wmSizeRaw)
+                                val physicalMatch = Regex("Physical size: (\\d+)x(\\d+)").find(wmSizeRaw)
+                                val effectiveMatch = overrideMatch ?: physicalMatch
+                                if (effectiveMatch != null) {
+                                    wmSizeWidth = effectiveMatch.groupValues[1].toInt()
+                                    wmSizeHeight = effectiveMatch.groupValues[2].toInt()
                                 } else {
-                                    val matchOvr = Regex("Override size: (\\d+)x(\\d+)").find(wmSizeRaw)
-                                    if (matchOvr != null) {
-                                        wmSizeWidth = matchOvr.groupValues[1].toInt()
-                                        wmSizeHeight = matchOvr.groupValues[2].toInt()
-                                    }
+                                    wmSizeWidth = 0
+                                    wmSizeHeight = 0
                                 }
                                 Log.d(TAG, "wm size: raw='$wmSizeRaw' parsed=${wmSizeWidth}x${wmSizeHeight}")
 
-                                // If wm size differs from header, use wm size for touch
+                                // Positional events must use the video size declared by
+                                // scrcpy. The server rejects positions whose size does
+                                // not match the current encoded frame.
                                 if (wmSizeWidth > 0 && wmSizeHeight > 0 &&
                                     (wmSizeWidth != deviceScreenWidth || wmSizeHeight != deviceScreenHeight)) {
                                     Log.w(TAG, "MISMATCH: header=${deviceScreenWidth}x${deviceScreenHeight} vs wm=${wmSizeWidth}x${wmSizeHeight}")
-                                    Log.w(TAG, "Using wm size for touch packets")
-                                    deviceScreenWidth = wmSizeWidth
-                                    deviceScreenHeight = wmSizeHeight
+                                    Log.w(TAG, "Keeping scrcpy video size for touch packets")
                                 }
                             }
                         } catch (e: Exception) {
@@ -694,6 +795,185 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                 else -> result.notImplemented()
             }
         }
+    }
+
+    private fun captureScreenshot(call: MethodCall, result: MethodChannel.Result) {
+        val transport = adbTransport
+        if (transport == null || !transport.isAdbConnected()) {
+            result.error("NOT_CONNECTED", "ADB no está conectado", null)
+            return
+        }
+        val requisitionId = call.argument<String>("requisitionId") ?: "unknown"
+        val sessionId = call.argument<String>("sessionId") ?: "unknown"
+        Thread {
+            var localId: Int? = null
+            try {
+                val directory = evidenceDirectory(requisitionId, sessionId)
+                val file = File(directory, "captura-${System.currentTimeMillis()}.png")
+                val stream = transport.openStream("exec:screencap -p", 10_000L)
+                localId = stream.localId
+                val digest = MessageDigest.getInstance("SHA-256")
+                var total = 0L
+                var completed = false
+                val deadline = System.currentTimeMillis() + 30_000L
+                FileOutputStream(file).use { output ->
+                    while (System.currentTimeMillis() < deadline) {
+                        val chunk = stream.dataQueue.poll(500, TimeUnit.MILLISECONDS)
+                        if (chunk != null) {
+                            output.write(chunk)
+                            digest.update(chunk)
+                            total += chunk.size
+                            if (total > 32L * 1024L * 1024L) {
+                                throw IllegalStateException("La captura excedió el límite permitido")
+                            }
+                        } else if (stream.closed.get() && stream.dataQueue.isEmpty()) {
+                            completed = true
+                            break
+                        }
+                    }
+                    output.flush()
+                }
+                if (!completed || total < 8 || !hasPngSignature(file)) {
+                    file.delete()
+                    throw IllegalStateException("El dispositivo no devolvió una imagen PNG válida")
+                }
+                val metadata = evidenceMetadata(file, digest.digest())
+                mainHandler.post { result.success(metadata) }
+            } catch (error: Exception) {
+                Log.e(TAG, "captureScreenshot error", error)
+                mainHandler.post { result.error("CAPTURE_ERROR", error.message ?: "No se pudo capturar", null) }
+            } finally {
+                localId?.let { transport.closeStream(it) }
+            }
+        }.apply {
+            name = "AdbScreenshot"
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun startScreenRecording(call: MethodCall, result: MethodChannel.Result) {
+        if (recorder != null) {
+            result.error("ALREADY_RECORDING", "Ya existe una grabación activa", null)
+            return
+        }
+        if (scrcpyDecoder == null || mirrorVideoWidth <= 0 || mirrorVideoHeight <= 0) {
+            result.error("MIRROR_NOT_READY", "El flujo de video aún no está listo", null)
+            return
+        }
+        val requisitionId = call.argument<String>("requisitionId") ?: "unknown"
+        val sessionId = call.argument<String>("sessionId") ?: "unknown"
+        try {
+            val file = File(evidenceDirectory(requisitionId, sessionId), "grabacion-${System.currentTimeMillis()}.mp4")
+            synchronized(recorderLock) {
+                val config = lastCodecConfig
+                    ?: throw IllegalStateException("Aún no se recibió la configuración H.264")
+                val firstPacket = recentVideoPackets.peekFirst()
+                if (firstPacket == null ||
+                    (firstPacket.headerValue and FLAG_VIDEO_KEY_FRAME) == 0L) {
+                    throw IllegalStateException("Aún no se recibió un keyframe de video")
+                }
+                val nextRecorder = ScrcpyRecorder(file, mirrorVideoWidth, mirrorVideoHeight)
+                try {
+                    nextRecorder.start(config)
+                    recentVideoPackets.forEach { packet ->
+                        nextRecorder.writePacket(packet.headerValue, packet.payload)
+                    }
+                    recorder = nextRecorder
+                } catch (error: Exception) {
+                    nextRecorder.abort()
+                    throw error
+                }
+            }
+            result.success(mapOf("name" to file.name, "path" to file.absolutePath, "byteLength" to 0, "sha256" to ""))
+        } catch (error: Exception) {
+            Log.e(TAG, "startScreenRecording error", error)
+            recorder = null
+            result.error("RECORDING_ERROR", error.message ?: "No se pudo iniciar la grabación", null)
+        }
+    }
+
+    private fun stopScreenRecording(result: MethodChannel.Result) {
+        val activeRecorder = recorder
+        if (activeRecorder == null) {
+            result.error("NOT_RECORDING", "No existe una grabación activa", null)
+            return
+        }
+        recorder = null
+        Thread {
+            try {
+                val file = activeRecorder.stop()
+                val metadata = evidenceMetadata(file, sha256(file))
+                mainHandler.post { result.success(metadata) }
+            } catch (error: Exception) {
+                Log.e(TAG, "stopScreenRecording error", error)
+                val detail = error.cause?.message ?: error.message ?: "No se pudo guardar la grabación"
+                mainHandler.post { result.error("RECORDING_ERROR", detail, null) }
+            }
+        }.apply {
+            name = "StopScreenRecording"
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun stopRecorderSafely() {
+        val activeRecorder = recorder ?: return
+        recorder = null
+        try { activeRecorder.stop() } catch (error: Exception) {
+            Log.e(TAG, "Could not finalize active recording", error)
+        }
+    }
+
+    private fun cacheRecordingPacket(headerValue: Long, payload: ByteArray) {
+        if ((headerValue and FLAG_VIDEO_KEY_FRAME) != 0L) clearRecordingPreroll()
+        if (recentVideoPackets.isEmpty() && (headerValue and FLAG_VIDEO_KEY_FRAME) == 0L) return
+        if (payload.size > MAX_RECORDING_PREROLL_BYTES) {
+            clearRecordingPreroll()
+            return
+        }
+        val copy = payload.copyOf()
+        recentVideoPackets.addLast(BufferedVideoPacket(headerValue, copy))
+        recentVideoBytes += copy.size
+        if (recentVideoBytes > MAX_RECORDING_PREROLL_BYTES) clearRecordingPreroll()
+    }
+
+    private fun clearRecordingPreroll() {
+        recentVideoPackets.clear()
+        recentVideoBytes = 0
+    }
+
+    private fun evidenceDirectory(requisitionId: String, sessionId: String): File {
+        val safeRequisition = requisitionId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val safeSession = sessionId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        return File(context.filesDir, "evidence/$safeRequisition/$safeSession").apply { mkdirs() }
+    }
+
+    private fun evidenceMetadata(file: File, hash: ByteArray): Map<String, Any> = mapOf(
+        "name" to file.name,
+        "path" to file.absolutePath,
+        "byteLength" to file.length(),
+        "sha256" to hash.joinToString("") { "%02x".format(it) },
+    )
+
+    private fun sha256(file: File): ByteArray {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest()
+    }
+
+    private fun hasPngSignature(file: File): Boolean {
+        val expected = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+        val actual = ByteArray(expected.size)
+        file.inputStream().use { if (it.read(actual) != expected.size) return false }
+        return actual.contentEquals(expected)
     }
 
     private fun setupEventChannel() {
@@ -747,7 +1027,10 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         }
 
         val permissionIntent = PendingIntent.getBroadcast(
-            context, 0, Intent(ACTION_USB_PERMISSION), flags
+            context,
+            0,
+            Intent(ACTION_USB_PERMISSION).setPackage(context.packageName),
+            flags,
         )
 
         usbManager.requestPermission(device, permissionIntent)
@@ -782,6 +1065,19 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     private fun connectAdb(deviceName: String?, result: MethodChannel.Result) {
         Log.d(TAG, "=== connectAdb START ===")
         Log.d(TAG, "Device name: $deviceName")
+        val existingTransport = adbTransport
+        if (existingTransport?.isAdbConnected() == true &&
+            pendingHandshakeDevice?.deviceName == deviceName) {
+            result.success(mapOf(
+                "connected" to true,
+                "deviceName" to deviceName,
+                "reused" to true,
+            ))
+            return
+        }
+        if (existingTransport != null || currentConnection != null || scrcpyDecoder != null) {
+            disconnectAdb()
+        }
         resultCalled = false
         waitingForReattach = false
 
@@ -792,10 +1088,11 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
             return
         }
 
-        connectAdbInternal(device, result)
+        handshakeGeneration += 1
+        connectAdbInternal(device, result, handshakeGeneration)
     }
 
-    private fun connectAdbInternal(device: UsbDevice, result: MethodChannel.Result) {
+    private fun connectAdbInternal(device: UsbDevice, result: MethodChannel.Result, generation: Int) {
         Log.d(TAG, "=== connectAdbInternal START ===")
         Log.d(TAG, "Device: ${device.deviceName}, VID=0x${Integer.toHexString(device.vendorId)}, PID=0x${Integer.toHexString(device.productId)}")
         resultCalled = false
@@ -846,7 +1143,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                 Log.d(TAG, "Finding ADB interface...")
                 if (!transport.findAdbInterface()) {
                     Log.e(TAG, "No ADB interface found!")
-                    postResult(result) {
+                    postResult(result, generation) {
                         result.error("NO_ADB_INTERFACE", "No ADB interface found", null)
                     }
                     return@Thread
@@ -857,7 +1154,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                 val success = transport.handshake()
                 Log.d(TAG, "Handshake result: $success")
 
-                postResult(result) {
+                postResult(result, generation) {
                     if (success) {
                         result.success(mapOf(
                             "connected" to true,
@@ -869,7 +1166,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                 }
             } catch (t: Throwable) {
                 Log.e(TAG, "ADB connection error: ${t.message}", t)
-                postResult(result) {
+                postResult(result, generation) {
                     result.error("ADB_ERROR", t.message ?: "Unknown error", null)
                 }
             }
@@ -880,7 +1177,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
 
         // Global timeout safety net
         mainHandler.postDelayed({
-            if (!resultCalled) {
+            if (generation == handshakeGeneration && !resultCalled) {
                 Log.e(TAG, "HANDSHAKE GLOBAL TIMEOUT")
                 resultCalled = true
                 waitingForReattach = false
@@ -898,9 +1195,9 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         }, 40000L)
     }
 
-    private fun postResult(result: MethodChannel.Result, block: () -> Unit) {
+    private fun postResult(result: MethodChannel.Result, generation: Int, block: () -> Unit) {
         mainHandler.post {
-            if (!resultCalled) {
+            if (generation == handshakeGeneration && !resultCalled) {
                 resultCalled = true
                 pendingHandshakeResult = null
                 waitingForReattach = false
@@ -910,11 +1207,27 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     }
 
     private fun disconnectAdb() {
+        handshakeGeneration++
+        adbTransport?.quietMode = false
+        adbTransport?.stopVideoReadLoop()
+        adbTransport?.stopControlWriter()
+        scrcpyDecoder?.stop()
+        scrcpyDecoder = null
+        stopRecorderSafely()
+        synchronized(recorderLock) {
+            lastCodecConfig = null
+            clearRecordingPreroll()
+        }
+        mirrorTextureEntry?.release()
+        mirrorTextureEntry = null
+        controlStreamLocalId = null
+        mirrorVideoWidth = 0
+        mirrorVideoHeight = 0
         val transport = adbTransport
         adbTransport = null
+        transport?.disconnect()
         currentConnection?.close()
         currentConnection = null
-        transport?.disconnect()
     }
 
     private fun findDeviceByName(deviceName: String?): UsbDevice? {
@@ -949,3 +1262,8 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         eventSink?.success(event)
     }
 }
+
+private data class BufferedVideoPacket(
+    val headerValue: Long,
+    val payload: ByteArray,
+)

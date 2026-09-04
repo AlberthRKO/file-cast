@@ -133,4 +133,10 @@ class UsbEvent {
     }
     return null;
   }
+
+  Map<String, dynamic>? get mirrorStateInfo {
+    final raw = _data;
+    if (type != UsbEventType.mirrorState || raw is! Map) return null;
+    return raw.map((key, value) => MapEntry(key.toString(), value));
+  }
 }

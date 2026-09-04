@@ -10,6 +10,8 @@ final class RequisitionEvidence {
     required this.createdAt,
     required this.sizeLabel,
     required this.byteLength,
+    this.localPath,
+    this.sha256,
   });
 
   final String id;
@@ -18,6 +20,8 @@ final class RequisitionEvidence {
   final DateTime createdAt;
   final String sizeLabel;
   final int byteLength;
+  final String? localPath;
+  final String? sha256;
 }
 
 final class RequisitionDetail {

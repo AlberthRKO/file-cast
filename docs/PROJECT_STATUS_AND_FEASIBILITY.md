@@ -3,6 +3,7 @@
 Fecha de revisión inicial: 27 de agosto de 2026  
 Actualización de arquitectura UI: 31 de agosto de 2026  
 Limpieza de infraestructura Flutter: 31 de agosto de 2026
+Actualización de adquisición Android: 4 de septiembre de 2026
 Alcance revisado: Flutter/Dart, Android nativo Kotlin, configuración iOS, documentación, historial Git reciente, mockups adjuntos y validadores locales.
 
 ## Dictamen ejecutivo
@@ -10,7 +11,7 @@ Alcance revisado: Flutter/Dart, Android nativo Kotlin, configuración iOS, docum
 El proyecto es **viable por etapas**, con una diferencia esencial entre plataformas:
 
 - **Android objetivo -> Android inspector por USB:** viable para dispositivos desbloqueados, con USB debugging autorizado y Android 5.0/API 21 o superior para el flujo scrcpy actual. El repositorio ya demuestra detección USB, autenticación ADB, streaming H.264 y envío de eventos de control.
-- **Captura de pantalla, grabación y transferencia Android ligadas a una requisa:** viables, pero todavía no están implementadas como evidencias. Falta capturar/guardar bytes, metadatos, hash, sesión y relación con la requisa.
+- **Captura de pantalla y grabación Android ligadas a una requisa:** existe una primera vertical local: guarda PNG/MP4 en almacenamiento privado, calcula SHA-256 y registra metadatos contra requisa/sesión. Aún faltan persistencia del catálogo, almacenamiento inmutable, ledger, sincronización y validación física. La transferencia Android continúa pendiente.
 - **iPhone/iPad objetivo -> otro móvil inspector por cable, con espejo y control tipo scrcpy:** no es viable con APIs públicas de iOS como una réplica directa de ADB/scrcpy. No existe en el proyecto ni en los frameworks públicos revisados una interfaz equivalente para controlar otro iPhone por USB.
 - **iOS con alcance ajustado:** sí es viable mediante dos rutas: una app compañera en el equipo objetivo, con selección explícita de archivos y ReplayKit/red local; o una estación macOS conectada por cable para captura y adquisición autorizada. Ninguna de estas rutas ofrece control táctil remoto general del iPhone.
 - **Uso probatorio/forense:** todavía no está listo. En el estado actual es una prueba técnica de conectividad y UI, no una herramienta de adquisición forense validada.
@@ -31,9 +32,9 @@ La recomendación es construir primero un MVP Android de extremo a extremo y man
 | USB host Android | Detección, permisos, attach/detach | Implementado como prototipo |
 | ADB por USB | Handshake RSA, streams multiplexados, shell y push | Implementado como prototipo |
 | Espejo Android | scrcpy server 2.7, H.264, `MediaCodec` y `Texture` | Demostrado en código |
-| Control Android | Touch y teclas por canal de control scrcpy | Implementado, reportado como inestable en el historial |
-| Foto de la pantalla | No hay comando ni persistencia de PNG/JPEG | No implementado |
-| Grabación | No hay `MediaMuxer`, archivo MP4 ni estado de grabación | No implementado |
+| Control Android | Touch, arrastre, mouse/trackpad y teclas por canal scrcpy 2.7 | Implementado y validado en hardware por el propietario; algunos fabricantes requieren un ajuste de seguridad adicional |
+| Foto de la pantalla | `exec:screencap -p`, PNG privado, validación de firma y SHA-256 | Implementado como vertical local |
+| Grabación | GOP H.264 acotado, `MediaMuxer`, contador, MP4 privado y SHA-256 | Implementado; corrección de finalización pendiente de revalidación física |
 | Transferencia desde objetivo | Solo existe push inspector -> objetivo; no existe pull objetivo -> inspector | No implementado |
 | Integración iOS | `AppDelegate` estándar, sin canal/plugin de adquisición | No implementado |
 | Cadena de custodia | No hay ledger, manifiesto, hash por evidencia ni sellado | No implementado |
@@ -51,7 +52,10 @@ La prueba técnica está concentrada en:
 - `android/app/src/main/kotlin/com/fiscalia/file_cast/scrcpy/ScrcpyDecoder.kt`: decodificación H.264 hacia una superficie.
 - `android/app/src/main/kotlin/com/fiscalia/file_cast/scrcpy/ScrcpyControl.kt`: paquetes touch, key y scroll.
 - `lib/core/adb/adb_client.dart`: fachada Dart sobre `MethodChannel`/`EventChannel`.
-- `lib/ui/features/acquisition/connect/views/usb_device_list_view.dart`: consola técnica que orquesta las fases USB/ADB/scrcpy.
+- `lib/data/services/android_acquisition_platform_service.dart`: frontera de plataforma que coordina USB/ADB/scrcpy sin exponer IO a la View.
+- `lib/ui/features/acquisition/connect/view_models/acquisition_connect_view_model.dart`: estado y comandos de conexión automática.
+- `lib/ui/features/acquisition/mirror/views/mirror_view.dart`: workspace responsive de espejo y evidencias.
+- `android/app/src/main/kotlin/com/fiscalia/file_cast/scrcpy/ScrcpyRecorder.kt`: remultiplexado local del H.264 a MP4.
 - `lib/ui/features/acquisition/mirror/`: View responsive, ViewModel de controles/logs, textura y traducción de coordenadas.
 
 El asset incluido es `scrcpy-server-v2.7.jar`, de aproximadamente 70 KiB, con SHA-256 actual:
@@ -69,7 +73,7 @@ La documentación [ADB_HANDSHAKE.md](ADB_HANDSHAKE.md) describe las fases 1 a 5,
 - El listado usa un `RequisitionListViewModel`, estado Freezed y un `RequisitionRepository` in-memory registrado por inyección. Crear y abrir detalle siguen pendientes de sus rutas/features reales.
 - La inyección todavía necesita repositorios reales para autenticación, API, caché, evidencias y adquisición; el repositorio de listado actual es reemplazable y solo conserva el prototipo visual.
 
-La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto, `MaterialApp.router`, `go_router`, tema central y adaptación por constraints. Se retiraron `lib/presentation`, ScreenUtil, los helpers por porcentaje/orientación y las rutas imperativas. La deuda arquitectónica principal que permanece es la consola técnica de conexión: aún concentra parte de la orquestación USB/ADB/scrcpy en su `StatefulWidget` y debe extraerse a ViewModel/servicios antes del MVP operativo.
+La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto, `MaterialApp.router`, `go_router`, tema central y adaptación por constraints. Se retiraron `lib/presentation`, ScreenUtil, los helpers por porcentaje/orientación y las rutas imperativas. La consola técnica de conexión fue sustituida por ViewModel, repositorio y servicio de plataforma; la deuda principal de adquisición pasa a ser persistencia/ledger, recuperación de sesión, errores tipados y validación física.
 
 ### iOS
 
@@ -81,21 +85,21 @@ La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto,
 
 1. **No existe cadena de custodia.** Cada evidencia debe tener identidad, fuente, operador, requisa, sesión de adquisición, timestamps UTC/monotónico, tamaño, MIME, método de captura, hash SHA-256 y eventos inmutables de custodia.
 2. **No existe almacenamiento probatorio.** Faltan cifrado local, escritura atómica, verificación tras escritura, protección de claves, cuota, recuperación después de cierre inesperado y borrado controlado.
-3. **La evidencia no está vinculada a la requisa.** La conexión ADB global no recibe `requisitionId` ni `acquisitionSessionId`.
+3. **El vínculo local todavía no es probatorio.** Las rutas, sesiones, carpetas y metadatos ya reciben `requisitionId` y `sessionId`, pero el catálogo continúa en memoria y falta un ledger persistente que impida reasignar o modificar evidencias.
 4. **El alcance iOS necesita redefinición contractual.** La captura/control por cable desde otro móvil no puede prometerse como equivalente a Android.
 5. **Se necesita autorización explícita y procedimiento operativo.** El producto debe registrar consentimiento/orden, operador y dispositivo antes de iniciar adquisición. La guía NIST de forense móvil separa preservación, adquisición, examen, análisis y reporte; la app debe reflejar esas fases.
 
 ### P1 — riesgos técnicos del prototipo Android
 
-1. **No hay screenshot, recording ni pull.** `pushFile()` solo envía inspector -> objetivo. No existe el camino requerido objetivo -> inspector.
-2. **El cliente `_readExact()` descarta cualquier excedente del último chunk.** Esto puede perder bytes si metadatos y el inicio del video llegan juntos. Debe existir un buffer por stream o toda la lectura exacta debe quedar del lado nativo.
-3. **Backpressure insuficiente.** El reader ADB encola `ByteArray` sin límite y el loop de video hace `copyOf(size)` por paquete. Una desaceleración del decoder puede agotar memoria.
-4. **Ciclo de vida sensible.** `UsbDeviceListView.dispose()` solicita `stopMirror()` y `disconnectAdb()`, pero el cleanup nativo debe hacerse idempotente y validarse ante cierre de proceso, cable retirado y background.
-5. **Errores de control se ocultan.** `sendTouch()` y `sendKey()` capturan `PlatformException` y no la propagan; la UI no puede confirmar que la acción funcionó.
-6. **Coordenadas y rotación necesitan un modelo único.** Se mezclan dimensiones del header, `wm size` y la textura. Deben contemplarse rotación, letterboxing, recorte, densidad y cambio de tamaño durante la sesión.
+1. **Pull continúa pendiente.** Screenshot y recording ya existen, pero `pushFile()` solo envía inspector -> objetivo; falta `LIST`/`STAT`/`RECV` para transferencia objetivo -> inspector.
+2. **Lectura exacta corregida.** `_readExact()` conserva excedentes por stream para no perder el inicio del video cuando comparte un chunk con los metadatos. Falta cubrirlo con pruebas de protocolo.
+3. **Backpressure parcial.** La cola de control está acotada y compacta movimientos, y el pre-roll de grabación se limita a 24 MiB. Las colas generales de datos ADB todavía requieren límites y métricas para sesiones extensas.
+4. **Ciclo de vida sensible.** La sesión se reutiliza al volver desde mirror y el cleanup nativo es centralizado, pero debe validarse ante cierre de proceso, cable retirado, background y grabación activa.
+5. **Confirmación de control limitada.** `sendTouch()` propaga errores del canal y la UI los presenta, pero scrcpy no confirma individualmente que Android haya inyectado cada gesto; un fabricante todavía puede rechazarlo por sus ajustes de seguridad.
+6. **Coordenadas y rotación unificadas, pendientes de matriz.** La textura usa su rectángulo renderizado, MediaCodec publica el tamaño/crop vigente y `wm size` quedó solo como diagnóstico. Deben repetirse las pruebas con letterboxing, recorte, rotación y varias resoluciones.
 7. **Autenticación ADB sin endurecimiento.** La clave privada se persiste en `SharedPreferences`; para una herramienta sensible debe protegerse con Android Keystore y validarse contra vectores/pruebas AOSP. La generación de `n0inv` y la firma deben ser revisadas con pruebas de protocolo, no solo con un modelo de teléfono.
 8. **scrcpy 2.7 está congelado dentro del APK.** El proyecto oficial ya publica una versión posterior y registra correcciones para Android recientes. Actualizar no es solo reemplazar el JAR: cambian opciones y protocolo. Se requiere política de versionado, hash permitido, matriz de compatibilidad y pruebas de regresión.
-9. **Consola shell expuesta en UI.** El panel permite ejecutar comandos arbitrarios. Es útil para laboratorio, pero debe excluirse de builds operativos.
+9. **Diagnóstico visible en UI.** La consola arbitraria fue retirada; el panel actual es de solo lectura y muestra tamaños, último gesto, estado del stream, confirmaciones ADB y salida de scrcpy-server. Debe ocultarse o condicionarse en builds operativos si los logs contienen datos sensibles.
 10. **Licencias de terceros.** El repositorio no contiene un archivo de licencia/avisos para el servidor scrcpy distribuido. Debe incorporarse el cumplimiento Apache-2.0 y el inventario SBOM.
 
 ### P1 — riesgos de producto y datos
@@ -109,9 +113,9 @@ La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto,
 
 ### P2 — arquitectura, responsive y mantenibilidad
 
-1. La consola USB aún mezcla orquestación nativa, IO temporal y presentación; debe dividirse antes del MVP operativo.
-2. Los flujos de captura, grabación, transferencia y cadena de custodia todavía no tienen verticales MVVM/repositorios.
-3. `android.hardware.usb.host` está declarado `required=true`; esto impide distribuir el módulo de gestión de requisas a Android sin OTG. Conviene separar capacidad de adquisición de capacidad de gestión o marcar la feature como opcional y bloquear solo la acción.
+1. La captura y grabación ya tienen una vertical MVVM/repositorio local; falta persistir el catálogo y separar el ledger inmutable del archivo derivado.
+2. Transferencia, sincronización, sellado y cadena de custodia todavía no tienen una vertical operativa completa.
+3. `android.hardware.usb.host` quedó declarado como capacidad opcional; falta validar en distribución real que Android sin OTG mantenga disponible el módulo de gestión y bloquee únicamente adquisición.
 
 ### P2 — validación y toolchain
 

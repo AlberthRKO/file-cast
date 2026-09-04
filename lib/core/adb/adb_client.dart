@@ -13,6 +13,7 @@ class AdbClient {
 
   StreamController<UsbEvent>? _eventController;
   Stream<UsbEvent>? _eventStream;
+  final Map<int, List<int>> _readRemainders = {};
 
   static final AdbClient _instance = AdbClient._internal();
 
@@ -152,12 +153,18 @@ class AdbClient {
 
   /// Start a long-running shell process that stays alive (stream not closed).
   /// The caller MUST call closeStream(localId) when done to kill the process.
-  Future<int> startPersistentShell(String command, {int timeoutMs = 10000}) async {
+  Future<int> startPersistentShell(
+    String command, {
+    int timeoutMs = 10000,
+  }) async {
     try {
-      final result = await _methodChannel.invokeMethod<Map>('startPersistentShell', {
-        'command': command,
-        'timeoutMs': timeoutMs,
-      });
+      final result = await _methodChannel.invokeMethod<Map>(
+        'startPersistentShell',
+        {
+          'command': command,
+          'timeoutMs': timeoutMs,
+        },
+      );
       if (result == null) throw Exception('startPersistentShell returned null');
       return result['localId'] as int;
     } on PlatformException catch (e) {
@@ -188,7 +195,10 @@ class AdbClient {
 
   /// Open an ADB stream (A_OPEN + wait for A_OKAY).
   /// Returns stream info with localId and remoteId.
-  Future<Map<String, dynamic>> openStream(String service, {int timeoutMs = 10000}) async {
+  Future<Map<String, dynamic>> openStream(
+    String service, {
+    int timeoutMs = 10000,
+  }) async {
     try {
       final result = await _methodChannel.invokeMethod<Map>('openStream', {
         'service': service,
@@ -204,7 +214,10 @@ class AdbClient {
 
   /// Read data from an open ADB stream.
   /// Returns map with 'data' (Uint8List or null) and 'closed' (bool).
-  Future<Map<String, dynamic>> readStream(int localId, {int timeoutMs = 10000}) async {
+  Future<Map<String, dynamic>> readStream(
+    int localId, {
+    int timeoutMs = 10000,
+  }) async {
     try {
       final result = await _methodChannel.invokeMethod<Map>('readStream', {
         'localId': localId,
@@ -220,6 +233,7 @@ class AdbClient {
 
   /// Close an ADB stream.
   Future<void> closeStream(int localId) async {
+    _readRemainders.remove(localId);
     try {
       await _methodChannel.invokeMethod('closeStream', {'localId': localId});
     } on PlatformException catch (e) {
@@ -228,8 +242,12 @@ class AdbClient {
   }
 
   /// Read exactly [n] bytes from a stream, accumulating across multiple WRTE packets.
-  Future<List<int>> _readExact(int localId, int n, {int timeoutMs = 5000}) async {
-    final buffer = <int>[];
+  Future<List<int>> _readExact(
+    int localId,
+    int n, {
+    int timeoutMs = 5000,
+  }) async {
+    final buffer = <int>[...?_readRemainders.remove(localId)];
     while (buffer.length < n) {
       final result = await readStream(localId, timeoutMs: timeoutMs);
       final data = result['data'];
@@ -239,6 +257,9 @@ class AdbClient {
         );
       }
       buffer.addAll((data as List).cast<int>());
+    }
+    if (buffer.length > n) {
+      _readRemainders[localId] = buffer.sublist(n);
     }
     return buffer.sublist(0, n);
   }
@@ -282,17 +303,37 @@ class AdbClient {
 
       logBuffer.writeln('[5] Reading video codec metadata (12 bytes)...');
       final codecMeta = await _readExact(localId, 12);
-      final hexBytes = codecMeta.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+      final hexBytes = codecMeta
+          .map((b) => b.toRadixString(16).padLeft(2, '0'))
+          .join(' ');
       logBuffer.writeln('  Raw bytes: $hexBytes');
-      final codecId = (codecMeta[0] << 24) | (codecMeta[1] << 16) | (codecMeta[2] << 8) | codecMeta[3];
-      final width = (codecMeta[4] << 24) | (codecMeta[5] << 16) | (codecMeta[6] << 8) | codecMeta[7];
-      final height = (codecMeta[8] << 24) | (codecMeta[9] << 16) | (codecMeta[10] << 8) | codecMeta[11];
+      final codecId =
+          (codecMeta[0] << 24) |
+          (codecMeta[1] << 16) |
+          (codecMeta[2] << 8) |
+          codecMeta[3];
+      final width =
+          (codecMeta[4] << 24) |
+          (codecMeta[5] << 16) |
+          (codecMeta[6] << 8) |
+          codecMeta[7];
+      final height =
+          (codecMeta[8] << 24) |
+          (codecMeta[9] << 16) |
+          (codecMeta[10] << 8) |
+          codecMeta[11];
       final codecFourcc = String.fromCharCodes(codecMeta.sublist(0, 4));
 
-      logBuffer.writeln('  Codec: $codecFourcc (id=0x${codecId.toRadixString(16)})');
+      logBuffer.writeln(
+        '  Codec: $codecFourcc (id=0x${codecId.toRadixString(16)})',
+      );
       logBuffer.writeln('  Screen: ${width}x$height');
-      logBuffer.writeln('  (bytes[4..7] width raw: ${codecMeta[4]},${codecMeta[5]},${codecMeta[6]},${codecMeta[7]})');
-      logBuffer.writeln('  (bytes[8..11] height raw: ${codecMeta[8]},${codecMeta[9]},${codecMeta[10]},${codecMeta[11]})');
+      logBuffer.writeln(
+        '  (bytes[4..7] width raw: ${codecMeta[4]},${codecMeta[5]},${codecMeta[6]},${codecMeta[7]})',
+      );
+      logBuffer.writeln(
+        '  (bytes[8..11] height raw: ${codecMeta[8]},${codecMeta[9]},${codecMeta[10]},${codecMeta[11]})',
+      );
       logBuffer.writeln('\n--- Phase 5 SUCCESS: Server connected! ---');
 
       return {
@@ -314,7 +355,9 @@ class AdbClient {
   /// Returns the textureId to use with the Texture widget.
   Future<int> createMirrorTexture() async {
     try {
-      final result = await _methodChannel.invokeMethod<Map>('createMirrorTexture');
+      final result = await _methodChannel.invokeMethod<Map>(
+        'createMirrorTexture',
+      );
       if (result == null) throw Exception('createMirrorTexture returned null');
       return result['textureId'] as int;
     } on PlatformException catch (e) {
@@ -351,6 +394,42 @@ class AdbClient {
     }
   }
 
+  /// Captures the target screen directly through ADB and stores the PNG in the
+  /// app-private staging area. Only metadata crosses the platform channel.
+  Future<Map<String, dynamic>> captureScreenshot({
+    required String requisitionId,
+    required String sessionId,
+  }) async {
+    final result = await _methodChannel.invokeMethod<Map>('captureScreenshot', {
+      'requisitionId': requisitionId,
+      'sessionId': sessionId,
+    });
+    if (result == null) throw StateError('captureScreenshot returned null');
+    return Map<String, dynamic>.from(result);
+  }
+
+  /// Starts recording the already active scrcpy H.264 stream to an MP4 file.
+  Future<Map<String, dynamic>> startScreenRecording({
+    required String requisitionId,
+    required String sessionId,
+  }) async {
+    final result = await _methodChannel.invokeMethod<Map>(
+      'startScreenRecording',
+      {'requisitionId': requisitionId, 'sessionId': sessionId},
+    );
+    if (result == null) throw StateError('startScreenRecording returned null');
+    return Map<String, dynamic>.from(result);
+  }
+
+  /// Finalizes the current MP4 and returns its local evidence metadata.
+  Future<Map<String, dynamic>> stopScreenRecording() async {
+    final result = await _methodChannel.invokeMethod<Map>(
+      'stopScreenRecording',
+    );
+    if (result == null) throw StateError('stopScreenRecording returned null');
+    return Map<String, dynamic>.from(result);
+  }
+
   /// Get mirror decoder + transport logs for debugging.
   Future<String> getMirrorLog() async {
     try {
@@ -360,6 +439,17 @@ class AdbClient {
     } on PlatformException catch (e) {
       print('AdbClient: getMirrorLog error: ${e.code} - ${e.message}');
       return '';
+    }
+  }
+
+  Future<Map<String, dynamic>> getMirrorDiagnostics() async {
+    try {
+      final result = await _methodChannel.invokeMethod<Map>('getMirrorLog');
+      if (result == null) return const {};
+      return result.map((key, value) => MapEntry(key.toString(), value));
+    } on PlatformException catch (e) {
+      print('AdbClient: getMirrorDiagnostics error: ${e.code} - ${e.message}');
+      return const {};
     }
   }
 
@@ -379,7 +469,9 @@ class AdbClient {
   /// Returns (width, height) in pixels.
   Future<(int, int)?> getDeviceScreenSize() async {
     try {
-      final result = await _methodChannel.invokeMethod<Map>('getDeviceScreenSize');
+      final result = await _methodChannel.invokeMethod<Map>(
+        'getDeviceScreenSize',
+      );
       if (result == null) return null;
       final w = result['width'] as int?;
       final h = result['height'] as int?;
@@ -393,11 +485,21 @@ class AdbClient {
 
   /// Send a touch event to the target device via control stream.
   /// [action]: 0=down, 1=up, 2=move
+  /// [pointerId]: stable Flutter pointer identifier for the gesture
   /// [x], [y]: touch coordinates in device screen space
-  Future<void> sendTouch(int action, int x, int y, int screenWidth, int screenHeight, {int pressure = 0xFFFF}) async {
+  Future<void> sendTouch(
+    int action,
+    int pointerId,
+    int x,
+    int y,
+    int screenWidth,
+    int screenHeight, {
+    int pressure = 0xFFFF,
+  }) async {
     try {
       await _methodChannel.invokeMethod('sendTouch', {
         'action': action,
+        'pointerId': pointerId,
         'x': x,
         'y': y,
         'screenWidth': screenWidth,
@@ -406,6 +508,7 @@ class AdbClient {
       });
     } on PlatformException catch (e) {
       print('AdbClient: sendTouch error: ${e.code} - ${e.message}');
+      rethrow;
     }
   }
 
@@ -425,7 +528,14 @@ class AdbClient {
 
   /// Send a scroll event to the target device via control stream.
   /// [scrollY]: vertical scroll amount (positive=up, negative=down)
-  Future<void> sendScroll(int x, int y, int scrollX, int scrollY, int screenWidth, int screenHeight) async {
+  Future<void> sendScroll(
+    int x,
+    int y,
+    int scrollX,
+    int scrollY,
+    int screenWidth,
+    int screenHeight,
+  ) async {
     try {
       await _methodChannel.invokeMethod('sendScroll', {
         'x': x,
@@ -478,24 +588,35 @@ class AdbClient {
 
   /// Set the control stream localId and device screen dimensions on the native side.
   /// Returns wm size info for debugging.
-  Future<Map<String, dynamic>> setControlStream(int controlLocalId, int screenWidth, int screenHeight) async {
+  Future<Map<String, dynamic>> setControlStream(
+    int controlLocalId,
+    int screenWidth,
+    int screenHeight,
+  ) async {
     try {
-      final result = await _methodChannel.invokeMethod<Map>('setControlStream', {
-        'controlLocalId': controlLocalId,
-        'screenWidth': screenWidth,
-        'screenHeight': screenHeight,
-      });
+      final result = await _methodChannel.invokeMethod<Map>(
+        'setControlStream',
+        {
+          'controlLocalId': controlLocalId,
+          'screenWidth': screenWidth,
+          'screenHeight': screenHeight,
+        },
+      );
       if (result != null) {
         final map = result.map((key, value) => MapEntry(key.toString(), value));
         final streamOpen = map['streamOpen'] as bool? ?? false;
         final wmWidth = map['wmSizeWidth'] as int? ?? 0;
         final wmHeight = map['wmSizeHeight'] as int? ?? 0;
         final wmRaw = map['wmSizeRaw'] as String? ?? '';
-        print('AdbClient: setControlStream: controlId=${map['controlId']} streamOpen=$streamOpen');
+        print(
+          'AdbClient: setControlStream: controlId=${map['controlId']} streamOpen=$streamOpen',
+        );
         print('  header: ${map['headerWidth']}x${map['headerHeight']}');
         print('  wm size: ${wmWidth}x${wmHeight} raw="$wmRaw"');
         if (!streamOpen) {
-          print('AdbClient: WARNING - control stream $controlLocalId is NOT open!');
+          print(
+            'AdbClient: WARNING - control stream $controlLocalId is NOT open!',
+          );
         }
         return map;
       }

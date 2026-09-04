@@ -34,11 +34,23 @@ class ScrcpyDecoder {
     private var configSent = false
     private var frameCount = 0
     private var configCount = 0
+    private var outputWidth = 0
+    private var outputHeight = 0
+    private var onOutputSizeChanged: ((Int, Int) -> Unit)? = null
     // Reuse BufferInfo to avoid allocation per frame in drainOutputBuffers
     private val bufferInfo = MediaCodec.BufferInfo()
 
-    fun start(width: Int, height: Int, surface: Surface, maxRetries: Int = 3): Boolean {
+    fun start(
+        width: Int,
+        height: Int,
+        surface: Surface,
+        maxRetries: Int = 3,
+        onOutputSizeChanged: ((Int, Int) -> Unit)? = null
+    ): Boolean {
         Log.d(TAG, "start() ${width}x$height maxRetries=$maxRetries")
+        this.outputWidth = width
+        this.outputHeight = height
+        this.onOutputSizeChanged = onOutputSizeChanged
 
         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
@@ -119,10 +131,34 @@ class ScrcpyDecoder {
             val outputIndex = mediaCodec.dequeueOutputBuffer(bufferInfo, 0)
             if (outputIndex >= 0) {
                 mediaCodec.releaseOutputBuffer(outputIndex, true)
+            } else if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                updateOutputSize(mediaCodec.outputFormat)
             } else {
                 break
             }
         }
+    }
+
+    private fun updateOutputSize(format: MediaFormat) {
+        val width = visibleDimension(format, MediaFormat.KEY_WIDTH, "crop-left", "crop-right")
+        val height = visibleDimension(format, MediaFormat.KEY_HEIGHT, "crop-top", "crop-bottom")
+        if (width <= 0 || height <= 0 || (width == outputWidth && height == outputHeight)) return
+        outputWidth = width
+        outputHeight = height
+        Log.d(TAG, "Output size changed: ${width}x$height")
+        onOutputSizeChanged?.invoke(width, height)
+    }
+
+    private fun visibleDimension(
+        format: MediaFormat,
+        key: String,
+        cropStartKey: String,
+        cropEndKey: String
+    ): Int {
+        if (format.containsKey(cropStartKey) && format.containsKey(cropEndKey)) {
+            return format.getInteger(cropEndKey) - format.getInteger(cropStartKey) + 1
+        }
+        return if (format.containsKey(key)) format.getInteger(key) else 0
     }
 
     private fun handleConfigPacket(mediaCodec: MediaCodec, payload: ByteArray) {
@@ -154,6 +190,7 @@ class ScrcpyDecoder {
         }
         codec = null
         inputSurface = null
+        onOutputSizeChanged = null
     }
 
     fun isStarted(): Boolean = started
