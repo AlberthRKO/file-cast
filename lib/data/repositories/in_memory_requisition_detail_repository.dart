@@ -1,7 +1,9 @@
+import 'dart:async';
+
+import 'package:file_cast/data/services/evidence_picker_service.dart';
 import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
-import 'package:file_cast/data/services/evidence_picker_service.dart';
 
 class InMemoryRequisitionDetailRepository
     implements RequisitionDetailRepository {
@@ -10,6 +12,11 @@ class InMemoryRequisitionDetailRepository
 
   final Map<String, List<RequisitionEvidence>> _imported = {};
   final EvidencePickerService _pickerService;
+  final StreamController<String> _changesController =
+      StreamController<String>.broadcast();
+
+  @override
+  Stream<String> get changes => _changesController.stream;
 
   @override
   Future<RequisitionDetail> getDetail(String requisitionId) async {
@@ -48,22 +55,52 @@ class InMemoryRequisitionDetailRepository
     required int byteLength,
     String? localPath,
     String? sha256,
+    String? sourcePath,
   }) async {
-    final next = RequisitionEvidence(
-      id: 'EVI-${DateTime.now().microsecondsSinceEpoch}',
-      name: name,
-      type: type,
-      createdAt: DateTime.now(),
-      sizeLabel: sizeLabel,
-      byteLength: byteLength,
-      localPath: localPath,
-      sha256: sha256,
+    return addImportedEvidenceBatch(
+      requisitionId: requisitionId,
+      evidence: [
+        ImportedEvidenceDraft(
+          name: name,
+          type: type,
+          sizeLabel: sizeLabel,
+          byteLength: byteLength,
+          localPath: localPath,
+          sha256: sha256,
+          sourcePath: sourcePath,
+        ),
+      ],
     );
+  }
+
+  @override
+  Future<RequisitionDetail> addImportedEvidenceBatch({
+    required String requisitionId,
+    required List<ImportedEvidenceDraft> evidence,
+  }) async {
+    final timestamp = DateTime.now();
+    final imported = evidence.indexed
+        .map((entry) {
+          final (index, draft) = entry;
+          return RequisitionEvidence(
+            id: 'EVI-${timestamp.microsecondsSinceEpoch}-$index',
+            name: draft.name,
+            type: draft.type,
+            createdAt: timestamp,
+            sizeLabel: draft.sizeLabel,
+            byteLength: draft.byteLength,
+            localPath: draft.localPath,
+            sha256: draft.sha256,
+            sourcePath: draft.sourcePath,
+          );
+        })
+        .toList(growable: false);
     _imported.update(
       requisitionId,
-      (items) => [...items, next],
-      ifAbsent: () => [next],
+      (items) => [...items, ...imported],
+      ifAbsent: () => imported,
     );
+    _changesController.add(requisitionId);
     return getDetail(requisitionId);
   }
 

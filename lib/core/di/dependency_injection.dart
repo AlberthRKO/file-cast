@@ -10,6 +10,7 @@ import 'package:file_cast/data/repositories/requisition_creation_repository_impl
 import 'package:file_cast/data/services/requisition_creation_service.dart';
 import 'package:file_cast/data/services/android_acquisition_platform_service.dart';
 import 'package:file_cast/data/services/evidence_picker_service.dart';
+import 'package:file_cast/data/services/remote_document_preview_service.dart';
 import 'package:file_cast/domain/repositories/auth_repository.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
@@ -50,6 +51,9 @@ class DependencyInjection {
       Provider<EvidencePickerService>(
         create: (_) => EvidencePickerService(),
       ),
+      Provider<RemoteDocumentPreviewService>(
+        create: (_) => const RemoteDocumentPreviewService(),
+      ),
       Provider<RequisitionDetailRepository>(
         create: (context) => InMemoryRequisitionDetailRepository(
           pickerService: context.read<EvidencePickerService>(),
@@ -69,17 +73,26 @@ class DependencyInjection {
             previousService ??
             AndroidAcquisitionPlatformService(adbClient: adbClient),
       ),
-      ProxyProvider2<
+      ProxyProvider3<
         AndroidAcquisitionPlatformService,
         RequisitionDetailRepository,
+        RemoteDocumentPreviewService,
         AcquisitionRepository
       >(
-        update: (_, platformService, detailRepository, previousRepository) =>
-            previousRepository ??
-            AcquisitionRepositoryImpl(
-              platformService: platformService,
-              detailRepository: detailRepository,
-            ),
+        update:
+            (
+              _,
+              platformService,
+              detailRepository,
+              documentPreviewService,
+              previousRepository,
+            ) =>
+                previousRepository ??
+                AcquisitionRepositoryImpl(
+                  platformService: platformService,
+                  detailRepository: detailRepository,
+                  documentPreviewService: documentPreviewService,
+                ),
       ),
       ChangeNotifierProvider<AuthSessionController>(
         create: (_) => AuthSessionController(),

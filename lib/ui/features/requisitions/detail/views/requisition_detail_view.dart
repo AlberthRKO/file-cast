@@ -135,8 +135,12 @@ class RequisitionDetailView extends StatelessWidget {
           }),
           onTransfer: () => _closeThen(context, sheetContext, () {
             context.pushNamed(
-              AppRouteName.fileTransfer,
-              pathParameters: {'requisitionId': detail.requisition.id},
+              AppRouteName.acquisitionConnect,
+              pathParameters: {
+                'requisitionId': detail.requisition.id,
+                'sessionId': detail.sessionId,
+              },
+              queryParameters: {'destination': 'transfer'},
             );
           }),
           onImport: () => _closeThen(

@@ -193,6 +193,71 @@ class AdbClient {
     }
   }
 
+  Future<List<Map<String, dynamic>>> listRemoteFiles(
+    String remotePath, {
+    int timeoutMs = 30000,
+  }) async {
+    final result = await _methodChannel.invokeMethod<List>('listRemoteFiles', {
+      'remotePath': remotePath,
+      'timeoutMs': timeoutMs,
+    });
+    if (result == null) return const [];
+    return result
+        .whereType<Map>()
+        .map(
+          (entry) => entry.map(
+            (key, value) => MapEntry(key.toString(), value),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Future<Map<String, dynamic>> statRemoteFile(
+    String remotePath, {
+    int timeoutMs = 30000,
+  }) async {
+    final result = await _methodChannel.invokeMethod<Map>('statRemoteFile', {
+      'remotePath': remotePath,
+      'timeoutMs': timeoutMs,
+    });
+    if (result == null) throw StateError('statRemoteFile returned null');
+    return result.map((key, value) => MapEntry(key.toString(), value));
+  }
+
+  Future<Map<String, dynamic>> pullRemoteFiles({
+    required String requisitionId,
+    required String sessionId,
+    required String transferId,
+    required List<String> remotePaths,
+    bool previewOnly = false,
+    int timeoutMs = 30000,
+  }) async {
+    final result = await _methodChannel.invokeMethod<Map>('pullRemoteFiles', {
+      'requisitionId': requisitionId,
+      'sessionId': sessionId,
+      'transferId': transferId,
+      'remotePaths': remotePaths,
+      'previewOnly': previewOnly,
+      'timeoutMs': timeoutMs,
+    });
+    if (result == null) throw StateError('pullRemoteFiles returned null');
+    return result.map((key, value) => MapEntry(key.toString(), value));
+  }
+
+  Future<void> discardRemoteFilePreview({
+    required String requisitionId,
+    required String sessionId,
+  }) async {
+    await _methodChannel.invokeMethod<void>('discardRemoteFilePreview', {
+      'requisitionId': requisitionId,
+      'sessionId': sessionId,
+    });
+  }
+
+  Future<void> cancelFileTransfer() async {
+    await _methodChannel.invokeMethod<void>('cancelFileTransfer');
+  }
+
   /// Open an ADB stream (A_OPEN + wait for A_OKAY).
   /// Returns stream info with localId and remoteId.
   Future<Map<String, dynamic>> openStream(

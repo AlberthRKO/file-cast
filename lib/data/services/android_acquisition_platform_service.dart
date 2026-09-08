@@ -18,6 +18,7 @@ class AndroidAcquisitionPlatformService {
   static const _serverRemotePath = '/data/local/tmp/scrcpy-server.jar';
   final AdbClient _adbClient;
   AcquisitionMirrorSession? _activeSession;
+  AcquisitionConnectionSession? _activeConnection;
   int? _latestVideoWidth;
   int? _latestVideoHeight;
   Future<AcquisitionMirrorSession>? _connectOperation;
@@ -25,8 +26,12 @@ class AndroidAcquisitionPlatformService {
   String _serverLogHistory = '';
   final StreamController<void> _deviceChangesController =
       StreamController<void>.broadcast();
+  final StreamController<FileTransferProgress> _fileTransferController =
+      StreamController<FileTransferProgress>.broadcast();
 
   Stream<void> get deviceChanges => _deviceChangesController.stream;
+  Stream<FileTransferProgress> get fileTransferProgress =>
+      _fileTransferController.stream;
 
   Future<AcquisitionAvailability> getAvailability() async {
     if (!Platform.isAndroid) return AcquisitionAvailability.unsupported;
@@ -74,14 +79,11 @@ class AndroidAcquisitionPlatformService {
     );
     if (reusable != null) return reusable;
 
-    _activeSession = null;
-    await _resetNativeSession();
-    final connection = await _adbClient
-        .connectAdb(device.id)
-        .timeout(const Duration(seconds: 45));
-    if (connection == null) {
-      throw StateError('ADB no confirmó la conexión con el dispositivo.');
-    }
+    await connectForTransfer(
+      device: device,
+      requisitionId: requisitionId,
+      sessionId: sessionId,
+    );
 
     final serverData = await rootBundle.load(_serverAsset);
     final stagingDirectory = await Directory.systemTemp.createTemp(
@@ -153,6 +155,51 @@ class AndroidAcquisitionPlatformService {
     return session;
   }
 
+  Future<AcquisitionConnectionSession> connectForTransfer({
+    required AcquisitionDevice device,
+    required String requisitionId,
+    required String sessionId,
+  }) async {
+    final reusable = await activeConnection(
+      requisitionId: requisitionId,
+      sessionId: sessionId,
+    );
+    if (reusable != null) return reusable;
+
+    _activeSession = null;
+    _activeConnection = null;
+    await _resetNativeSession();
+    final connection = await _adbClient
+        .connectAdb(device.id)
+        .timeout(const Duration(seconds: 45));
+    if (connection == null) {
+      throw StateError('ADB no confirmó la conexión con el dispositivo.');
+    }
+    final session = AcquisitionConnectionSession(
+      requisitionId: requisitionId,
+      sessionId: sessionId,
+      deviceName: device.name,
+    );
+    _activeConnection = session;
+    return session;
+  }
+
+  Future<AcquisitionConnectionSession?> activeConnection({
+    required String requisitionId,
+    required String sessionId,
+  }) async {
+    final current = _activeConnection;
+    if (current?.requisitionId != requisitionId ||
+        current?.sessionId != sessionId) {
+      return null;
+    }
+    final state = await _adbClient.getAdbState();
+    if (state?['connected'] == true) return current;
+    _activeConnection = null;
+    _activeSession = null;
+    return null;
+  }
+
   Future<AcquisitionMirrorSession?> activeSession({
     required String requisitionId,
     required String sessionId,
@@ -212,7 +259,170 @@ class AndroidAcquisitionPlatformService {
 
   Future<void> disconnect() async {
     _activeSession = null;
+    _activeConnection = null;
     await _resetNativeSession();
+  }
+
+  Future<List<RemoteFileEntry>> listRemoteFiles(String remotePath) async {
+    if (!Platform.isAndroid) {
+      throw UnsupportedError(
+        'La transferencia ADB solo está disponible en Android.',
+      );
+    }
+    final entries = await _adbClient.listRemoteFiles(remotePath);
+    return entries.map(_mapRemoteFile).toList(growable: false);
+  }
+
+  Future<FileTransferResult> transferRemoteFiles({
+    required String requisitionId,
+    required String sessionId,
+    required List<RemoteFileEntry> files,
+  }) async {
+    final transferId = 'transfer_${DateTime.now().microsecondsSinceEpoch}';
+    final result = await _adbClient.pullRemoteFiles(
+      requisitionId: requisitionId,
+      sessionId: sessionId,
+      transferId: transferId,
+      remotePaths: files.map((file) => file.path).toList(growable: false),
+    );
+    final rawFiles = result['files'];
+    final captured = rawFiles is List
+        ? rawFiles
+              .whereType<Map>()
+              .map((raw) {
+                final map = raw.map(
+                  (key, value) => MapEntry(key.toString(), value),
+                );
+                return CapturedEvidence(
+                  name: map['name'] as String? ?? 'archivo',
+                  localPath: map['path'] as String? ?? '',
+                  byteLength: (map['byteLength'] as num?)?.toInt() ?? 0,
+                  sha256: map['sha256'] as String? ?? '',
+                  createdAt: DateTime.now(),
+                  sourcePath: map['remotePath'] as String?,
+                );
+              })
+              .toList(growable: false)
+        : const <CapturedEvidence>[];
+    final rawFailures = result['failures'];
+    final failures = rawFailures is List
+        ? rawFailures
+              .whereType<Map>()
+              .map((raw) {
+                return FileTransferFailure(
+                  remotePath: raw['path'] as String? ?? '',
+                  message:
+                      raw['message'] as String? ?? 'No se pudo transferir.',
+                );
+              })
+              .toList(growable: false)
+        : const <FileTransferFailure>[];
+    return FileTransferResult(
+      files: captured,
+      failures: failures,
+      cancelled: result['cancelled'] as bool? ?? false,
+    );
+  }
+
+  Future<String> prepareRemoteFilePreview({
+    required String requisitionId,
+    required String sessionId,
+    required RemoteFileEntry file,
+  }) async {
+    final result = await _adbClient.pullRemoteFiles(
+      requisitionId: requisitionId,
+      sessionId: sessionId,
+      transferId: 'preview_${DateTime.now().microsecondsSinceEpoch}',
+      remotePaths: [file.path],
+      previewOnly: true,
+      timeoutMs: 120000,
+    );
+    final rawFiles = result['files'];
+    if (rawFiles is! List || rawFiles.isEmpty || rawFiles.first is! Map) {
+      throw StateError('No se pudo preparar la vista previa.');
+    }
+    final fileMap = (rawFiles.first as Map).map(
+      (key, value) => MapEntry(key.toString(), value),
+    );
+    final localPath = fileMap['path'] as String?;
+    if (localPath == null || localPath.isEmpty) {
+      throw StateError('La vista previa no devolvió un archivo local.');
+    }
+    return localPath;
+  }
+
+  Future<void> discardRemoteFilePreview({
+    required String requisitionId,
+    required String sessionId,
+  }) => _adbClient.discardRemoteFilePreview(
+    requisitionId: requisitionId,
+    sessionId: sessionId,
+  );
+
+  Future<void> cancelFileTransfer() => _adbClient.cancelFileTransfer();
+
+  RemoteFileEntry _mapRemoteFile(Map<String, dynamic> map) {
+    final name = map['name'] as String? ?? '';
+    final isDirectory = map['isDirectory'] as bool? ?? false;
+    final isRegular = map['isRegularFile'] as bool? ?? false;
+    return RemoteFileEntry(
+      path: map['path'] as String? ?? '',
+      name: name,
+      byteLength: (map['byteLength'] as num?)?.toInt() ?? 0,
+      modifiedAt: DateTime.fromMillisecondsSinceEpoch(
+        ((map['modifiedAtSeconds'] as num?)?.toInt() ?? 0) * 1000,
+      ),
+      kind: isDirectory ? RemoteFileKind.directory : _kindForName(name),
+      isSelectable: isRegular,
+    );
+  }
+
+  RemoteFileKind _kindForName(String name) {
+    final extension = name.toLowerCase().split('.').last;
+    if (const {
+      'jpg',
+      'jpeg',
+      'png',
+      'gif',
+      'webp',
+      'heic',
+      'bmp',
+    }.contains(extension)) {
+      return RemoteFileKind.image;
+    }
+    if (const {'mp4', 'mkv', 'mov', 'avi', 'webm', '3gp'}.contains(extension)) {
+      return RemoteFileKind.video;
+    }
+    if (const {
+      'mp3',
+      'wav',
+      'aac',
+      'm4a',
+      'ogg',
+      'oga',
+      'opus',
+      'flac',
+      'amr',
+    }.contains(extension)) {
+      return RemoteFileKind.audio;
+    }
+    if (const {
+      'pdf',
+      'doc',
+      'docx',
+      'xls',
+      'xlsx',
+      'ppt',
+      'pptx',
+      'txt',
+      'csv',
+      'json',
+      'xml',
+      'log',
+    }.contains(extension)) {
+      return RemoteFileKind.document;
+    }
+    return RemoteFileKind.other;
   }
 
   Future<void> _resetNativeSession() async {
@@ -224,6 +434,11 @@ class AndroidAcquisitionPlatformService {
   }
 
   void _handleUsbEvent(UsbEvent event) {
+    final transfer = event.fileTransferInfo;
+    if (transfer != null) {
+      _fileTransferController.add(_mapTransferProgress(transfer));
+      return;
+    }
     final mirrorState = event.mirrorStateInfo;
     if (mirrorState?['state'] == 'video_size') {
       final width = mirrorState?['width'] as int?;
@@ -251,9 +466,31 @@ class AndroidAcquisitionPlatformService {
         (event.type == UsbEventType.mirrorState &&
             mirrorState?['state'] == 'error')) {
       _activeSession = null;
+      _activeConnection = null;
       unawaited(_resetNativeSession());
     }
     _deviceChangesController.add(null);
+  }
+
+  FileTransferProgress _mapTransferProgress(Map<String, dynamic> map) {
+    final rawPhase = map['state'] as String? ?? 'idle';
+    final phase = FileTransferPhase.values.firstWhere(
+      (value) => value.name == rawPhase,
+      orElse: () => FileTransferPhase.error,
+    );
+    int number(String key) => (map[key] as num?)?.toInt() ?? 0;
+    return FileTransferProgress(
+      transferId: map['transferId'] as String? ?? '',
+      phase: phase,
+      fileName: map['fileName'] as String?,
+      fileIndex: number('fileIndex'),
+      fileCount: number('fileCount'),
+      fileBytes: number('fileBytes'),
+      fileTotalBytes: number('fileTotalBytes'),
+      batchBytes: number('batchBytes'),
+      batchTotalBytes: number('batchTotalBytes'),
+      message: map['message'] as String?,
+    );
   }
 
   Future<void> sendTouch(int action, int pointerId, int x, int y) {

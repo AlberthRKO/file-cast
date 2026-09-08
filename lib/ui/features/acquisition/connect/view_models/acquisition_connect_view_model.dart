@@ -9,11 +9,13 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
     required AcquisitionRepository repository,
     required this.requisitionId,
     required this.sessionId,
+    this.destination = AcquisitionDestination.mirror,
   }) : _repository = repository;
 
   final AcquisitionRepository _repository;
   final String requisitionId;
   final String sessionId;
+  final AcquisitionDestination destination;
   StreamSubscription<void>? _deviceSubscription;
   AcquisitionAvailability _availability = AcquisitionAvailability.checking;
   AcquisitionConnectionPhase _phase = AcquisitionConnectionPhase.loading;
@@ -22,6 +24,7 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
   String? _pendingPermissionDeviceId;
   String? _message;
   AcquisitionMirrorSession? _navigationSession;
+  AcquisitionConnectionSession? _transferConnection;
   bool _disposed = false;
   int _refreshGeneration = 0;
 
@@ -37,6 +40,7 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
     _ => false,
   };
   AcquisitionMirrorSession? get navigationSession => _navigationSession;
+  AcquisitionConnectionSession? get transferConnection => _transferConnection;
 
   Future<void> initialize() async {
     _availability = await _repository.getAvailability();
@@ -48,12 +52,21 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
       return;
     }
     _deviceSubscription = _repository.deviceChanges.listen((_) => refresh());
-    final reusable = await _repository.activeSession(
-      requisitionId: requisitionId,
-      sessionId: sessionId,
-    );
+    final reusable = destination == AcquisitionDestination.transfer
+        ? await _repository.activeConnection(
+            requisitionId: requisitionId,
+            sessionId: sessionId,
+          )
+        : await _repository.activeSession(
+            requisitionId: requisitionId,
+            sessionId: sessionId,
+          );
     if (reusable != null) {
-      _navigationSession = reusable;
+      if (reusable is AcquisitionMirrorSession) {
+        _navigationSession = reusable;
+      } else if (reusable is AcquisitionConnectionSession) {
+        _transferConnection = reusable;
+      }
       _phase = AcquisitionConnectionPhase.connected;
       _message = 'Sesión activa recuperada.';
       _safeNotify();
@@ -93,12 +106,21 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
     _selectedDeviceId = device.id;
     _message = null;
     _safeNotify();
-    final reusable = await _repository.activeSession(
-      requisitionId: requisitionId,
-      sessionId: sessionId,
-    );
+    final reusable = destination == AcquisitionDestination.transfer
+        ? await _repository.activeConnection(
+            requisitionId: requisitionId,
+            sessionId: sessionId,
+          )
+        : await _repository.activeSession(
+            requisitionId: requisitionId,
+            sessionId: sessionId,
+          );
     if (reusable != null) {
-      _navigationSession = reusable;
+      if (reusable is AcquisitionMirrorSession) {
+        _navigationSession = reusable;
+      } else if (reusable is AcquisitionConnectionSession) {
+        _transferConnection = reusable;
+      }
       _phase = AcquisitionConnectionPhase.connected;
       _message = 'Sesión activa recuperada.';
       _safeNotify();
@@ -132,14 +154,24 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
     _message = 'Autorizando la conexión ADB…';
     _safeNotify();
     try {
-      _phase = AcquisitionConnectionPhase.preparingMirror;
-      _message = 'Preparando la captura segura de pantalla…';
-      _safeNotify();
-      _navigationSession = await _repository.connectAndStart(
-        device: device,
-        requisitionId: requisitionId,
-        sessionId: sessionId,
-      );
+      if (destination == AcquisitionDestination.transfer) {
+        _message = 'Preparando el acceso seguro a los archivos…';
+        _safeNotify();
+        _transferConnection = await _repository.connectForTransfer(
+          device: device,
+          requisitionId: requisitionId,
+          sessionId: sessionId,
+        );
+      } else {
+        _phase = AcquisitionConnectionPhase.preparingMirror;
+        _message = 'Preparando la captura segura de pantalla…';
+        _safeNotify();
+        _navigationSession = await _repository.connectAndStart(
+          device: device,
+          requisitionId: requisitionId,
+          sessionId: sessionId,
+        );
+      }
       _phase = AcquisitionConnectionPhase.connected;
       _message = 'Dispositivo conectado.';
     } on TimeoutException {
@@ -154,7 +186,10 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
-  void markNavigationHandled() => _navigationSession = null;
+  void markNavigationHandled() {
+    _navigationSession = null;
+    _transferConnection = null;
+  }
 
   Future<void> retry() async {
     _message = null;
@@ -172,7 +207,9 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
     if (raw.contains('HANDSHAKE')) {
       return 'No se completó la autorización ADB. Acepta la huella RSA en el dispositivo objetivo.';
     }
-    return 'No se pudo iniciar la captura. $raw';
+    return destination == AcquisitionDestination.transfer
+        ? 'No se pudo preparar la transferencia. $raw'
+        : 'No se pudo iniciar la captura. $raw';
   }
 
   void _safeNotify() {

@@ -71,9 +71,12 @@ Se conservan las rutas restaurables:
 ```text
 /requisitions/:requisitionId/acquisitions/:sessionId/connect
 /requisitions/:requisitionId/acquisitions/:sessionId/mirror
+/requisitions/:requisitionId/acquisitions/:sessionId/transfer
 ```
 
 El identificador de textura continúa viajando como argumento efímero tipado porque no puede restaurarse después de reiniciar el proceso. La ruta conserva un fallback visible cuando ese argumento no existe.
+
+La conexión base ADB se separó del arranque del mirror. `connectForTransfer` puede reutilizar la autorización y el transporte existentes sin instalar/iniciar scrcpy; `connectAndStart` compone esa conexión base con el pipeline de espejo. El destino `transfer` viaja como query parameter de la pantalla de conexión y los IDs de negocio permanecen en el path.
 
 ## Plataforma y seguridad
 

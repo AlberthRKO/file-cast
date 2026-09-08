@@ -64,6 +64,7 @@ enum UsbEventType {
   permissionDenied,
   adbState,
   mirrorState,
+  fileTransfer,
 }
 
 class UsbEvent {
@@ -95,6 +96,8 @@ class UsbEvent {
             return UsbEventType.adbState;
           case 'mirror_state':
             return UsbEventType.mirrorState;
+          case 'file_transfer':
+            return UsbEventType.fileTransfer;
           default:
             return UsbEventType.deviceAttached;
         }
@@ -137,6 +140,12 @@ class UsbEvent {
   Map<String, dynamic>? get mirrorStateInfo {
     final raw = _data;
     if (type != UsbEventType.mirrorState || raw is! Map) return null;
+    return raw.map((key, value) => MapEntry(key.toString(), value));
+  }
+
+  Map<String, dynamic>? get fileTransferInfo {
+    final raw = _data;
+    if (type != UsbEventType.fileTransfer || raw is! Map) return null;
     return raw.map((key, value) => MapEntry(key.toString(), value));
   }
 }

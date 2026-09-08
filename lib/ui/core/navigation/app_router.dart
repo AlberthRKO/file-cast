@@ -1,15 +1,16 @@
+import 'package:file_cast/domain/models/acquisition.dart';
 import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/ui/core/navigation/app_route.dart';
 import 'package:file_cast/ui/core/navigation/app_route_error_view.dart';
 import 'package:file_cast/ui/core/navigation/route_args/mirror_route_args.dart';
 import 'package:file_cast/ui/features/acquisition/connect/views/usb_device_list_view.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/views/mirror_view.dart';
+import 'package:file_cast/ui/features/acquisition/transfer/views/file_transfer_view.dart';
 import 'package:file_cast/ui/features/auth/login/views/login_view.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
 import 'package:file_cast/ui/features/connectivity/offline/views/offline_view.dart';
 import 'package:file_cast/ui/features/onboarding/started/views/started_view.dart';
 import 'package:file_cast/ui/features/requisitions/create/views/create_requisition_view.dart';
-import 'package:file_cast/ui/features/requisitions/detail/views/file_transfer_placeholder_view.dart';
 import 'package:file_cast/ui/features/requisitions/detail/views/requisition_detail_view.dart';
 import 'package:file_cast/ui/features/requisitions/list/views/requisition_list_view.dart';
 import 'package:file_cast/ui/features/settings/views/settings_view.dart';
@@ -91,8 +92,9 @@ GoRouter createAppRouter({
       GoRoute(
         name: AppRouteName.fileTransfer,
         path: AppRoutePath.fileTransfer,
-        builder: (context, state) => FileTransferPlaceholderView(
+        builder: (context, state) => FileTransferRoute(
           requisitionId: state.pathParameters['requisitionId']!,
+          sessionId: state.pathParameters['sessionId']!,
         ),
       ),
       GoRoute(
@@ -108,10 +110,16 @@ GoRouter createAppRouter({
       GoRoute(
         name: AppRouteName.acquisitionConnect,
         path: AppRoutePath.acquisitionConnect,
-        builder: (context, state) => UsbDeviceListRoute(
-          requisitionId: state.pathParameters['requisitionId']!,
-          sessionId: state.pathParameters['sessionId']!,
-        ),
+        builder: (context, state) {
+          final destination = state.uri.queryParameters['destination'];
+          return UsbDeviceListRoute(
+            requisitionId: state.pathParameters['requisitionId']!,
+            sessionId: state.pathParameters['sessionId']!,
+            destination: destination == 'transfer'
+                ? AcquisitionDestination.transfer
+                : AcquisitionDestination.mirror,
+          );
+        },
       ),
       GoRoute(
         name: AppRouteName.mirror,
