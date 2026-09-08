@@ -13,10 +13,12 @@ class UsbDeviceListRoute extends StatelessWidget {
   const UsbDeviceListRoute({
     required this.requisitionId,
     required this.sessionId,
+    this.destination = AcquisitionDestination.mirror,
     super.key,
   });
   final String requisitionId;
   final String sessionId;
+  final AcquisitionDestination destination;
 
   @override
   Widget build(BuildContext context) => ChangeNotifierProvider(
@@ -24,6 +26,7 @@ class UsbDeviceListRoute extends StatelessWidget {
       repository: context.read<AcquisitionRepository>(),
       requisitionId: requisitionId,
       sessionId: sessionId,
+      destination: destination,
     )..initialize(),
     child: const UsbDeviceListView(),
   );
@@ -36,6 +39,20 @@ class UsbDeviceListView extends StatelessWidget {
   Widget build(BuildContext context) {
     final viewModel = context.watch<AcquisitionConnectViewModel>();
     final session = viewModel.navigationSession;
+    final transferConnection = viewModel.transferConnection;
+    if (transferConnection != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted || viewModel.transferConnection == null) return;
+        viewModel.markNavigationHandled();
+        context.pushReplacementNamed(
+          AppRouteName.fileTransfer,
+          pathParameters: {
+            'requisitionId': transferConnection.requisitionId,
+            'sessionId': transferConnection.sessionId,
+          },
+        );
+      });
+    }
     if (session != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!context.mounted ||
@@ -63,7 +80,11 @@ class UsbDeviceListView extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Conectar dispositivo objetivo'),
+        title: Text(
+          viewModel.destination == AcquisitionDestination.transfer
+              ? 'Conectar para transferir archivos'
+              : 'Conectar dispositivo objetivo',
+        ),
         backgroundColor: Theme.of(context).cardColor,
         elevation: 0,
         scrolledUnderElevation: 0,
@@ -86,7 +107,9 @@ class UsbDeviceListView extends StatelessWidget {
                   ),
                   const SizedBox(height: AppSpace.xs),
                   Text(
-                    'Conecta el cable OTG, activa la depuración USB y acepta la huella RSA en el equipo objetivo.',
+                    viewModel.destination == AcquisitionDestination.transfer
+                        ? 'Conecta el cable OTG y autoriza ADB para explorar el almacenamiento compartido.'
+                        : 'Conecta el cable OTG, activa la depuración USB y acepta la huella RSA en el equipo objetivo.',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: AppSpace.m),

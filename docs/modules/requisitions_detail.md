@@ -12,7 +12,7 @@ El card del caso está integrado al encabezado bajo el `AppBar`, dentro de una s
 
 - El botón flotante **+** abre un `ModalBottomSheet` con las tres acciones de adquisición.
 - **Captura de pantalla:** abre la conexión Android asociada a `requisitionId` y `sessionId`.
-- **Transferencia de archivos:** abre `/requisitions/:requisitionId/file-transfer`, placeholder pendiente.
+- **Transferencia de archivos:** abre la conexión con destino transferencia y continúa en `/requisitions/:requisitionId/acquisitions/:sessionId/transfer`.
 - **Importar archivos:** usa el selector del sistema, clasifica imágenes, videos, audios, documentos y otros formatos, y agrega una evidencia simulada a la sección correspondiente.
 
 ## Estructura
@@ -25,8 +25,12 @@ lib/data/repositories/in_memory_requisition_detail_repository.dart
 lib/ui/features/requisitions/detail/
 ├── view_models/requisition_detail_view_model.dart
 └── views/
-    ├── requisition_detail_view.dart
-    └── file_transfer_placeholder_view.dart
+    └── requisition_detail_view.dart
+
+lib/ui/features/acquisition/transfer/
+├── view_models/file_transfer_view_model.dart
+├── views/file_transfer_view.dart
+└── widgets/file_transfer_widgets.dart
 ```
 
 ## Límite iOS
@@ -36,5 +40,5 @@ En iOS/iPadOS se omite la comprobación ADB/OTG, porque el canal Android no exis
 ## Deuda
 
 - Las evidencias son mocks: no hay almacenamiento, hash, cadena de custodia ni sincronización.
-- Transferencia desde dispositivo está pendiente.
+- Transferencia ADB desde almacenamiento compartido está implementada como vertical local; falta validación física, persistencia probatoria y backend.
 - ADB/scrcpy conserva alcance Android; iOS requiere app compañera o puente macOS.

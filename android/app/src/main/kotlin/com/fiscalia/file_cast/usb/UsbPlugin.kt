@@ -20,11 +20,14 @@ import io.flutter.view.TextureRegistry
 import com.fiscalia.file_cast.adb.AdbAuth
 import com.fiscalia.file_cast.scrcpy.ScrcpyDecoder
 import com.fiscalia.file_cast.scrcpy.ScrcpyRecorder
+import com.fiscalia.file_cast.sync.AdbSyncClient
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.ArrayDeque
+import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class UsbPlugin(private val context: Context, private val flutterEngine: FlutterEngine) {
 
@@ -36,6 +39,9 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         private const val FLAG_VIDEO_CONFIG = Long.MIN_VALUE
         private const val FLAG_VIDEO_KEY_FRAME = 1L shl 62
         private const val MAX_RECORDING_PREROLL_BYTES = 24 * 1024 * 1024
+        private const val MIN_FREE_SPACE_BYTES = 64L * 1024 * 1024
+        private const val MAX_TRANSFER_BATCH_FILES = 200
+        private const val MAX_PREVIEW_FILE_BYTES = 256L * 1024 * 1024
     }
 
     private val usbManager: UsbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -52,6 +58,8 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     private var pendingHandshakeDevice: UsbDevice? = null
     private var waitingForReattach = false
     private var handshakeGeneration = 0
+    @Volatile private var activeSyncClient: AdbSyncClient? = null
+    private val fileTransferRunning = AtomicBoolean(false)
 
     // Mirror components
     private var mirrorTextureEntry: TextureRegistry.SurfaceTextureEntry? = null
@@ -253,6 +261,226 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                         isDaemon = true
                         start()
                     }
+                }
+                "listRemoteFiles" -> {
+                    val remotePath = call.argument<String>("remotePath")
+                    val timeoutMs = call.argument<Number>("timeoutMs")?.toLong() ?: 30000L
+                    if (remotePath == null) {
+                        result.error("INVALID_ARGS", "remotePath is required", null)
+                        return@setMethodCallHandler
+                    }
+                    val transport = adbTransport
+                    if (transport == null || !transport.isAdbConnected()) {
+                        result.error("NOT_CONNECTED", "ADB not connected", null)
+                        return@setMethodCallHandler
+                    }
+                    if (fileTransferRunning.get()) {
+                        result.error("TRANSFER_BUSY", "A file transfer is already running", null)
+                        return@setMethodCallHandler
+                    }
+                    Thread {
+                        val syncClient = AdbSyncClient(transport)
+                        syncClient.resetCancellation()
+                        activeSyncClient = syncClient
+                        try {
+                            val entries = syncClient.listDirectory(remotePath, timeoutMs)
+                            mainHandler.post { result.success(entries.map { it.toMap() }) }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "listRemoteFiles error: ${e.message}", e)
+                            mainHandler.post {
+                                result.error("REMOTE_LIST_ERROR", e.message ?: "Could not list remote files", null)
+                            }
+                        } finally {
+                            if (activeSyncClient === syncClient) activeSyncClient = null
+                        }
+                    }.apply {
+                        name = "ListRemoteFiles"
+                        isDaemon = true
+                        start()
+                    }
+                }
+                "statRemoteFile" -> {
+                    val remotePath = call.argument<String>("remotePath")
+                    val timeoutMs = call.argument<Number>("timeoutMs")?.toLong() ?: 30000L
+                    if (remotePath == null) {
+                        result.error("INVALID_ARGS", "remotePath is required", null)
+                        return@setMethodCallHandler
+                    }
+                    val transport = adbTransport
+                    if (transport == null || !transport.isAdbConnected()) {
+                        result.error("NOT_CONNECTED", "ADB not connected", null)
+                        return@setMethodCallHandler
+                    }
+                    Thread {
+                        val syncClient = AdbSyncClient(transport)
+                        syncClient.resetCancellation()
+                        activeSyncClient = syncClient
+                        try {
+                            val entry = syncClient.stat(remotePath, timeoutMs)
+                            mainHandler.post { result.success(entry.toMap()) }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "statRemoteFile error: ${e.message}", e)
+                            mainHandler.post {
+                                result.error("REMOTE_STAT_ERROR", e.message ?: "Could not read remote metadata", null)
+                            }
+                        } finally {
+                            if (activeSyncClient === syncClient) activeSyncClient = null
+                        }
+                    }.apply {
+                        name = "StatRemoteFile"
+                        isDaemon = true
+                        start()
+                    }
+                }
+                "pullRemoteFiles" -> {
+                    val requisitionId = call.argument<String>("requisitionId")
+                    val sessionId = call.argument<String>("sessionId")
+                    val transferId = call.argument<String>("transferId")
+                    val remotePaths = call.argument<List<String>>("remotePaths")
+                    val timeoutMs = call.argument<Number>("timeoutMs")?.toLong() ?: 30000L
+                    val previewOnly = call.argument<Boolean>("previewOnly") ?: false
+                    if (requisitionId == null || sessionId == null || transferId == null || remotePaths.isNullOrEmpty()) {
+                        result.error("INVALID_ARGS", "requisitionId, sessionId, transferId and remotePaths are required", null)
+                        return@setMethodCallHandler
+                    }
+                    if (remotePaths.size > MAX_TRANSFER_BATCH_FILES) {
+                        result.error("BATCH_TOO_LARGE", "A transfer batch supports up to 200 files", null)
+                        return@setMethodCallHandler
+                    }
+                    if (previewOnly && remotePaths.size != 1) {
+                        result.error("INVALID_ARGS", "A preview requires exactly one file", null)
+                        return@setMethodCallHandler
+                    }
+                    val transport = adbTransport
+                    if (transport == null || !transport.isAdbConnected()) {
+                        result.error("NOT_CONNECTED", "ADB not connected", null)
+                        return@setMethodCallHandler
+                    }
+                    if (!fileTransferRunning.compareAndSet(false, true)) {
+                        result.error("TRANSFER_BUSY", "A file transfer is already running", null)
+                        return@setMethodCallHandler
+                    }
+                    Thread {
+                        val syncClient = AdbSyncClient(transport)
+                        syncClient.resetCancellation()
+                        activeSyncClient = syncClient
+                        val completed = mutableListOf<Map<String, Any>>()
+                        val failures = mutableListOf<Map<String, String>>()
+                        var wasCancelled = false
+                        try {
+                            val remoteEntries = remotePaths.map { syncClient.stat(it, timeoutMs) }
+                            val totalBytes = remoteEntries.fold(0L) { total, entry -> total + entry.byteLength }
+                            if (previewOnly && totalBytes > MAX_PREVIEW_FILE_BYTES) {
+                                throw IllegalStateException("El archivo supera el límite de 256 MB para vista previa")
+                            }
+                            val destination = if (previewOnly) {
+                                previewDirectory(requisitionId, sessionId).apply {
+                                    deleteRecursively()
+                                    mkdirs()
+                                }
+                            } else {
+                                evidenceDirectory(requisitionId, sessionId)
+                            }
+                            if (destination.usableSpace - MIN_FREE_SPACE_BYTES < totalBytes) {
+                                throw IllegalStateException("No hay espacio suficiente para transferir el lote seleccionado")
+                            }
+                            var batchBytes = 0L
+                            remoteEntries.forEachIndexed { index, remote ->
+                                if (wasCancelled) return@forEachIndexed
+                                val baseBatchBytes = batchBytes
+                                postTransferEvent(mapOf(
+                                    "transferId" to transferId,
+                                    "state" to "transferring",
+                                    "fileName" to remote.name,
+                                    "fileIndex" to index,
+                                    "fileCount" to remoteEntries.size,
+                                    "fileBytes" to 0L,
+                                    "fileTotalBytes" to remote.byteLength,
+                                    "batchBytes" to batchBytes,
+                                    "batchTotalBytes" to totalBytes,
+                                ))
+                                try {
+                                    val pulled = syncClient.pullFile(
+                                        remotePath = remote.path,
+                                        destinationDirectory = destination,
+                                        knownRemote = remote,
+                                        timeoutMs = timeoutMs,
+                                    ) { fileBytes ->
+                                        postTransferEvent(mapOf(
+                                            "transferId" to transferId,
+                                            "state" to "transferring",
+                                            "fileName" to remote.name,
+                                            "fileIndex" to index,
+                                            "fileCount" to remoteEntries.size,
+                                            "fileBytes" to fileBytes,
+                                            "fileTotalBytes" to remote.byteLength,
+                                            "batchBytes" to baseBatchBytes + fileBytes,
+                                            "batchTotalBytes" to totalBytes,
+                                        ))
+                                    }
+                                    completed += pulled.toMap()
+                                    batchBytes += pulled.byteLength
+                                } catch (_: CancellationException) {
+                                    wasCancelled = true
+                                } catch (e: Exception) {
+                                    failures += mapOf("path" to remote.path, "message" to (e.message ?: "Transfer failed"))
+                                }
+                            }
+                            postTransferEvent(mapOf(
+                                "transferId" to transferId,
+                                "state" to if (wasCancelled) "cancelled" else "completed",
+                                "fileCount" to remoteEntries.size,
+                                "completedCount" to completed.size,
+                                "failureCount" to failures.size,
+                                "batchBytes" to batchBytes,
+                                "batchTotalBytes" to totalBytes,
+                            ))
+                            mainHandler.post {
+                                result.success(mapOf(
+                                    "files" to completed,
+                                    "failures" to failures,
+                                    "cancelled" to wasCancelled,
+                                ))
+                            }
+                        } catch (_: CancellationException) {
+                            wasCancelled = true
+                            postTransferEvent(mapOf("transferId" to transferId, "state" to "cancelled"))
+                            mainHandler.post {
+                                result.success(mapOf("files" to completed, "failures" to failures, "cancelled" to true))
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "pullRemoteFiles error: ${e.message}", e)
+                            postTransferEvent(mapOf(
+                                "transferId" to transferId,
+                                "state" to "error",
+                                "message" to (e.message ?: "File transfer failed"),
+                            ))
+                            mainHandler.post {
+                                result.error("REMOTE_PULL_ERROR", e.message ?: "File transfer failed", null)
+                            }
+                        } finally {
+                            if (activeSyncClient === syncClient) activeSyncClient = null
+                            fileTransferRunning.set(false)
+                        }
+                    }.apply {
+                        name = if (previewOnly) "PreviewRemoteFile" else "PullRemoteFiles"
+                        isDaemon = true
+                        start()
+                    }
+                }
+                "discardRemoteFilePreview" -> {
+                    val requisitionId = call.argument<String>("requisitionId")
+                    val sessionId = call.argument<String>("sessionId")
+                    if (requisitionId == null || sessionId == null) {
+                        result.error("INVALID_ARGS", "requisitionId and sessionId are required", null)
+                        return@setMethodCallHandler
+                    }
+                    previewDirectory(requisitionId, sessionId).deleteRecursively()
+                    result.success(null)
+                }
+                "cancelFileTransfer" -> {
+                    activeSyncClient?.cancel()
+                    result.success(true)
                 }
                 "startPersistentShell" -> {
                     val command = call.argument<String>("command")
@@ -949,6 +1177,12 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         return File(context.filesDir, "evidence/$safeRequisition/$safeSession").apply { mkdirs() }
     }
 
+    private fun previewDirectory(requisitionId: String, sessionId: String): File {
+        val safeRequisition = requisitionId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val safeSession = sessionId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        return File(context.cacheDir, "file_previews/$safeRequisition/$safeSession")
+    }
+
     private fun evidenceMetadata(file: File, hash: ByteArray): Map<String, Any> = mapOf(
         "name" to file.name,
         "path" to file.absolutePath,
@@ -1208,6 +1442,9 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
 
     private fun disconnectAdb() {
         handshakeGeneration++
+        activeSyncClient?.cancel()
+        activeSyncClient = null
+        fileTransferRunning.set(false)
         adbTransport?.quietMode = false
         adbTransport?.stopVideoReadLoop()
         adbTransport?.stopControlWriter()
@@ -1260,6 +1497,10 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
             "data" to data
         )
         eventSink?.success(event)
+    }
+
+    private fun postTransferEvent(data: Map<String, Any>) {
+        mainHandler.post { sendEvent("file_transfer", data) }
     }
 }
 

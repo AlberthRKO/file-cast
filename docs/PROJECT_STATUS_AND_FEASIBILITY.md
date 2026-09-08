@@ -4,6 +4,7 @@ Fecha de revisión inicial: 27 de agosto de 2026
 Actualización de arquitectura UI: 31 de agosto de 2026  
 Limpieza de infraestructura Flutter: 31 de agosto de 2026
 Actualización de adquisición Android: 4 de septiembre de 2026
+Actualización de transferencia Android: 8 de septiembre de 2026
 Alcance revisado: Flutter/Dart, Android nativo Kotlin, configuración iOS, documentación, historial Git reciente, mockups adjuntos y validadores locales.
 
 ## Dictamen ejecutivo
@@ -11,7 +12,7 @@ Alcance revisado: Flutter/Dart, Android nativo Kotlin, configuración iOS, docum
 El proyecto es **viable por etapas**, con una diferencia esencial entre plataformas:
 
 - **Android objetivo -> Android inspector por USB:** viable para dispositivos desbloqueados, con USB debugging autorizado y Android 5.0/API 21 o superior para el flujo scrcpy actual. El repositorio ya demuestra detección USB, autenticación ADB, streaming H.264 y envío de eventos de control.
-- **Captura de pantalla y grabación Android ligadas a una requisa:** existe una primera vertical local: guarda PNG/MP4 en almacenamiento privado, calcula SHA-256 y registra metadatos contra requisa/sesión. Aún faltan persistencia del catálogo, almacenamiento inmutable, ledger, sincronización y validación física. La transferencia Android continúa pendiente.
+- **Captura, grabación y transferencia Android ligadas a una requisa:** existen verticales locales que guardan PNG/MP4/archivos en almacenamiento privado, calculan SHA-256 y registran metadatos contra requisa/sesión. El browser inicia con ubicaciones comunes y puede recorrer `/sdcard` completo dentro de los permisos de `shell`. Aún faltan persistencia del catálogo, almacenamiento inmutable, ledger, sincronización y validación física.
 - **iPhone/iPad objetivo -> otro móvil inspector por cable, con espejo y control tipo scrcpy:** no es viable con APIs públicas de iOS como una réplica directa de ADB/scrcpy. No existe en el proyecto ni en los frameworks públicos revisados una interfaz equivalente para controlar otro iPhone por USB.
 - **iOS con alcance ajustado:** sí es viable mediante dos rutas: una app compañera en el equipo objetivo, con selección explícita de archivos y ReplayKit/red local; o una estación macOS conectada por cable para captura y adquisición autorizada. Ninguna de estas rutas ofrece control táctil remoto general del iPhone.
 - **Uso probatorio/forense:** todavía no está listo. En el estado actual es una prueba técnica de conectividad y UI, no una herramienta de adquisición forense validada.
@@ -35,7 +36,7 @@ La recomendación es construir primero un MVP Android de extremo a extremo y man
 | Control Android | Touch, arrastre, mouse/trackpad y teclas por canal scrcpy 2.7 | Implementado y validado en hardware por el propietario; algunos fabricantes requieren un ajuste de seguridad adicional |
 | Foto de la pantalla | `exec:screencap -p`, PNG privado, validación de firma y SHA-256 | Implementado como vertical local |
 | Grabación | GOP H.264 acotado, `MediaMuxer`, contador, MP4 privado y SHA-256 | Implementado; corrección de finalización pendiente de revalidación física |
-| Transferencia desde objetivo | Solo existe push inspector -> objetivo; no existe pull objetivo -> inspector | No implementado |
+| Transferencia desde objetivo | Browser de almacenamiento compartido con ADB Sync `LIST`/`STAT`/`RECV`, preview temporal de imágenes/videos/audios/PDF/DOCX/texto, selección múltiple, progreso, cancelación, temporal privado y SHA-256 | Implementación local inicial; falta validación física, preview ofimático legado, persistencia probatoria y deduplicación |
 | Integración iOS | `AppDelegate` estándar, sin canal/plugin de adquisición | No implementado |
 | Cadena de custodia | No hay ledger, manifiesto, hash por evidencia ni sellado | No implementado |
 | Pruebas | Solo helpers; no existen archivos `*_test.dart` | Ausentes |
@@ -91,7 +92,7 @@ La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto,
 
 ### P1 — riesgos técnicos del prototipo Android
 
-1. **Pull continúa pendiente.** Screenshot y recording ya existen, pero `pushFile()` solo envía inspector -> objetivo; falta `LIST`/`STAT`/`RECV` para transferencia objetivo -> inspector.
+1. **Pull requiere validación física.** La primera vertical `LIST`/`STAT`/`RECV` ya escribe por streaming en almacenamiento privado, calcula SHA-256 y registra el resultado contra requisa/sesión. Falta probar fragmentación, archivos grandes, cancelación, desconexión y fabricantes de la matriz.
 2. **Lectura exacta corregida.** `_readExact()` conserva excedentes por stream para no perder el inicio del video cuando comparte un chunk con los metadatos. Falta cubrirlo con pruebas de protocolo.
 3. **Backpressure parcial.** La cola de control está acotada y compacta movimientos, y el pre-roll de grabación se limita a 24 MiB. Las colas generales de datos ADB todavía requieren límites y métricas para sesiones extensas.
 4. **Ciclo de vida sensible.** La sesión se reutiliza al volver desde mirror y el cleanup nativo es centralizado, pero debe validarse ante cierre de proceso, cable retirado, background y grabación activa.
@@ -114,7 +115,7 @@ La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto,
 ### P2 — arquitectura, responsive y mantenibilidad
 
 1. La captura y grabación ya tienen una vertical MVVM/repositorio local; falta persistir el catálogo y separar el ledger inmutable del archivo derivado.
-2. Transferencia, sincronización, sellado y cadena de custodia todavía no tienen una vertical operativa completa.
+2. Transferencia tiene una vertical local inicial; sincronización, sellado, persistencia y cadena de custodia todavía no están completos.
 3. `android.hardware.usb.host` quedó declarado como capacidad opcional; falta validar en distribución real que Android sin OTG mantenga disponible el módulo de gestión y bloquee únicamente adquisición.
 
 ### P2 — validación y toolchain

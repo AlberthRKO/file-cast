@@ -1,4 +1,5 @@
 import 'package:file_cast/data/services/android_acquisition_platform_service.dart';
+import 'package:file_cast/data/services/remote_document_preview_service.dart';
 import 'package:file_cast/domain/models/acquisition.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
@@ -8,14 +9,21 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
   AcquisitionRepositoryImpl({
     required AndroidAcquisitionPlatformService platformService,
     required RequisitionDetailRepository detailRepository,
+    required RemoteDocumentPreviewService documentPreviewService,
   }) : _platformService = platformService,
-       _detailRepository = detailRepository;
+       _detailRepository = detailRepository,
+       _documentPreviewService = documentPreviewService;
 
   final AndroidAcquisitionPlatformService _platformService;
   final RequisitionDetailRepository _detailRepository;
+  final RemoteDocumentPreviewService _documentPreviewService;
 
   @override
   Stream<void> get deviceChanges => _platformService.deviceChanges;
+
+  @override
+  Stream<FileTransferProgress> get fileTransferProgress =>
+      _platformService.fileTransferProgress;
 
   @override
   Future<AcquisitionAvailability> getAvailability() =>
@@ -44,6 +52,26 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
     required String requisitionId,
     required String sessionId,
   }) => _platformService.activeSession(
+    requisitionId: requisitionId,
+    sessionId: sessionId,
+  );
+
+  @override
+  Future<AcquisitionConnectionSession> connectForTransfer({
+    required AcquisitionDevice device,
+    required String requisitionId,
+    required String sessionId,
+  }) => _platformService.connectForTransfer(
+    device: device,
+    requisitionId: requisitionId,
+    sessionId: sessionId,
+  );
+
+  @override
+  Future<AcquisitionConnectionSession?> activeConnection({
+    required String requisitionId,
+    required String sessionId,
+  }) => _platformService.activeConnection(
     requisitionId: requisitionId,
     sessionId: sessionId,
   );
@@ -106,7 +134,129 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
       byteLength: captured.byteLength,
       localPath: captured.localPath,
       sha256: captured.sha256,
+      sourcePath: captured.sourcePath,
     );
+  }
+
+  @override
+  Future<List<RemoteFileEntry>> listRemoteFiles(String remotePath) =>
+      _platformService.listRemoteFiles(remotePath);
+
+  @override
+  Future<RemoteFilePreview> prepareRemoteFilePreview({
+    required String requisitionId,
+    required String sessionId,
+    required RemoteFileEntry file,
+  }) async {
+    final localPath = await _platformService.prepareRemoteFilePreview(
+      requisitionId: requisitionId,
+      sessionId: sessionId,
+      file: file,
+    );
+    try {
+      final documentText = await _documentPreviewService.extractReadableText(
+        localPath,
+      );
+      return (localPath: localPath, documentText: documentText);
+    } catch (_) {
+      await _platformService.discardRemoteFilePreview(
+        requisitionId: requisitionId,
+        sessionId: sessionId,
+      );
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> discardRemoteFilePreview({
+    required String requisitionId,
+    required String sessionId,
+  }) => _platformService.discardRemoteFilePreview(
+    requisitionId: requisitionId,
+    sessionId: sessionId,
+  );
+
+  @override
+  Future<FileTransferResult> transferRemoteFiles({
+    required String requisitionId,
+    required String sessionId,
+    required List<RemoteFileEntry> files,
+  }) async {
+    final result = await _platformService.transferRemoteFiles(
+      requisitionId: requisitionId,
+      sessionId: sessionId,
+      files: files,
+    );
+    if (result.files.isNotEmpty) {
+      await _detailRepository.addImportedEvidenceBatch(
+        requisitionId: requisitionId,
+        evidence: result.files
+            .map(
+              (captured) => ImportedEvidenceDraft(
+                name: captured.name,
+                type: _evidenceType(captured.name),
+                sizeLabel: _formatSize(captured.byteLength),
+                byteLength: captured.byteLength,
+                localPath: captured.localPath,
+                sha256: captured.sha256,
+                sourcePath: captured.sourcePath,
+              ),
+            )
+            .toList(growable: false),
+      );
+    }
+    return result;
+  }
+
+  @override
+  Future<void> cancelFileTransfer() => _platformService.cancelFileTransfer();
+
+  RequisitionEvidenceType _evidenceType(String name) {
+    final extension = name.toLowerCase().split('.').last;
+    if (const {
+      'jpg',
+      'jpeg',
+      'png',
+      'gif',
+      'webp',
+      'heic',
+      'bmp',
+    }.contains(extension)) {
+      return RequisitionEvidenceType.image;
+    }
+    if (const {'mp4', 'mkv', 'mov', 'avi', 'webm', '3gp'}.contains(extension)) {
+      return RequisitionEvidenceType.video;
+    }
+    if (const {
+      'mp3',
+      'wav',
+      'aac',
+      'm4a',
+      'ogg',
+      'oga',
+      'opus',
+      'flac',
+      'amr',
+    }.contains(extension)) {
+      return RequisitionEvidenceType.audio;
+    }
+    if (const {
+      'pdf',
+      'doc',
+      'docx',
+      'xls',
+      'xlsx',
+      'ppt',
+      'pptx',
+      'txt',
+      'csv',
+      'json',
+      'xml',
+      'log',
+    }.contains(extension)) {
+      return RequisitionEvidenceType.document;
+    }
+    return RequisitionEvidenceType.other;
   }
 
   String _formatSize(int bytes) {

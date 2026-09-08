@@ -1,6 +1,6 @@
 # ADB Handshake - Documentacion Completa (Fase 1-5)
 
-> **Documento histórico del prototipo.** Describe las fases 1 a 5. El código actual también contiene mirror/decoder y control táctil validado (fases 6–7), dimensiones dinámicas desde MediaCodec, captura PNG por `exec:screencap -p` y remultiplexado H.264 a MP4 con GOP/keyframe inicial. Pull objetivo -> inspector continúa pendiente. Para el flujo vigente consultar [modules/acquisition_capture.md](modules/acquisition_capture.md), [PROJECT_STATUS_AND_FEASIBILITY.md](PROJECT_STATUS_AND_FEASIBILITY.md) e [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
+> **Documento histórico del prototipo.** Describe las fases 1 a 5. El código actual también contiene mirror/decoder y control táctil validado (fases 6–7), dimensiones dinámicas desde MediaCodec, captura PNG por `exec:screencap -p`, remultiplexado H.264 a MP4 y una primera vertical de transferencia ADB Sync (fase 8). Para el flujo vigente consultar [modules/acquisition_capture.md](modules/acquisition_capture.md), [modules/acquisition_transfer.md](modules/acquisition_transfer.md), [PROJECT_STATUS_AND_FEASIBILITY.md](PROJECT_STATUS_AND_FEASIBILITY.md) e [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
 
 ## Fase 1: Deteccion USB y Permisos
 
@@ -370,12 +370,31 @@ Datos residuales del handshake desincronizan el reader thread.
 
 ---
 
+## Fase 8: Exploración y pull de archivos
+
+La transferencia abre streams `sync:` independientes sobre la misma conexión ADB autenticada. No reinicia el handshake ni detiene el mirror.
+
+```text
+LIST path -> DENT... -> DONE
+STAT path -> STAT(mode, size, mtime)
+RECV path -> DATA... -> DONE
+```
+
+- `SyncPacketReader` reconstruye mensajes aunque los límites de ADB `WRTE` no coincidan con los límites del subprotocolo sync.
+- `AdbSyncClient` limita rutas a `/sdcard` y sus descendientes, rechaza traversal y no ofrece operaciones de escritura sobre el objetivo. La UI inicia con accesos a `DCIM`, `Pictures`, `Movies` y `Download`, y habilita la raíz compartida completa solo cuando el usuario activa ese alcance.
+- Los archivos llegan directamente a `.part` en `filesDir/evidence/<requisitionId>/<sessionId>`, se hashean durante la escritura, ejecutan `fsync` y se renombran al finalizar.
+- La vista previa reutiliza `RECV` para un único archivo y escribe en `cacheDir/file_previews`; no registra evidencia y elimina el temporal al cerrar.
+- El bridge envía a Flutter únicamente metadatos y progreso. Una cancelación cierra el stream activo y descarta el parcial.
+- ADB Sync v1 representa tamaños con 32 bits; esta vertical limita cada archivo a `0xFFFFFFFF` bytes y no implementa reanudación por offset.
+
 ## Referencia: Archivos del proyecto
 
 | Archivo | Descripcion |
 |---------|-------------|
 | `android/.../usb/UsbPlugin.kt` | Plugin MethodChannel + BroadcastReceiver |
 | `android/.../usb/UsbAdbTransport.kt` | USB bulk, handshake, stream multiplexing, push |
+| `android/.../sync/AdbSyncClient.kt` | LIST/STAT/RECV, validación de rutas, streaming, hash y finalización |
+| `android/.../sync/SyncPacketReader.kt` | Lectura exacta con conservación de excedentes del stream sync |
 | `android/.../adb/AdbProtocol.kt` | Constantes + helpers de paquetes ADB |
 | `android/.../adb/AdbAuth.kt` | RSA keypair + firma + android_pubkey struct |
 | `android/.../adb/AdbMessage.kt` | AdbMessage data class |

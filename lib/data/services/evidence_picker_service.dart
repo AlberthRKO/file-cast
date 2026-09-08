@@ -47,13 +47,21 @@ class EvidencePickerService {
       'wav' ||
       'aac' ||
       'm4a' ||
-      'ogg' => RequisitionEvidenceType.audio,
+      'ogg' ||
+      'oga' ||
+      'opus' ||
+      'flac' ||
+      'amr' => RequisitionEvidenceType.audio,
       'pdf' ||
       'doc' ||
       'docx' ||
       'xls' ||
       'xlsx' ||
-      'txt' => RequisitionEvidenceType.document,
+      'txt' ||
+      'csv' ||
+      'json' ||
+      'xml' ||
+      'log' => RequisitionEvidenceType.document,
       _ => RequisitionEvidenceType.other,
     };
     return PickedEvidence(

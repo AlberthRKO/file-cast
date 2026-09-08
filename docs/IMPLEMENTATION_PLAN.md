@@ -295,6 +295,8 @@ El recorder espera SPS/PPS/config, crea el track, usa PTS monotónicos, marca ke
 
 ### Transferencia objetivo -> inspector
 
+Estado al 8 de septiembre de 2026: primera vertical Android implementada para almacenamiento compartido. Usa ADB Sync v1 `LIST`/`STAT`/`RECV`, escritura nativa por streaming a `.part`, `fsync`, rename en el mismo directorio, SHA-256, selección múltiple secuencial, progreso y cancelación. Está ligada a `requisitionId`/`sessionId` y reutiliza una conexión ADB activa sin obligar a iniciar scrcpy. Continúan pendientes la validación física, deduplicación por hash, persistencia transaccional/ledger y una alternativa companion.
+
 Implementar ADB sync completo:
 
 - `STAT`/`LIST` para metadatos;
@@ -306,7 +308,7 @@ Implementar ADB sync completo:
 
 Dos UX posibles:
 
-- **Galería accesible por ADB:** mostrar DCIM/Pictures/Movies/Download que el usuario `shell` pueda leer. No implica acceso a datos privados de apps.
+- **Galería accesible por ADB:** iniciar con DCIM/Pictures/Movies/Download y permitir explorar opcionalmente `/sdcard` completo dentro de lo que el usuario `shell` pueda leer. No implica acceso a datos privados de apps.
 - **App compañera Android:** usar Photo Picker/Storage Access Framework en el objetivo para que la persona elija explícitamente; luego transferir por un canal autenticado. Es la opción más consistente con scoped storage y consentimiento.
 
 ### Robustecimiento del mirror/control
@@ -459,6 +461,8 @@ Estado al 4 de septiembre de 2026: screenshot binario, control táctil validado,
 Salida: archivos reproducibles con hash y manifiesto, vinculados a requisa.
 
 ### Fase 5 — transferencia Android
+
+Estado al 8 de septiembre de 2026: browser responsive, selector entre contenido común y almacenamiento compartido completo, preview temporal y responsive de imágenes, videos, audios, PDF, DOCX y texto estructurado, conexión dirigida, `LIST`/`STAT`/`RECV`, lote secuencial, progreso, cancelación y registro local en el detalle implementados. La implementación se limita a `/sdcard` y a lo accesible para `shell`, no altera el dispositivo objetivo y conserva como deuda la validación física, los formatos ofimáticos legados y las garantías probatorias.
 
 - sync pull/list/stat;
 - browser de archivos accesibles;

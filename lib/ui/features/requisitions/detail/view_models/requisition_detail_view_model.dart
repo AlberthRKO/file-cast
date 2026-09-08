@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
 import 'package:flutter/foundation.dart';
@@ -33,6 +35,8 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
   bool _isImporting = false;
+  StreamSubscription<String>? _changesSubscription;
+  bool _disposed = false;
   bool get isImporting => _isImporting;
 
   List<EvidenceCategorySummary> get evidenceCategories {
@@ -66,8 +70,12 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   }
 
   Future<void> load() async {
+    if (_disposed) return;
+    _changesSubscription ??= _repository.changes.listen((changedId) {
+      if (changedId == requisitionId) unawaited(_reloadSilently());
+    });
     _phase = RequisitionDetailPhase.loading;
-    notifyListeners();
+    if (!_disposed) notifyListeners();
     try {
       _detail = await _repository.getDetail(requisitionId);
       _phase = RequisitionDetailPhase.content;
@@ -75,14 +83,24 @@ class RequisitionDetailViewModel extends ChangeNotifier {
       _phase = RequisitionDetailPhase.error;
       _errorMessage = 'No se pudo recuperar la requisa.';
     }
-    notifyListeners();
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> _reloadSilently() async {
+    try {
+      _detail = await _repository.getDetail(requisitionId);
+      _phase = RequisitionDetailPhase.content;
+      if (!_disposed) notifyListeners();
+    } catch (_) {
+      // The existing detail remains visible until a deliberate retry.
+    }
   }
 
   Future<void> importEvidence({required bool imagesOnly}) async {
-    if (_isImporting) return;
+    if (_isImporting || _disposed) return;
     _isImporting = true;
     _errorMessage = null;
-    notifyListeners();
+    if (!_disposed) notifyListeners();
     try {
       final result = await _repository.importFromDevice(
         requisitionId: requisitionId,
@@ -93,7 +111,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
       _errorMessage = 'No se pudo simular la carga del archivo.';
     }
     _isImporting = false;
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
   String _formatSize(int bytes) {
@@ -104,5 +122,12 @@ class RequisitionDetailViewModel extends ChangeNotifier {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
     }
     return '${(bytes / 1024).ceil()} KB';
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _changesSubscription?.cancel();
+    super.dispose();
   }
 }

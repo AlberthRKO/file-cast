@@ -18,7 +18,8 @@ abstract final class AppRoutePath {
   static const requisitions = '/requisitions';
   static const createRequisition = '/requisitions/new';
   static const requisitionDetail = '/requisitions/:requisitionId';
-  static const fileTransfer = '/requisitions/:requisitionId/file-transfer';
+  static const fileTransfer =
+      '/requisitions/:requisitionId/acquisitions/:sessionId/transfer';
   static const offline = '/offline';
   static const settings = '/settings';
   static const acquisitionConnect =
