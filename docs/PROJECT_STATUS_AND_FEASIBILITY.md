@@ -5,6 +5,7 @@ Actualización de arquitectura UI: 31 de agosto de 2026
 Limpieza de infraestructura Flutter: 31 de agosto de 2026
 Actualización de adquisición Android: 4 de septiembre de 2026
 Actualización de transferencia Android: 8 de septiembre de 2026
+Plan de adquisición USB iPhone: 10 de septiembre de 2026
 Alcance revisado: Flutter/Dart, Android nativo Kotlin, configuración iOS, documentación, historial Git reciente, mockups adjuntos y validadores locales.
 
 ## Dictamen ejecutivo
@@ -14,7 +15,11 @@ El proyecto es **viable por etapas**, con una diferencia esencial entre platafor
 - **Android objetivo -> Android inspector por USB:** viable para dispositivos desbloqueados, con USB debugging autorizado y Android 5.0/API 21 o superior para el flujo scrcpy actual. El repositorio ya demuestra detección USB, autenticación ADB, streaming H.264 y envío de eventos de control.
 - **Captura, grabación y transferencia Android ligadas a una requisa:** existen verticales locales que guardan PNG/MP4/archivos en almacenamiento privado, calculan SHA-256 y registran metadatos contra requisa/sesión. El browser inicia con ubicaciones comunes y puede recorrer `/sdcard` completo dentro de los permisos de `shell`. Aún faltan persistencia del catálogo, almacenamiento inmutable, ledger, sincronización y validación física.
 - **iPhone/iPad objetivo -> otro móvil inspector por cable, con espejo y control tipo scrcpy:** no es viable con APIs públicas de iOS como una réplica directa de ADB/scrcpy. No existe en el proyecto ni en los frameworks públicos revisados una interfaz equivalente para controlar otro iPhone por USB.
-- **iOS con alcance ajustado:** sí es viable mediante dos rutas: una app compañera en el equipo objetivo, con selección explícita de archivos y ReplayKit/red local; o una estación macOS conectada por cable para captura y adquisición autorizada. Ninguna de estas rutas ofrece control táctil remoto general del iPhone.
+- **iOS con alcance ajustado:** el producto descarta como flujo principal instalar
+  una app compañera o exigir una computadora. El mirror se investigará mediante
+  HDMI/UVC y la transferencia mediante una PoC futura de `libimobiledevice` en
+  un inspector Android USB Host. AFC solo expone partes autorizadas; no se
+  promete control táctil ni acceso completo al sistema de archivos.
 - **Uso probatorio/forense:** todavía no está listo. En el estado actual es una prueba técnica de conectividad y UI, no una herramienta de adquisición forense validada.
 
 La recomendación es construir primero un MVP Android de extremo a extremo y mantener iOS como un adaptador de capacidades distinto, sin prometer paridad falsa.
@@ -37,7 +42,7 @@ La recomendación es construir primero un MVP Android de extremo a extremo y man
 | Foto de la pantalla | `exec:screencap -p`, PNG privado, validación de firma y SHA-256 | Implementado como vertical local |
 | Grabación | GOP H.264 acotado, `MediaMuxer`, contador, MP4 privado y SHA-256 | Implementado; corrección de finalización pendiente de revalidación física |
 | Transferencia desde objetivo | Browser de almacenamiento compartido con ADB Sync `LIST`/`STAT`/`RECV`, preview temporal de imágenes/videos/audios/PDF/DOCX/texto, selección múltiple, progreso, cancelación, temporal privado y SHA-256 | Implementación local inicial; falta validación física, preview ofimático legado, persistencia probatoria y deduplicación |
-| Integración iOS | `AppDelegate` estándar, sin canal/plugin de adquisición | No implementado |
+| Integración iOS | `AppDelegate` estándar, sin canal/plugin de adquisición; plan USB/AFC documentado | No implementado; PoC diferida hasta cerrar Android |
 | Cadena de custodia | No hay ledger, manifiesto, hash por evidencia ni sellado | No implementado |
 | Pruebas | Solo helpers; no existen archivos `*_test.dart` | Ausentes |
 
@@ -156,11 +161,21 @@ No debe prometer acceso a datos privados de otras apps, bypass de bloqueo, root 
 
 ### iOS/iPadOS
 
-ReplayKit permite que **el propio equipo** grabe o transmita su pantalla, y los selectores PhotoKit/Document Picker permiten que el usuario elija fotos, videos o documentos. Multipeer Connectivity permite enviar mensajes, streams y recursos entre apps cercanas.
+La ausencia de una API pública tipo ADB/scrcpy y el sandbox de iOS mantienen el
+control remoto general por cable como **no viable**. Para File Cast se separan
+las capacidades:
 
-Para captura por cable, Apple documenta que QuickTime en macOS puede elegir un iPhone/iPad conectado como fuente y guardar el video. La confianza requiere desbloquear el dispositivo y aceptar “Confiar”. Esto respalda una arquitectura con estación Mac, no una implementación USB equivalente dentro de otro iPhone/Android.
+- mirror por salida HDMI y capturadora UVC;
+- transferencia futura por cable hacia un inspector Android con
+  `libimobiledevice`, usbmux, lockdownd y AFC;
+- backup lógico mediante MobileBackup2 únicamente como fase posterior y
+  evaluada por separado.
 
-Conclusión de ingeniería: la ausencia de una API pública tipo ADB/scrcpy y el sandbox de iOS hacen que el control remoto general por cable desde otra app móvil sea **no viable**. Esta conclusión es una inferencia basada en los frameworks públicos disponibles, no una afirmación sobre herramientas forenses propietarias.
+El target debe estar desbloqueado y aceptar confianza. El pairing puede alterar
+registros del dispositivo y debe documentarse. AFC/House Arrest no equivalen a
+un explorador total: exponen partes del contenido y documentos de aplicaciones
+que habiliten File Sharing. El plan completo, gates y riesgos están en
+[IOS_USB_LIBIMOBILEDEVICE_PLAN.md](IOS_USB_LIBIMOBILEDEVICE_PLAN.md).
 
 ## Criterio de salida de prototipo
 
@@ -187,4 +202,6 @@ El MVP Android estará listo para piloto cuando, como mínimo:
 - [Apple External Accessory](https://developer.apple.com/documentation/externalaccessory)
 - [Apple: captura de un iPhone/iPad conectado con QuickTime](https://support.apple.com/es-es/guide/quicktime-player/qtp356b55534/mac)
 - [Apple: confiar en un equipo conectado](https://support.apple.com/es-lamr/109054)
+- [libimobiledevice oficial](https://github.com/libimobiledevice/libimobiledevice)
+- [usbmuxd oficial](https://github.com/libimobiledevice/usbmuxd)
 - [NIST SP 800-101 Rev. 1 — Mobile Device Forensics](https://csrc.nist.gov/pubs/sp/800/101/r1/final)

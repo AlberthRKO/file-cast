@@ -1,6 +1,7 @@
 # Requisitos de hardware y matriz de compatibilidad
 
-Fecha: 27 de agosto de 2026
+Fecha inicial: 27 de agosto de 2026
+Actualización de estrategia iPhone: 10 de septiembre de 2026
 
 Este documento distingue el **dispositivo inspector** —donde corre File Cast— del **dispositivo objetivo** —del que se adquiere información—. “Compatible con equipos nuevos y antiguos” significa mantener una matriz explícita y validada, no garantizar cualquier combinación de teléfono, cable y sistema operativo.
 
@@ -9,9 +10,9 @@ Este documento distingue el **dispositivo inspector** —donde corre File Cast�
 | Modo | Inspector | Objetivo | Transporte | Mirror | Control | Archivos |
 |---|---|---|---|---|---|---|
 | A. Android directo | Android teléfono/tablet | Android 5.0+ | USB OTG/host + ADB | Sí | Sí, sujeto a fabricante | Shared storage accesible/selección |
-| B. iOS Companion | Android/iOS/tablet | iPhone/iPad con companion | Wi-Fi peer/local; Bluetooth para discovery | ReplayKit iniciado por usuario | No control general | PhotoKit/Document Picker |
-| C. iOS Mac Bridge | Android/iOS/web + servicio | iPhone/iPad confiado | USB hacia macOS | Sí, captura autorizada | No control general | Import/backup autorizado según alcance |
-| D. Video físico fallback | Android/tablet o Mac | Android/iOS con salida de video | HDMI -> capturadora UVC | Sí, solo imagen | No | No por el mismo enlace |
+| B. Mirror iPhone | Android/tablet con UVC | iPhone Lightning/USB-C | Salida de video -> HDMI -> UVC | Sí, solo imagen/audio | No | No por el mismo enlace |
+| C. Archivos iPhone experimental | Android USB Host | iPhone/iPad desbloqueado y confiado | USB OTG + usbmux/lockdownd/AFC | No | No | Solo ubicaciones publicadas por iOS |
+| D. Backup lógico iPhone futuro | Android USB Host | iPhone/iPad desbloqueado y confiado | USB + MobileBackup2 | No | No | Backup lógico, no filesystem físico |
 
 ## Kit mínimo para Android directo
 
@@ -113,55 +114,53 @@ Mantener Micro-USB OTG y, si el inventario lo justifica, Mini-USB. Verificar ind
 
 ## Kit para iPhone/iPad
 
-## Ruta recomendada: Mac Bridge por cable
+La estrategia vigente evita app compañera y computadora intermedia. Usa un
+inspector Android homologado y dos conexiones separadas: HDMI/UVC para mirror y
+USB de datos para la futura adquisición AFC. Consultar
+[IOS_USB_LIBIMOBILEDEVICE_PLAN.md](IOS_USB_LIBIMOBILEDEVICE_PLAN.md).
 
-### Estación
+### Kit de mirror
 
-- MacBook/Mac mini Apple silicon con macOS aprobado por el laboratorio.
-- 16 GiB RAM mínimo; 24–32 GiB recomendado si se graba, hashea y sube en paralelo.
-- SSD interno de 512 GB mínimo; 1 TB o más recomendado.
-- SSD externo cifrado de 1–2 TB para staging/backup.
-- UPS para estación fija o batería saludable para portátil.
-- cuenta operativa sin privilegios administrativos para uso diario y custodia de claves separada.
+Para Lightning:
 
-### Cables Apple
+- Apple Lightning Digital AV Adapter original;
+- cable HDMI corto certificado;
+- capturadora HDMI -> UVC homologada;
+- cable de salida USB-C de la capturadora hacia el inspector;
+- hub USB-C/OTG alimentado si la matriz confirma que mantiene UVC estable.
 
-- USB-C a USB-C con datos para iPhone 15 y posteriores/otros equipos USB-C.
-- USB-C a Lightning certificado para equipos Lightning.
-- USB-A a Lightning certificado para estaciones/hubs antiguos.
-- 30-pin Apple solo si una matriz legacy real lo exige; no asumir que QuickTime/captura moderna funcionará con modelos que quedaron en versiones antiguas de iOS.
-- hub USB-C alimentado si se conectan SSD y dispositivo simultáneamente.
+Para USB-C:
 
-El target debe desbloquearse y aceptar “Confiar”. El procedimiento debe registrar qué estación fue confiada y revocar/restablecer la relación cuando corresponda.
+- adaptador USB-C -> HDMI o cable activo compatible con salida de video;
+- cable HDMI corto certificado;
+- capturadora HDMI -> UVC homologada;
+- cable USB-C hacia el inspector.
 
-### Alcance del Mac Bridge
+Una capturadora USB-C a USB-C que reciba DisplayPort puede reducir adaptadores
+en iPhone USB-C, pero no reemplaza el Digital AV Adapter en Lightning. El canal
+solo transporta imagen/audio y puede mostrar negro ante contenido protegido.
 
-Apple documenta que QuickTime puede capturar lo mostrado por un iPhone/iPad conectado y guardarlo como video. El servicio productivo puede usar una integración macOS equivalente y autorizada, pero debe validarse en cada versión de macOS/iOS y no basarse en automatización frágil de la UI de QuickTime.
+### Kit de transferencia de archivos experimental
 
-No comprar hardware asumiendo que este camino permitirá inyectar touch/control remoto. El objetivo es captura y transferencia autorizada.
+- inspector Android con USB Host/OTG real;
+- cable Lightning de datos original o certificado MFi;
+- cable USB-C de datos certificado para iPhone/iPad USB-C;
+- adaptador USB-C OTG a USB-A cuando el cable lo requiera;
+- hub USB-C alimentado para probar estabilidad y energía;
+- almacenamiento privado suficiente y SSD cifrado para exportación controlada.
 
-## Ruta iOS Companion
+El target debe desbloquearse y aceptar “Confiar”. Este enlace no promete todas
+las carpetas: AFC y House Arrest exponen únicamente ubicaciones que iOS permita.
+La app compañera y Mac Bridge quedan descartados como flujo principal por
+decisión de producto, aunque permanecen como referencias técnicas históricas.
 
-Hardware:
+No se asumirá mirror y transferencia simultáneos por el único puerto del iPhone.
+El procedimiento inicial cambiará del adaptador de video al cable USB de datos.
+MHL no participa en ningún flujo iPhone.
 
-- iPhone/iPad objetivo dentro de la versión mínima que finalmente soporte el companion.
-- inspector Android/iOS/tablet con Wi-Fi y Bluetooth.
-- router Wi-Fi 6/6E de campo, aislado de internet si la operación es offline.
-- power bank/cargadores para ambos equipos.
-- QR impreso o mostrado por el inspector para emparejamiento de sesión.
+## Captura HDMI/UVC para mirror iPhone
 
-Multipeer Connectivity puede usar Wi-Fi local/peer-to-peer y Bluetooth para conectividad cercana. Aun así, la matriz debe medir rendimiento real; para video estable es preferible una red Wi-Fi dedicada y limpia.
-
-La persona en el target debe:
-
-- abrir la app compañera;
-- aceptar el emparejamiento;
-- seleccionar archivos con los controles del sistema;
-- iniciar ReplayKit desde el selector de broadcast cuando se requiera pantalla.
-
-## Captura HDMI/UVC como fallback
-
-Útil cuando solo se necesita evidencia visual y el USB de datos no es viable:
+Es el canal de mirror seleccionado cuando el objetivo es un iPhone:
 
 - adaptador de salida de video original/certificado adecuado al target;
 - cable HDMI corto;
@@ -244,12 +243,14 @@ Un accesorio solo pasa a operación si el resultado es repetible con la combinac
 
 - 2 inspectores Android homologados.
 - 1 tablet Android homologada para el layout de dos paneles.
-- 1 Mac Bridge homologada si iOS entra al alcance.
 - 2 unidades de cada cable aprobado.
 - 2 hubs PD aprobados.
 - 2 SSD cifrados con inventario y custodia.
 - 2 power banks PD y cargadores.
-- 1 capturadora UVC aprobada si se adopta el fallback.
+- 1 capturadora UVC aprobada para la PoC de mirror iPhone.
+- 1 Apple Lightning Digital AV Adapter original.
+- 1 adaptador USB-C a HDMI homologado.
+- cables Lightning y USB-C de datos para la PoC AFC.
 - etiquetas inviolables, bolsas, adaptadores y kit de limpieza de puertos.
 
 ## Fuentes verificadas
@@ -262,3 +263,6 @@ Un accesorio solo pasa a operación si el resultado es repetible con la combinac
 - [Apple ReplayKit](https://developer.apple.com/documentation/replaykit)
 - [Apple Multipeer Connectivity](https://developer.apple.com/documentation/MultipeerConnectivity)
 - [Apple External Accessory/MFi](https://developer.apple.com/documentation/externalaccessory)
+- [libimobiledevice oficial](https://github.com/libimobiledevice/libimobiledevice)
+- [usbmuxd oficial](https://github.com/libimobiledevice/usbmuxd)
+- [libusb en Android](https://github.com/libusb/libusb/tree/master/android)

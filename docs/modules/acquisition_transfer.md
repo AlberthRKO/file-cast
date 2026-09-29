@@ -86,6 +86,22 @@ android/app/src/main/kotlin/com/fiscalia/file_cast/sync/
 
 `AppCardSurface`, `AppActionButton` y `FolderBackground` permanecen en `ui/core/widgets` porque representan contratos visuales compartidos. Breadcrumbs, filas remotas, selección y progreso permanecen dentro del módulo por depender de su dominio.
 
+## Extensión futura para iPhone
+
+La transferencia iPhone no reutilizará ADB ni requerirá instalar una aplicación
+en el target. La PoC futura usará un inspector Android USB Host con
+`libimobiledevice`, usbmux, lockdownd y AFC, siempre con el iPhone desbloqueado y
+la confianza aceptada.
+
+Se podrán reutilizar la composición visual del browser, los previews y el
+pipeline local `.part` -> SHA-256 -> `fsync` -> evidencia. La detección, pairing,
+raíces remotas y lectura serán implementaciones nativas separadas detrás de
+`IosUsbAcquisitionRepository`; no se agregarán condicionales iOS al cliente ADB.
+
+El alcance, arquitectura, hardware, fases y gates están definidos en
+[IOS_USB_LIBIMOBILEDEVICE_PLAN.md](../IOS_USB_LIBIMOBILEDEVICE_PLAN.md). Su
+implementación queda diferida hasta cerrar y validar el vertical Android.
+
 ## Protocolo y almacenamiento
 
 - `LIST` obtiene entradas de directorio y sus metadatos básicos.
