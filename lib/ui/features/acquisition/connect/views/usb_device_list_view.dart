@@ -190,7 +190,7 @@ class _DeviceContent extends StatelessWidget {
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       itemCount: viewModel.devices.length,
-      separatorBuilder: (_, _) => const SizedBox(height: AppSpace.s),
+      separatorBuilder: (context, index) => const SizedBox(height: AppSpace.s),
       itemBuilder: (context, index) {
         final device = viewModel.devices[index];
         final selected = viewModel.selectedDeviceId == device.id;

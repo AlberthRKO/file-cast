@@ -12,6 +12,18 @@ abstract interface class RequisitionDetailRepository {
     String? localPath,
     String? sha256,
     String? sourcePath,
+    String? sessionId,
+    String? mimeType,
+    String? acquisitionMethod,
+    bool encrypted = false,
+    String? encryptionAlgorithm,
+    int? encryptionVersion,
+    int? plaintextByteLength,
+    String? plaintextSha256,
+    String? aadHash,
+    String? wrappedKey,
+    int? keyVersion,
+    bool preserveSource = false,
   });
   Future<RequisitionDetail> addImportedEvidenceBatch({
     required String requisitionId,
@@ -20,5 +32,6 @@ abstract interface class RequisitionDetailRepository {
   Future<RequisitionDetail?> importFromDevice({
     required String requisitionId,
     required bool imagesOnly,
+    String? sessionId,
   });
 }

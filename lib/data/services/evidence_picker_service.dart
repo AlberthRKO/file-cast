@@ -10,16 +10,20 @@ final class PickedEvidence {
     required this.type,
     required this.sizeLabel,
     required this.byteLength,
+    this.localPath,
+    this.mimeType,
   });
   final String name;
   final RequisitionEvidenceType type;
   final String sizeLabel;
   final int byteLength;
+  final String? localPath;
+  final String? mimeType;
 }
 
 class EvidencePickerService {
   EvidencePickerService({ImagePicker? imagePicker})
-    : _imagePicker = imagePicker ?? ImagePicker();
+      : _imagePicker = imagePicker ?? ImagePicker();
 
   final ImagePicker _imagePicker;
 
@@ -32,6 +36,8 @@ class EvidencePickerService {
       type: RequisitionEvidenceType.image,
       sizeLabel: _sizeLabel(bytes),
       byteLength: bytes,
+      localPath: image.path,
+      mimeType: 'image/${image.path.toLowerCase().split('.').last}',
     );
   }
 
@@ -51,7 +57,8 @@ class EvidencePickerService {
       'oga' ||
       'opus' ||
       'flac' ||
-      'amr' => RequisitionEvidenceType.audio,
+      'amr' =>
+        RequisitionEvidenceType.audio,
       'pdf' ||
       'doc' ||
       'docx' ||
@@ -61,7 +68,8 @@ class EvidencePickerService {
       'csv' ||
       'json' ||
       'xml' ||
-      'log' => RequisitionEvidenceType.document,
+      'log' =>
+        RequisitionEvidenceType.document,
       _ => RequisitionEvidenceType.other,
     };
     return PickedEvidence(
@@ -69,6 +77,8 @@ class EvidencePickerService {
       type: type,
       sizeLabel: _sizeLabel(file.size),
       byteLength: file.size,
+      localPath: file.path,
+      mimeType: _mimeTypeFor(extension),
     );
   }
 
@@ -77,4 +87,21 @@ class EvidencePickerService {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
     return '${(bytes / 1024).ceil()} KB';
   }
+
+  String _mimeTypeFor(String? extension) => switch (extension) {
+        'jpg' || 'jpeg' => 'image/jpeg',
+        'png' => 'image/png',
+        'webp' => 'image/webp',
+        'mp4' => 'video/mp4',
+        'mov' => 'video/quicktime',
+        'mkv' => 'video/x-matroska',
+        'mp3' => 'audio/mpeg',
+        'wav' => 'audio/wav',
+        'm4a' => 'audio/mp4',
+        'pdf' => 'application/pdf',
+        'doc' => 'application/msword',
+        'docx' =>
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        _ => 'application/octet-stream',
+      };
 }

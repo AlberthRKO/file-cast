@@ -10,12 +10,16 @@ import 'package:file_cast/data/repositories/requisition_creation_repository_impl
 import 'package:file_cast/data/services/requisition_creation_service.dart';
 import 'package:file_cast/data/services/android_acquisition_platform_service.dart';
 import 'package:file_cast/data/services/evidence_picker_service.dart';
+import 'package:file_cast/data/services/evidence_crypto_service.dart';
+import 'package:file_cast/data/services/evidence_sync_service.dart';
+import 'package:file_cast/data/services/local_evidence_database_service.dart';
 import 'package:file_cast/data/services/remote_document_preview_service.dart';
 import 'package:file_cast/domain/repositories/auth_repository.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
+import 'package:file_cast/domain/services/evidence_decryption_service.dart';
 import 'package:file_cast/ui/core/navigation/app_router.dart';
 import 'package:file_cast/ui/core/theme/theme_controller.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
@@ -32,14 +36,26 @@ class DependencyInjection {
         create: (_) => const FlutterSecureStorage(),
       ),
       ProxyProvider<FlutterSecureStorage, SecureStorageService>(
-        update: (_, storage, _) => SecureStorageService(storage),
+        update: (_, storage, previous) => SecureStorageService(storage),
       ),
-      Provider<Http>(
-        create: (_) => Http(
+      ProxyProvider<SecureStorageService, EvidenceCryptoService>(
+        update: (_, storage, previous) =>
+            EvidenceCryptoService(storage: storage),
+      ),
+      ProxyProvider<SecureStorageService, LocalEvidenceDatabaseService>(
+        update: (_, storage, previous) =>
+            LocalEvidenceDatabaseService(storage: storage),
+      ),
+      ProxyProvider<EvidenceCryptoService, EvidenceDecryptionService>(
+        update: (_, crypto, previous) => crypto,
+      ),
+      ProxyProvider<SecureStorageService, Http>(
+        update: (_, storage, previous) => Http(
           client: http.Client(),
           baseUrl: Config.baseUrl,
           userAgent: 'FileCast',
           ip: '',
+          tokenProvider: storage.getToken,
         ),
       ),
       Provider<AuthRepository>(
@@ -54,18 +70,38 @@ class DependencyInjection {
       Provider<RemoteDocumentPreviewService>(
         create: (_) => const RemoteDocumentPreviewService(),
       ),
-      Provider<RequisitionDetailRepository>(
-        create: (context) => InMemoryRequisitionDetailRepository(
-          pickerService: context.read<EvidencePickerService>(),
-        ),
+      ProxyProvider3<
+        EvidencePickerService,
+        EvidenceCryptoService,
+        LocalEvidenceDatabaseService,
+        RequisitionDetailRepository
+      >(
+        update: (_, picker, crypto, database, previous) =>
+            InMemoryRequisitionDetailRepository(
+              pickerService: picker,
+              cryptoService: crypto,
+              database: database,
+            ),
       ),
       ProxyProvider<Http, RequisitionCreationService>(
-        update: (_, http, _) => RequisitionCreationService(http: http),
+        update: (_, http, previous) => RequisitionCreationService(http: http),
       ),
       ProxyProvider<RequisitionCreationService, RequisitionCreationRepository>(
-        update: (_, service, _) => RequisitionCreationRepositoryImpl(
+        update: (_, service, previous) => RequisitionCreationRepositoryImpl(
           service: service,
         ),
+      ),
+      ProxyProvider3<
+        Http,
+        LocalEvidenceDatabaseService,
+        EvidenceCryptoService,
+        EvidenceSyncService
+      >(
+        update: (_, http, database, crypto, previous) => EvidenceSyncService(
+          http: http,
+          database: database,
+          crypto: crypto,
+        )..start(),
       ),
       Provider<AdbClient>(create: (_) => AdbClient()),
       ProxyProvider<AdbClient, AndroidAcquisitionPlatformService>(
@@ -73,10 +109,11 @@ class DependencyInjection {
             previousService ??
             AndroidAcquisitionPlatformService(adbClient: adbClient),
       ),
-      ProxyProvider3<
+      ProxyProvider4<
         AndroidAcquisitionPlatformService,
         RequisitionDetailRepository,
         RemoteDocumentPreviewService,
+        EvidenceSyncService,
         AcquisitionRepository
       >(
         update:
@@ -85,6 +122,7 @@ class DependencyInjection {
               platformService,
               detailRepository,
               documentPreviewService,
+              syncService,
               previousRepository,
             ) =>
                 previousRepository ??
@@ -92,6 +130,7 @@ class DependencyInjection {
                   platformService: platformService,
                   detailRepository: detailRepository,
                   documentPreviewService: documentPreviewService,
+                  syncService: syncService,
                 ),
       ),
       ChangeNotifierProvider<AuthSessionController>(

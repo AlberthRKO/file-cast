@@ -311,7 +311,7 @@ class _ImagePreviewState extends State<_ImagePreview> {
       child: Image(
         image: _provider,
         fit: BoxFit.contain,
-        errorBuilder: (_, _, _) => const _PreviewFailure(
+        errorBuilder: (context, error, stackTrace) => const _PreviewFailure(
           message: 'Android no pudo decodificar esta imagen.',
         ),
       ),
@@ -332,7 +332,8 @@ class _DocxPreview extends StatelessWidget {
       child: ListView.separated(
         padding: const EdgeInsets.all(AppSpace.m),
         itemCount: pages.length,
-        separatorBuilder: (_, _) => const SizedBox(height: AppSpace.m),
+        separatorBuilder: (context, index) =>
+            const SizedBox(height: AppSpace.m),
         itemBuilder: (context, index) => Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 720),

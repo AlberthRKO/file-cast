@@ -51,7 +51,7 @@ GoRouter createAppRouter({
     routes: [
       GoRoute(
         path: AppRoutePath.root,
-        redirect: (_, _) => authSessionController.isAuthenticated
+        redirect: (context, state) => authSessionController.isAuthenticated
             ? AppRoutePath.requisitions
             : AppRoutePath.started,
       ),

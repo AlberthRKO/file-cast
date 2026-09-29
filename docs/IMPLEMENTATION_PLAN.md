@@ -1,5 +1,11 @@
 # Plan de implementación de File Cast
 
+El flujo de cifrado local y outbox está documentado en
+[CLIENT_SIDE_ENCRYPTION.md](CLIENT_SIDE_ENCRYPTION.md). La validación Flutter
+debe ejecutarse con el SDK fijado por el proyecto; durante esta tarea se agregó
+la prueba unitaria del servicio, pero no se ejecutan comandos Flutter por las
+restricciones operativas del repositorio.
+
 Este documento convierte el objetivo del producto y los tres mockups en un plan técnico. Debe leerse junto con [PROJECT_STATUS_AND_FEASIBILITY.md](PROJECT_STATUS_AND_FEASIBILITY.md), [HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md), [IOS_USB_LIBIMOBILEDEVICE_PLAN.md](IOS_USB_LIBIMOBILEDEVICE_PLAN.md), `AGENTS.md` y las skills Flutter del repositorio. Para trabajar una vista en otra sesión puede usarse [SINGLE_VIEW_REFACTOR_PROMPT.md](SINGLE_VIEW_REFACTOR_PROMPT.md).
 
 > Límite de ejecución: las pruebas, compilaciones y validadores mencionados en este plan son criterios de aceptación a cargo del propietario o de una tarea futura que los autorice expresamente. Las sesiones de reestructuración deben limitarse al código y a la inspección del diff.
@@ -15,8 +21,8 @@ File Cast permitirá que un operador autorizado:
 5. conecte un dispositivo objetivo compatible;
 6. vea su pantalla y, donde la plataforma lo permita, interactúe con ella;
 7. capture una imagen, inicie/detenga una grabación o importe archivos seleccionados;
-8. almacene cada evidencia localmente con integridad verificable;
-9. sincronice al servicio cuando haya conectividad;
+8. almacene cada evidencia localmente como FCE cifrado con integridad verificable;
+9. sincronice la outbox cifrada al servicio cuando haya conectividad;
 10. finalice y selle la requisa sin perder el historial de custodia.
 
 No forma parte del alcance base: bypass de bloqueo, explotación, root/jailbreak, extracción física, acceso a datos privados de terceros ni control general de iOS desde otro móvil.
@@ -64,9 +70,12 @@ definida en [IOS_USB_LIBIMOBILEDEVICE_PLAN.md](IOS_USB_LIBIMOBILEDEVICE_PLAN.md)
 
 Nunca editar el archivo original. Recortes, compresiones, thumbnails, OCR o anotaciones crean derivados con su propio hash y referencia al original.
 
-### 5. Offline-first
+### 5. Offline-first y cifrado local
 
-Crear y consultar requisas asignadas, capturar evidencia y mantener el ledger debe funcionar sin internet. La sincronización será un proceso idempotente y reanudable.
+Crear y consultar requisas asignadas, capturar evidencia y mantener el ledger
+debe funcionar sin internet. Las evidencias se cifran en el dispositivo, se
+guardan en SQLite SQLCipher y la sincronización consume una outbox idempotente y
+reanudable. El backend nunca recibe el plano.
 
 ## Arquitectura objetivo
 

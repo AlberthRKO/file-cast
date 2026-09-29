@@ -146,7 +146,8 @@ class RemoteLocationList extends StatelessWidget {
     if (!grid) {
       return ListView.separated(
         itemCount: locations.length,
-        separatorBuilder: (_, _) => const SizedBox(height: AppSpace.s),
+        separatorBuilder: (context, index) =>
+            const SizedBox(height: AppSpace.s),
         itemBuilder: (_, index) => RemoteLocationCard(
           location: locations[index],
           onTap: () => onOpen(locations[index]),
@@ -306,7 +307,7 @@ class RemoteFileList extends StatelessWidget {
   Widget build(BuildContext context) => ListView.separated(
     padding: const EdgeInsets.only(bottom: AppSpace.xxl),
     itemCount: entries.length,
-    separatorBuilder: (_, _) => const SizedBox(height: AppSpace.s),
+    separatorBuilder: (context, index) => const SizedBox(height: AppSpace.s),
     itemBuilder: (_, index) {
       final file = entries[index];
       final previewable = canPreview(file);

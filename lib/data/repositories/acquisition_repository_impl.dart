@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:file_cast/data/services/android_acquisition_platform_service.dart';
+import 'package:file_cast/data/services/evidence_sync_service.dart';
 import 'package:file_cast/data/services/remote_document_preview_service.dart';
 import 'package:file_cast/domain/models/acquisition.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
@@ -10,13 +13,16 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
     required AndroidAcquisitionPlatformService platformService,
     required RequisitionDetailRepository detailRepository,
     required RemoteDocumentPreviewService documentPreviewService,
-  }) : _platformService = platformService,
-       _detailRepository = detailRepository,
-       _documentPreviewService = documentPreviewService;
+    EvidenceSyncService? syncService,
+  })  : _platformService = platformService,
+        _detailRepository = detailRepository,
+        _documentPreviewService = documentPreviewService,
+        _syncService = syncService;
 
   final AndroidAcquisitionPlatformService _platformService;
   final RequisitionDetailRepository _detailRepository;
   final RemoteDocumentPreviewService _documentPreviewService;
+  final EvidenceSyncService? _syncService;
 
   @override
   Stream<void> get deviceChanges => _platformService.deviceChanges;
@@ -41,40 +47,44 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
     required AcquisitionDevice device,
     required String requisitionId,
     required String sessionId,
-  }) => _platformService.connectAndStart(
-    device: device,
-    requisitionId: requisitionId,
-    sessionId: sessionId,
-  );
+  }) =>
+      _platformService.connectAndStart(
+        device: device,
+        requisitionId: requisitionId,
+        sessionId: sessionId,
+      );
 
   @override
   Future<AcquisitionMirrorSession?> activeSession({
     required String requisitionId,
     required String sessionId,
-  }) => _platformService.activeSession(
-    requisitionId: requisitionId,
-    sessionId: sessionId,
-  );
+  }) =>
+      _platformService.activeSession(
+        requisitionId: requisitionId,
+        sessionId: sessionId,
+      );
 
   @override
   Future<AcquisitionConnectionSession> connectForTransfer({
     required AcquisitionDevice device,
     required String requisitionId,
     required String sessionId,
-  }) => _platformService.connectForTransfer(
-    device: device,
-    requisitionId: requisitionId,
-    sessionId: sessionId,
-  );
+  }) =>
+      _platformService.connectForTransfer(
+        device: device,
+        requisitionId: requisitionId,
+        sessionId: sessionId,
+      );
 
   @override
   Future<AcquisitionConnectionSession?> activeConnection({
     required String requisitionId,
     required String sessionId,
-  }) => _platformService.activeConnection(
-    requisitionId: requisitionId,
-    sessionId: sessionId,
-  );
+  }) =>
+      _platformService.activeConnection(
+        requisitionId: requisitionId,
+        sessionId: sessionId,
+      );
 
   @override
   Future<RequisitionDetail> getRequisitionDetail(String requisitionId) =>
@@ -91,6 +101,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
     );
     return _register(
       requisitionId: requisitionId,
+      sessionId: sessionId,
       captured: captured,
       type: RequisitionEvidenceType.image,
     );
@@ -116,6 +127,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
     final captured = await _platformService.stopRecording();
     return _register(
       requisitionId: requisitionId,
+      sessionId: sessionId,
       captured: captured,
       type: RequisitionEvidenceType.video,
     );
@@ -123,10 +135,11 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
 
   Future<RequisitionDetail> _register({
     required String requisitionId,
+    required String sessionId,
     required CapturedEvidence captured,
     required RequisitionEvidenceType type,
-  }) {
-    return _detailRepository.addImportedEvidence(
+  }) async {
+    final detail = await _detailRepository.addImportedEvidence(
       requisitionId: requisitionId,
       name: captured.name,
       type: type,
@@ -135,7 +148,14 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
       localPath: captured.localPath,
       sha256: captured.sha256,
       sourcePath: captured.sourcePath,
+      sessionId: sessionId,
+      mimeType: captured.mimeType ?? _mimeTypeFor(type, captured.name),
+      acquisitionMethod: type == RequisitionEvidenceType.image
+          ? 'SCREEN_CAPTURE'
+          : 'SCREEN_RECORDING',
     );
+    unawaited(_syncService?.syncPending());
+    return detail;
   }
 
   @override
@@ -171,10 +191,11 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
   Future<void> discardRemoteFilePreview({
     required String requisitionId,
     required String sessionId,
-  }) => _platformService.discardRemoteFilePreview(
-    requisitionId: requisitionId,
-    sessionId: sessionId,
-  );
+  }) =>
+      _platformService.discardRemoteFilePreview(
+        requisitionId: requisitionId,
+        sessionId: sessionId,
+      );
 
   @override
   Future<FileTransferResult> transferRemoteFiles({
@@ -200,11 +221,18 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
                 localPath: captured.localPath,
                 sha256: captured.sha256,
                 sourcePath: captured.sourcePath,
+                sessionId: sessionId,
+                mimeType: _mimeTypeFor(
+                  _evidenceType(captured.name),
+                  captured.name,
+                ),
+                acquisitionMethod: 'DEVICE_TRANSFER',
               ),
             )
             .toList(growable: false),
       );
     }
+    unawaited(_syncService?.syncPending());
     return result;
   }
 
@@ -257,6 +285,23 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
       return RequisitionEvidenceType.document;
     }
     return RequisitionEvidenceType.other;
+  }
+
+  String _mimeTypeFor(RequisitionEvidenceType type, String name) {
+    final extension = name.toLowerCase().split('.').last;
+    return switch (type) {
+      RequisitionEvidenceType.image => extension == 'png'
+          ? 'image/png'
+          : extension == 'webp'
+              ? 'image/webp'
+              : 'image/jpeg',
+      RequisitionEvidenceType.video =>
+        extension == 'mov' ? 'video/quicktime' : 'video/mp4',
+      RequisitionEvidenceType.audio => 'audio/mpeg',
+      RequisitionEvidenceType.document =>
+        extension == 'pdf' ? 'application/pdf' : 'application/octet-stream',
+      RequisitionEvidenceType.other => 'application/octet-stream',
+    };
   }
 
   String _formatSize(int bytes) {

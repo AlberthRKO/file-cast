@@ -105,10 +105,11 @@ class RequisitionDetailViewModel extends ChangeNotifier {
       final result = await _repository.importFromDevice(
         requisitionId: requisitionId,
         imagesOnly: imagesOnly,
+        sessionId: _detail?.sessionId,
       );
       if (result != null) _detail = result;
     } catch (_) {
-      _errorMessage = 'No se pudo simular la carga del archivo.';
+      _errorMessage = 'No se pudo registrar la evidencia localmente.';
     }
     _isImporting = false;
     if (!_disposed) notifyListeners();

@@ -71,7 +71,7 @@ class RequisitionTable extends StatelessWidget {
                 parent: BouncingScrollPhysics(),
               ),
               itemCount: items.length + (hasMore ? 1 : 0),
-              separatorBuilder: (_, _) => const Divider(height: 1),
+              separatorBuilder: (context, index) => const Divider(height: 1),
               itemBuilder: (context, index) {
                 if (index == items.length) {
                   return const _LoadingMoreRow();
