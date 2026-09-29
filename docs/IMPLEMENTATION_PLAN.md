@@ -1,6 +1,6 @@
 # Plan de implementación de File Cast
 
-Este documento convierte el objetivo del producto y los tres mockups en un plan técnico. Debe leerse junto con [PROJECT_STATUS_AND_FEASIBILITY.md](PROJECT_STATUS_AND_FEASIBILITY.md), [HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md), `AGENTS.md` y las skills Flutter del repositorio. Para trabajar una vista en otra sesión puede usarse [SINGLE_VIEW_REFACTOR_PROMPT.md](SINGLE_VIEW_REFACTOR_PROMPT.md).
+Este documento convierte el objetivo del producto y los tres mockups en un plan técnico. Debe leerse junto con [PROJECT_STATUS_AND_FEASIBILITY.md](PROJECT_STATUS_AND_FEASIBILITY.md), [HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md), [IOS_USB_LIBIMOBILEDEVICE_PLAN.md](IOS_USB_LIBIMOBILEDEVICE_PLAN.md), `AGENTS.md` y las skills Flutter del repositorio. Para trabajar una vista en otra sesión puede usarse [SINGLE_VIEW_REFACTOR_PROMPT.md](SINGLE_VIEW_REFACTOR_PROMPT.md).
 
 > Límite de ejecución: las pruebas, compilaciones y validadores mencionados en este plan son criterios de aceptación a cargo del propietario o de una tarea futura que los autorice expresamente. Las sesiones de reestructuración deben limitarse al código y a la inspección del diff.
 
@@ -37,20 +37,28 @@ canControl
 canCaptureScreenshot
 canRecordScreen
 canBrowseSharedFiles
-canReceiveUserSelectedFiles
+canBrowseIosAfc
+canBrowseIosFileSharingApps
+canCreateIosLogicalBackup
 canCaptureAudio
-requiresCompanionApp
-requiresDesktopBridge
+requiresUnlock
+requiresTrust
 ```
 
 La UI habilitará acciones según estas capacidades. Así iOS no necesita simular funciones que el sistema no ofrece.
 
-### 3. Dos rutas iOS
+### 3. Ruta iOS sin companion ni computadora
 
-- **Ruta A — app compañera:** el usuario instala/abre File Cast Companion en el iPhone/iPad, elige archivos con PhotoKit/Document Picker y, si corresponde, inicia una transmisión ReplayKit desde el selector del sistema. Los datos viajan cifrados por red local a la sesión de requisa.
-- **Ruta B — estación macOS:** el dispositivo se conecta por cable a una Mac autorizada. Un servicio local de adquisición captura pantalla/importa datos autorizados y entrega los artefactos a la app/API de la requisa.
+La decisión de producto vigente separa dos canales:
 
-La Ruta A es más móvil y explícita; la Ruta B se aproxima al requisito de cable y cubre mejor modelos iOS sin instalar una app, pero agrega hardware y un servicio de escritorio.
+- **Mirror:** salida de video del iPhone -> HDMI -> capturadora UVC -> inspector.
+- **Archivos:** iPhone desbloqueado y confiado -> USB OTG -> inspector Android,
+  mediante una futura PoC con `libimobiledevice`, usbmux, lockdownd y AFC.
+
+No se promete acceso completo al sistema de archivos, control táctil, bypass,
+jailbreak ni operación simultánea de video y datos por el único puerto del
+iPhone. La implementación permanece diferida hasta concluir Android y está
+definida en [IOS_USB_LIBIMOBILEDEVICE_PLAN.md](IOS_USB_LIBIMOBILEDEVICE_PLAN.md).
 
 ### 4. Evidencia inmutable; anotaciones separadas
 
@@ -213,7 +221,8 @@ La cadena `previousEventHash -> eventHash` hace evidentes alteraciones. El servi
 - `EncryptedEvidenceFileService`
 - `HashService`
 - `AndroidAcquisitionPlatformService`
-- `IosCompanionPlatformService` o `MacBridgeService`
+- `IosUsbAcquisitionPlatformService` (PoC futura en inspector Android)
+- `UvcVideoCapturePlatformService` (mirror iPhone, futuro)
 - `ConnectivityService`
 - `BackgroundSyncService`
 
@@ -324,29 +333,33 @@ Dos UX posibles:
 
 ## Implementación iOS
 
-### Ruta A — Companion
+### Mirror por HDMI/UVC
 
-1. Crear target iOS y Broadcast Upload Extension.
-2. Mostrar el selector de broadcast del sistema; el usuario inicia/detiene la captura.
-3. Emparejar inspector y objetivo mediante QR/código efímero.
-4. Autenticar la sesión con claves efímeras y cifrado en tránsito.
-5. Transmitir segmentos con números de secuencia y hash.
-6. Usar PhotoKit/Document Picker para archivos seleccionados.
-7. Registrar interrupciones, background y permisos denegados como eventos de sesión.
+1. Obtener la salida HDMI mediante el adaptador correspondiente a Lightning o
+   USB-C.
+2. Recibirla con una capturadora UVC homologada.
+3. Implementar la captura UVC en el inspector sin mezclarla con ADB/scrcpy.
+4. Registrar modelo de adaptador/capturadora, resolución, FPS y limitaciones en
+   la sesión.
+5. Guardar capturas y grabaciones mediante el pipeline probatorio común.
 
-Limitaciones visibles en UI: requiere interacción del usuario, puede haber contenido protegido/no capturable, no permite inyectar toques generales y el browsing/anuncio local se interrumpe en background.
+Este canal solo transporta imagen/audio. No controla el iPhone ni transfiere sus
+archivos y puede recibir una pantalla negra ante contenido protegido.
 
-### Ruta B — Mac Bridge
+### Transferencia USB con libimobiledevice
 
-1. Servicio macOS firmado, registrado como estación de adquisición.
-2. Detectar dispositivo confiado y desbloqueado.
-3. Capturar el feed que macOS expone para el dispositivo conectado.
-4. Importar artefactos autorizados a un staging cifrado.
-5. Calcular hash y emitir un manifiesto firmado por la estación.
-6. Enviar a la API o a la app inspector mediante canal autenticado.
-7. Asociar todo a `requisitionId` y `acquisitionSessionId`.
+1. Usar el inspector Android como USB Host, sin Mac/PC ni app en el target.
+2. Obtener permiso con `UsbManager` y adaptar el descriptor autorizado a la capa
+   nativa.
+3. Implementar usbmux, lockdownd y pairing/trust sin root.
+4. Almacenar los pair records cifrados mediante Android Keystore.
+5. Exponer AFC general y House Arrest únicamente en modo lectura.
+6. Reutilizar preview, selección, `.part`, hash, `fsync` y registro de evidencia.
+7. Evaluar MobileBackup2 en una fase opcional y con ADR separado.
 
-La primera PoC iOS debe probar solo: detectar/trust, obtener video, crear MP4, importar un archivo seleccionado, hash y registro. Si falla esa prueba en la matriz requerida, detener la promesa de cable directo y usar solo Companion.
+El alcance, arquitectura, fases, gates, riesgos y matriz están especificados en
+[IOS_USB_LIBIMOBILEDEVICE_PLAN.md](IOS_USB_LIBIMOBILEDEVICE_PLAN.md). La PoC no
+comenzará hasta cerrar el vertical Android actual.
 
 ## API y sincronización
 
@@ -480,15 +493,16 @@ Salida: imágenes/videos elegidos aparecen como evidencias verificadas.
 
 Salida: prueba offline -> reconnect -> sync -> seal sin pérdida ni duplicado.
 
-### Fase 7 — PoC iOS y decisión de ruta
+### Fase 7 — PoC iOS USB y UVC
 
-- PoC Companion;
-- PoC Mac Bridge;
+- PoC HDMI/UVC para mirror en Lightning y USB-C;
+- PoC `libimobiledevice` en inspector Android para pairing y AFC de solo lectura;
+- gate legal de LGPL/GPL y SBOM del stack nativo;
 - pruebas en iPhone Lightning/USB-C y versiones soportadas;
-- documentar capacidades reales;
-- seleccionar una o ambas rutas.
+- documentar capacidades reales y cambios inevitables por pairing;
+- evaluar MobileBackup2 solamente después de aprobar AFC.
 
-Salida: ADR iOS con demostración repetible; no continuar si el criterio no se cumple.
+Salida: ADR iOS con demostración repetible, matriz y límites visibles; no continuar si los gates de [IOS_USB_LIBIMOBILEDEVICE_PLAN.md](IOS_USB_LIBIMOBILEDEVICE_PLAN.md) no se cumplen.
 
 ### Fase 8 — UI adaptive y accesibilidad
 
@@ -559,7 +573,7 @@ Ejecutar cada capacidad en la matriz de [HARDWARE_REQUIREMENTS.md](HARDWARE_REQU
 4. Congelar el prototipo ADB como referencia y migrar Connect/Mirror sin reescribir el protocolo.
 5. Implementar dominio/almacenamiento/ledger antes de los botones probatorios.
 6. Implementar screenshot, recording y pull Android.
-7. Ejecutar PoC iOS y decidir ruta.
+7. Ejecutar la PoC iOS USB/UVC definida en `IOS_USB_LIBIMOBILEDEVICE_PLAN.md`.
 8. Cumplir el gate y ejecutar la limpieza global final del responsive/tema/rutas legacy.
 9. Corregir el SDK reproducible, aplicar hardening, validación y piloto según autorización del propietario.
 
@@ -574,4 +588,6 @@ Ejecutar cada capacidad en la matriz de [HARDWARE_REQUIREMENTS.md](HARDWARE_REQU
 - [Apple ReplayKit](https://developer.apple.com/documentation/replaykit)
 - [Apple Multipeer Connectivity](https://developer.apple.com/documentation/MultipeerConnectivity)
 - [Apple PhotoKit](https://developer.apple.com/documentation/PhotoKit)
+- [libimobiledevice oficial](https://github.com/libimobiledevice/libimobiledevice)
+- [usbmuxd oficial](https://github.com/libimobiledevice/usbmuxd)
 - [NIST SP 800-101 Rev. 1](https://csrc.nist.gov/pubs/sp/800/101/r1/final)
