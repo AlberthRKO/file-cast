@@ -12,14 +12,30 @@ class RequisitionStatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isFinalized = status == RequisitionStatus.finalized;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final color = isFinalized
-        ? (isDark ? textSucces2 : editColor)
-        : (isDark ? esam : lunchColor);
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final (label, color) = switch (status) {
+      RequisitionStatus.draft => (
+        'Borrador',
+        isDark ? theme.colorScheme.secondary : theme.colorScheme.tertiary,
+      ),
+      RequisitionStatus.inProgress => (
+        'En curso',
+        isDark ? esam : lunchColor,
+      ),
+      RequisitionStatus.finalizing => (
+        'Finalizando',
+        isDark ? theme.colorScheme.tertiary : theme.colorScheme.secondary,
+      ),
+      RequisitionStatus.finalized => (
+        'Finalizada',
+        isDark ? textSucces2 : editColor,
+      ),
+      RequisitionStatus.cancelled => ('Cancelada', theme.colorScheme.error),
+    };
 
     return Semantics(
-      label: 'Estado: ${isFinalized ? 'Finalizada' : 'En curso'}',
+      label: 'Estado: $label',
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.14),
@@ -40,8 +56,8 @@ class RequisitionStatusBadge extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               Text(
-                isFinalized ? 'Finalizada' : 'En curso',
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                label,
+                style: theme.textTheme.labelMedium?.copyWith(
                   color: color,
                   fontWeight: FontWeight.w700,
                 ),

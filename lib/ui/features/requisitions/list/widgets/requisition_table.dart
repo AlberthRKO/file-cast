@@ -1,6 +1,6 @@
 import 'package:file_cast/domain/models/requisition.dart';
-import 'package:file_cast/core/theme/colors.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
+import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_actions_menu.dart';
 import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_status_badge.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -11,6 +11,12 @@ class RequisitionTable extends StatelessWidget {
     required this.onPressed,
     required this.scrollController,
     required this.hasMore,
+    required this.canFinalize,
+    required this.onFinalize,
+    required this.onRefresh,
+    required this.isLoadingMore,
+    required this.loadMoreError,
+    required this.onRetryLoadMore,
     super.key,
   });
 
@@ -18,6 +24,12 @@ class RequisitionTable extends StatelessWidget {
   final ValueChanged<Requisition> onPressed;
   final ScrollController scrollController;
   final bool hasMore;
+  final bool canFinalize;
+  final ValueChanged<Requisition> onFinalize;
+  final Future<void> Function() onRefresh;
+  final bool isLoadingMore;
+  final String? loadMoreError;
+  final VoidCallback onRetryLoadMore;
 
   @override
   Widget build(BuildContext context) {
@@ -59,29 +71,44 @@ class RequisitionTable extends StatelessWidget {
                     flex: 2,
                     child: Text('EVIDENCIA', style: headerStyle),
                   ),
-                  const SizedBox(width: AppSize.minTouchTarget),
+                  const SizedBox(
+                    width: AppSize.minTouchTarget * 2 + AppSpace.xs,
+                  ),
                 ],
               ),
             ),
           ),
           Expanded(
-            child: ListView.separated(
-              controller: scrollController,
-              physics: const AlwaysScrollableScrollPhysics(
-                parent: BouncingScrollPhysics(),
+            child: RefreshIndicator(
+              onRefresh: onRefresh,
+              color: Theme.of(context).colorScheme.primary,
+              backgroundColor: Theme.of(context).cardColor,
+              displacement: AppSpace.l,
+              strokeWidth: 2.2,
+              child: ListView.separated(
+                controller: scrollController,
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: BouncingScrollPhysics(),
+                ),
+                itemCount: items.length + (hasMore ? 1 : 0),
+                separatorBuilder: (context, index) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  if (index == items.length) {
+                    return _LoadingMoreRow(
+                      isLoading: isLoadingMore,
+                      errorMessage: loadMoreError,
+                      onRetry: onRetryLoadMore,
+                    );
+                  }
+                  final item = items[index];
+                  return _RequisitionTableRow(
+                    requisition: item,
+                    onPressed: () => onPressed(item),
+                    canFinalize: canFinalize,
+                    onFinalize: () => onFinalize(item),
+                  );
+                },
               ),
-              itemCount: items.length + (hasMore ? 1 : 0),
-              separatorBuilder: (context, index) => const Divider(height: 1),
-              itemBuilder: (context, index) {
-                if (index == items.length) {
-                  return const _LoadingMoreRow();
-                }
-                final item = items[index];
-                return _RequisitionTableRow(
-                  requisition: item,
-                  onPressed: () => onPressed(item),
-                );
-              },
             ),
           ),
         ],
@@ -91,16 +118,39 @@ class RequisitionTable extends StatelessWidget {
 }
 
 class _LoadingMoreRow extends StatelessWidget {
-  const _LoadingMoreRow();
+  const _LoadingMoreRow({
+    required this.isLoading,
+    required this.errorMessage,
+    required this.onRetry,
+  });
+
+  final bool isLoading;
+  final String? errorMessage;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
-    return const SizedBox(
+    if (errorMessage != null) {
+      return SizedBox(
+        height: 64,
+        child: Center(
+          child: TextButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Reintentar'),
+          ),
+        ),
+      );
+    }
+
+    return SizedBox(
       height: 56,
       child: Center(
         child: SizedBox.square(
           dimension: 20,
-          child: CircularProgressIndicator(strokeWidth: 2),
+          child: isLoading
+              ? const CircularProgressIndicator(strokeWidth: 2)
+              : const SizedBox.shrink(),
         ),
       ),
     );
@@ -111,10 +161,14 @@ class _RequisitionTableRow extends StatelessWidget {
   const _RequisitionTableRow({
     required this.requisition,
     required this.onPressed,
+    required this.canFinalize,
+    required this.onFinalize,
   });
 
   final Requisition requisition;
   final VoidCallback onPressed;
+  final bool canFinalize;
+  final VoidCallback onFinalize;
 
   @override
   Widget build(BuildContext context) {
@@ -183,29 +237,19 @@ class _RequisitionTableRow extends StatelessWidget {
                 ],
               ),
             ),
-            Tooltip(
-              message: 'Abrir requisa',
-              child: InkWell(
-                onTap: onPressed,
-                customBorder: const CircleBorder(),
-                child: Container(
-                  width: AppSize.minTouchTarget,
-                  height: AppSize.minTouchTarget,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: const LinearGradient(
-                      colors: [actionGradientStart, violet],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
+            SizedBox(
+              width: AppSize.minTouchTarget * 2 + AppSpace.xs,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  RequisitionDetailsButton(onTap: onPressed),
+                  const SizedBox(width: AppSpace.xs),
+                  RequisitionActionsMenu(
+                    requisition: requisition,
+                    canFinalize: canFinalize,
+                    onFinalize: onFinalize,
                   ),
-                  child: const Icon(
-                    Icons.arrow_forward_ios_rounded,
-                    size: 14,
-                    color: textWhite,
-                  ),
-                ),
+                ],
               ),
             ),
           ],

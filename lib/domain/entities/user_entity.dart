@@ -2,6 +2,7 @@ class UserEntity {
   const UserEntity({
     this.id,
     this.usuario,
+    this.numeroDocumento,
     this.nombreCompleto,
     this.dobleAutenticacion,
     this.estado,
@@ -11,6 +12,7 @@ class UserEntity {
 
   final int? id;
   final String? usuario;
+  final String? numeroDocumento;
   final String? nombreCompleto;
   final int? dobleAutenticacion;
   final int? estado;

@@ -2,7 +2,13 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 
 part 'requisition.freezed.dart';
 
-enum RequisitionStatus { inProgress, finalized }
+enum RequisitionStatus {
+  draft,
+  inProgress,
+  finalizing,
+  finalized,
+  cancelled,
+}
 
 @freezed
 abstract class Requisition with _$Requisition {

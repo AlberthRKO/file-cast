@@ -107,7 +107,7 @@ class AuthSessionService {
 
       _debugLog('login.profile_request');
       final user = await _fetchCurrentUser();
-      await _storage.saveAuthenticatedUser(user.toJson());
+      await _persistAuthenticatedUser(user);
       _debugLog('login.success');
       return user;
     } catch (error, stackTrace) {
@@ -156,7 +156,7 @@ class AuthSessionService {
       }
 
       final user = await _fetchCurrentUser();
-      await _storage.saveAuthenticatedUser(user.toJson());
+      await _persistAuthenticatedUser(user);
       _debugLog('session.restore_success');
       return user;
     } on AuthSessionException catch (error) {
@@ -171,7 +171,7 @@ class AuthSessionService {
       if (error.statusCode == 401 && await refreshTokenIfNeeded()) {
         _debugLog('session.restore_after_refresh');
         final user = await _fetchCurrentUser();
-        await _storage.saveAuthenticatedUser(user.toJson());
+        await _persistAuthenticatedUser(user);
         return user;
       }
       _debugLog(
@@ -282,7 +282,32 @@ class AuthSessionService {
       method: 'GET',
       accessToken: accessToken,
     );
-    return _userFromResponse(body);
+    final user = _userFromResponse(body);
+    _debugLog(
+      'profile.loaded',
+      details: {
+        'hasUserId': user.id != null,
+        'hasDocument': user.usuario?.isNotEmpty ?? false,
+        'hasNombreCompleto': user.nombreCompleto?.isNotEmpty ?? false,
+        'permissionCount': _permissionCount(user),
+        'hasFinalizePermission': _hasPermission(user, 'requisitions.finalize'),
+      },
+    );
+    return user;
+  }
+
+  Future<void> _persistAuthenticatedUser(UserModel user) async {
+    await _storage.saveAuthenticatedUser(user.toJson());
+    _debugLog(
+      'profile.persisted',
+      details: {
+        'hasUserId': user.id != null,
+        'hasDocument': user.usuario?.isNotEmpty ?? false,
+        'hasNombreCompleto': user.nombreCompleto?.isNotEmpty ?? false,
+        'permissionCount': _permissionCount(user),
+        'hasFinalizePermission': _hasPermission(user, 'requisitions.finalize'),
+      },
+    );
   }
 
   Future<void> _persistTokenResponse(
@@ -328,7 +353,31 @@ class AuthSessionService {
     final payload = _payload(body);
     final normalized = <String, dynamic>{...payload};
 
-    normalized['id'] ??= normalized['usuarioId'];
+    final userId = _firstInt([
+      normalized['id'],
+      normalized['usuarioId'],
+      normalized['idUsuario'],
+      normalized['userId'],
+    ]);
+    if (userId != null) normalized['id'] = userId;
+
+    final documentNumber = _profileString(
+      payload,
+      directKeys: const ['numeroDocumento', 'documento', 'ci'],
+      nestedKeys: const ['perfilPersona', 'persona', 'profile'],
+      nestedValueKeys: const ['numeroDocumento', 'documento', 'ci'],
+    );
+    final username = _firstString([normalized['usuario']]);
+    normalized['usuario'] = documentNumber ?? username;
+
+    final fullName = _profileString(
+      payload,
+      directKeys: const ['nombreCompleto', 'fullName'],
+      nestedKeys: const ['perfilPersona', 'persona', 'profile'],
+      nestedValueKeys: const ['nombreCompleto', 'fullName'],
+    );
+    if (fullName != null) normalized['nombreCompleto'] = fullName;
+
     normalized['roles'] = _stringList(normalized['roles']);
     normalized['permisos'] = _stringList(normalized['permisos']);
 
@@ -510,6 +559,39 @@ class AuthSessionService {
     return null;
   }
 
+  int? _firstInt(Iterable<dynamic> values) {
+    for (final value in values) {
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      if (value is String) {
+        final parsed = int.tryParse(value.trim());
+        if (parsed != null) return parsed;
+      }
+    }
+    return null;
+  }
+
+  String? _profileString(
+    Map<String, dynamic> payload, {
+    required List<String> directKeys,
+    required List<String> nestedKeys,
+    required List<String> nestedValueKeys,
+  }) {
+    final direct = _firstString(directKeys.map((key) => payload[key]));
+    if (direct != null) return direct;
+
+    for (final nestedKey in nestedKeys) {
+      final nested = _mapValue(payload[nestedKey]);
+      if (nested == null) continue;
+      final nestedValue = _firstString(
+        nestedValueKeys.map((key) => nested[key]),
+      );
+      if (nestedValue != null) return nestedValue;
+    }
+
+    return null;
+  }
+
   List<String?> _stringList(dynamic value) {
     if (value is! List) return const [];
     return value
@@ -544,6 +626,18 @@ class AuthSessionService {
       stackTrace: stackTrace,
     );
   }
+
+  int _permissionCount(UserModel user) =>
+      user.permisos
+          ?.where((permission) => permission?.trim().isNotEmpty == true)
+          .length ??
+      0;
+
+  bool _hasPermission(UserModel user, String requiredPermission) =>
+      user.permisos?.any(
+        (permission) => permission?.trim().toLowerCase() == requiredPermission,
+      ) ??
+      false;
 
   dynamic _valueForLog(dynamic value, {String? key}) {
     if (_isSensitiveKey(key)) return _maskedSecret(value?.toString() ?? '');

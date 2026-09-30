@@ -1,7 +1,7 @@
 import 'package:file_cast/core/constants/complemento.dart';
-import 'package:file_cast/core/theme/colors.dart';
 import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
+import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_actions_menu.dart';
 import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_status_badge.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -11,11 +11,15 @@ class RequisitionCard extends StatelessWidget {
   const RequisitionCard({
     required this.requisition,
     required this.onPressed,
+    required this.canFinalize,
+    this.onFinalize,
     super.key,
   });
 
   final Requisition requisition;
   final VoidCallback onPressed;
+  final bool canFinalize;
+  final VoidCallback? onFinalize;
 
   @override
   Widget build(BuildContext context) {
@@ -73,6 +77,12 @@ class RequisitionCard extends StatelessWidget {
                   ),
                   const SizedBox(width: AppSpace.s),
                   RequisitionStatusBadge(status: requisition.status),
+                  const SizedBox(width: AppSpace.xs),
+                  RequisitionActionsMenu(
+                    requisition: requisition,
+                    canFinalize: canFinalize,
+                    onFinalize: onFinalize,
+                  ),
                 ],
               ),
               const SizedBox(height: AppSpace.m),
@@ -121,7 +131,7 @@ class RequisitionCard extends StatelessWidget {
                     ),
                   ),
                   const Spacer(),
-                  _DetailsButton(onTap: onPressed),
+                  RequisitionDetailsButton(onTap: onPressed),
                 ],
               ),
             ],
@@ -178,48 +188,6 @@ class _EvidencePill extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _DetailsButton extends StatelessWidget {
-  const _DetailsButton({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: 'Abrir requisa',
-      child: InkWell(
-        onTap: onTap,
-        customBorder: const CircleBorder(),
-        child: Container(
-          width: AppSize.minTouchTarget,
-          height: AppSize.minTouchTarget,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: const LinearGradient(
-              colors: [actionGradientStart, violet],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: violet.withValues(alpha: 0.3),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: const Icon(
-            Icons.arrow_forward_ios_rounded,
-            size: 14,
-            color: textWhite,
-          ),
-        ),
       ),
     );
   }

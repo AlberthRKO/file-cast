@@ -4,8 +4,8 @@ import 'package:file_cast/core/network/http.dart';
 import 'package:file_cast/core/storage/secure_storage_service.dart';
 import 'package:file_cast/data/repositories/remote_auth_repository.dart';
 import 'package:file_cast/data/repositories/acquisition_repository_impl.dart';
-import 'package:file_cast/data/repositories/in_memory_requisition_repository.dart';
 import 'package:file_cast/data/repositories/in_memory_requisition_detail_repository.dart';
+import 'package:file_cast/data/repositories/remote_requisition_repository.dart';
 import 'package:file_cast/data/repositories/requisition_creation_repository_impl.dart';
 import 'package:file_cast/data/services/requisition_creation_service.dart';
 import 'package:file_cast/data/services/android_acquisition_platform_service.dart';
@@ -15,6 +15,7 @@ import 'package:file_cast/data/services/evidence_sync_service.dart';
 import 'package:file_cast/data/services/auth_session_service.dart';
 import 'package:file_cast/data/services/local_evidence_database_service.dart';
 import 'package:file_cast/data/services/remote_document_preview_service.dart';
+import 'package:file_cast/data/services/requisition_service.dart';
 import 'package:file_cast/domain/repositories/auth_repository.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
@@ -78,8 +79,13 @@ class DependencyInjection {
           onSessionExpired: sessionController.unauthenticated,
         ),
       ),
-      Provider<RequisitionRepository>(
-        create: (_) => const InMemoryRequisitionRepository(),
+      ProxyProvider<Http, RequisitionService>(
+        update: (_, http, previous) => RequisitionService(http: http),
+      ),
+      ProxyProvider<RequisitionService, RequisitionRepository>(
+        update: (_, service, previous) => RemoteRequisitionRepository(
+          service: service,
+        ),
       ),
       Provider<EvidencePickerService>(
         create: (_) => EvidencePickerService(),

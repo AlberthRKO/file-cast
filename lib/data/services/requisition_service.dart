@@ -1,0 +1,144 @@
+import 'dart:math';
+
+import 'package:file_cast/core/errors/either.dart';
+import 'package:file_cast/core/network/http.dart';
+import 'package:file_cast/domain/models/requisition.dart';
+import 'package:file_cast/domain/repositories/requisition_repository.dart';
+
+class RequisitionService {
+  RequisitionService({required Http http}) : _http = http;
+
+  final Http _http;
+  final Random _random = Random.secure();
+
+  Future<RequisitionPage> list({
+    required int page,
+    required int limit,
+    String? search,
+    RequisitionStatus? status,
+  }) async {
+    final result = await _http.request<RequisitionPage>(
+      '/api/v1/requisitions',
+      queryParameters: {
+        'page': page.toString(),
+        'limit': limit.toString(),
+        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+        if (status != null) 'status': _statusValue(status),
+      },
+      onSucces: _parsePage,
+    );
+
+    return switch (result) {
+      Left(leftValue: final error) => throw StateError(
+        error.message ?? 'No se pudo cargar las requisas.',
+      ),
+      Right(rightValue: final requisitions) => requisitions,
+      Either() => throw StateError('Respuesta inesperada al listar requisas.'),
+    };
+  }
+
+  Future<void> finalizeRequisition(String requisitionId) async {
+    final result = await _http.request<void>(
+      '/api/v1/requisitions/$requisitionId/finalize',
+      method: HttpMethod.post,
+      headers: {'Idempotency-Key': _idempotencyKey(requisitionId)},
+      onSucces: (_) {},
+    );
+
+    switch (result) {
+      case Left(leftValue: final error):
+        throw StateError(
+          error.message ?? 'No se pudo finalizar la requisa.',
+        );
+      case Right():
+        return;
+      case Either():
+        throw StateError('Respuesta inesperada al finalizar la requisa.');
+    }
+  }
+
+  RequisitionPage _parsePage(dynamic body) {
+    final envelope = _asMap(body);
+    final response = _asMap(envelope['response']);
+    final data = response['data'];
+    final pagination = _asMap(response['pagination']);
+    final items = data is List
+        ? data.whereType<Map<String, dynamic>>().map(_toDomain).toList()
+        : <Requisition>[];
+
+    return (
+      items: List<Requisition>.unmodifiable(items),
+      page: _asInt(pagination['page'], fallback: 1),
+      pageCount: _asInt(pagination['pageCount']),
+    );
+  }
+
+  Requisition _toDomain(Map<String, dynamic> json) {
+    final currentCase = _asMap(json['currentCase']);
+    final primarySubject = _asMap(json['primarySubject']);
+    final description = _asString(json['description']);
+    final cud = _asString(currentCase['cud']);
+    final subjectName = _asString(primarySubject['fullName']);
+    final evidenceCounts = _asMap(json['evidenceCounts']);
+
+    return Requisition(
+      id: _asString(json['id']) ?? '',
+      caseName:
+          description ??
+          (cud != null ? 'Requisa vinculada a caso' : 'Requisa por persona'),
+      registeredAt:
+          _asDate(json['procedureAt']) ??
+          _asDate(json['createdAt']) ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      status: _statusFromApi(json['status']),
+      imageEvidenceCount: _asInt(evidenceCounts['images']),
+      videoEvidenceCount: _asInt(evidenceCounts['videos']),
+      isSynchronized: true,
+      cud: cud,
+      subjectName: subjectName,
+    );
+  }
+
+  String _idempotencyKey(String requisitionId) {
+    final suffix = _random.nextInt(0x7fffffff).toRadixString(36);
+    return 'finalize-$requisitionId-${DateTime.now().microsecondsSinceEpoch}-$suffix';
+  }
+
+  String _statusValue(RequisitionStatus status) => switch (status) {
+    RequisitionStatus.draft => 'DRAFT',
+    RequisitionStatus.inProgress => 'IN_PROGRESS',
+    RequisitionStatus.finalizing => 'FINALIZING',
+    RequisitionStatus.finalized => 'SEALED',
+    RequisitionStatus.cancelled => 'CANCELLED',
+  };
+
+  RequisitionStatus _statusFromApi(Object? value) {
+    return switch (value?.toString().toUpperCase()) {
+      'DRAFT' => RequisitionStatus.draft,
+      'IN_PROGRESS' => RequisitionStatus.inProgress,
+      'FINALIZING' => RequisitionStatus.finalizing,
+      'SEALED' => RequisitionStatus.finalized,
+      'CANCELLED' => RequisitionStatus.cancelled,
+      _ => RequisitionStatus.draft,
+    };
+  }
+
+  static Map<String, dynamic> _asMap(Object? value) {
+    return value is Map<String, dynamic> ? value : const {};
+  }
+
+  static String? _asString(Object? value) {
+    if (value == null) return null;
+    final text = value.toString().trim();
+    return text.isEmpty ? null : text;
+  }
+
+  static int _asInt(Object? value, {int fallback = 0}) {
+    if (value is int) return value;
+    return int.tryParse(value?.toString() ?? '') ?? fallback;
+  }
+
+  static DateTime? _asDate(Object? value) {
+    return DateTime.tryParse(_asString(value) ?? '')?.toLocal();
+  }
+}

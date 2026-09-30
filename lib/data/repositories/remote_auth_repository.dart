@@ -62,6 +62,7 @@ class RemoteAuthRepository implements AuthRepository {
     return UserEntity(
       id: user.id,
       usuario: user.usuario,
+      numeroDocumento: user.usuario,
       nombreCompleto: user.nombreCompleto,
       dobleAutenticacion: user.dobleAutenticacion,
       estado: user.estado,

@@ -48,12 +48,24 @@ class RequisitionFilters extends StatelessWidget {
       items: const [
         DropdownMenuItem(child: Text('Todos los estados')),
         DropdownMenuItem(
+          value: RequisitionStatus.draft,
+          child: Text('Borrador'),
+        ),
+        DropdownMenuItem(
           value: RequisitionStatus.inProgress,
           child: Text('En curso'),
         ),
         DropdownMenuItem(
+          value: RequisitionStatus.finalizing,
+          child: Text('Finalizando'),
+        ),
+        DropdownMenuItem(
           value: RequisitionStatus.finalized,
           child: Text('Finalizada'),
+        ),
+        DropdownMenuItem(
+          value: RequisitionStatus.cancelled,
+          child: Text('Cancelada'),
         ),
       ],
       selectedItemBuilder: (context) => const [
@@ -63,11 +75,23 @@ class RequisitionFilters extends StatelessWidget {
         ),
         Align(
           alignment: AlignmentDirectional.centerStart,
+          child: Text('Borrador', overflow: TextOverflow.ellipsis),
+        ),
+        Align(
+          alignment: AlignmentDirectional.centerStart,
           child: Text('En curso', overflow: TextOverflow.ellipsis),
         ),
         Align(
           alignment: AlignmentDirectional.centerStart,
+          child: Text('Finalizando', overflow: TextOverflow.ellipsis),
+        ),
+        Align(
+          alignment: AlignmentDirectional.centerStart,
           child: Text('Finalizada', overflow: TextOverflow.ellipsis),
+        ),
+        Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: Text('Cancelada', overflow: TextOverflow.ellipsis),
         ),
       ],
       onChanged: onStatusChanged,

@@ -11,7 +11,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:intl/intl.dart';
 import 'package:searchfield/searchfield.dart';
 
-class CreateRequisitionForm extends StatelessWidget {
+class CreateRequisitionForm extends StatefulWidget {
   const CreateRequisitionForm({
     required this.viewModel,
     required this.compact,
@@ -24,38 +24,75 @@ class CreateRequisitionForm extends StatelessWidget {
   final VoidCallback onCancel;
 
   @override
+  State<CreateRequisitionForm> createState() => _CreateRequisitionFormState();
+}
+
+class _CreateRequisitionFormState extends State<CreateRequisitionForm> {
+  late final FocusNode _cudFocusNode;
+  late final FocusNode _personFocusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _cudFocusNode = FocusNode(debugLabel: 'requisition-cud-search');
+    _personFocusNode = FocusNode(debugLabel: 'requisition-person-search');
+  }
+
+  @override
+  void dispose() {
+    _cudFocusNode.dispose();
+    _personFocusNode.dispose();
+    super.dispose();
+  }
+
+  void _changeMode(RequisitionRegistrationMode mode) {
+    // SearchField 0.9.x owns an OverlayEntry. Close its focus/overlay before
+    // replacing the corresponding tab subtree, otherwise the package may try
+    // to remove the same entry again from dispose().
+    _cudFocusNode.unfocus();
+    _personFocusNode.unfocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.viewModel.setMode(mode);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final state = viewModel.state;
+    final state = widget.viewModel.state;
 
     return Column(
       children: [
-        _Header(onClose: onCancel),
+        _Header(onClose: widget.onCancel),
         Expanded(
           child: ListView(
-            padding: EdgeInsets.all(compact ? AppSpace.m : AppSpace.l),
+            padding: EdgeInsets.all(
+              widget.compact ? AppSpace.m : AppSpace.l,
+            ),
             children: [
               _ModeSelector(
                 mode: state.mode,
-                onChanged: viewModel.setMode,
+                onChanged: _changeMode,
               ),
               const SizedBox(height: AppSpace.m),
               if (state.mode == RequisitionRegistrationMode.existingCud)
                 _ExistingCudSection(
                   state: state,
-                  onQueryChanged: viewModel.updateCudQuery,
-                  onSelected: viewModel.selectCase,
+                  focusNode: _cudFocusNode,
+                  onQueryChanged: widget.viewModel.updateCudQuery,
+                  onSelected: widget.viewModel.selectCase,
                 )
               else
                 _PersonLookupSection(
                   state: state,
-                  onQueryChanged: viewModel.updatePersonQuery,
-                  onSelected: viewModel.selectPerson,
+                  focusNode: _personFocusNode,
+                  onQueryChanged: widget.viewModel.updatePersonQuery,
+                  onSelected: widget.viewModel.selectPerson,
                 ),
               const SizedBox(height: AppSpace.m),
               _ProcedureSection(
                 state: state,
-                onDateChanged: viewModel.updateProcedureAt,
-                onLocationChanged: viewModel.updateLocation,
+                onDateChanged: widget.viewModel.updateProcedureAt,
+                onLocationChanged: widget.viewModel.updateLocation,
               ),
               const SizedBox(height: AppSpace.m),
               _OfflineNotice(),
@@ -65,7 +102,7 @@ class CreateRequisitionForm extends StatelessWidget {
         _Footer(
           isSubmitting: state.isSubmitting,
           canSubmit: state.canSubmit,
-          onSubmit: viewModel.submit,
+          onSubmit: widget.viewModel.submit,
         ),
       ],
     );
@@ -293,11 +330,13 @@ class _ModeItem extends StatelessWidget {
 class _ExistingCudSection extends StatelessWidget {
   const _ExistingCudSection({
     required this.state,
+    required this.focusNode,
     required this.onQueryChanged,
     required this.onSelected,
   });
 
   final CreateRequisitionState state;
+  final FocusNode focusNode;
   final ValueChanged<String> onQueryChanged;
   final ValueChanged<EcosystemCaseSummary> onSelected;
 
@@ -313,6 +352,8 @@ class _ExistingCudSection extends StatelessWidget {
           const SizedBox(height: AppSpace.s),
           if (state.selectedCase == null)
             SearchField<EcosystemCaseSummary>(
+              focusNode: focusNode,
+              suggestionAction: SuggestionAction.unfocus,
               searchStyle: Theme.of(context).textTheme.bodyLarge,
               suggestionStyle: Theme.of(context).textTheme.bodyMedium,
               itemHeight: 76,
@@ -351,7 +392,10 @@ class _ExistingCudSection extends StatelessWidget {
                   .toList(),
               onSuggestionTap: (suggestion) {
                 final item = suggestion.item;
-                if (item != null) onSelected(item);
+                if (item == null) return;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (context.mounted) onSelected(item);
+                });
               },
               searchInputDecoration: InputDecoration(
                 labelText: 'Buscar por Nro de caso, caratula o imputado...',
@@ -391,11 +435,13 @@ class _ExistingCudSection extends StatelessWidget {
 class _PersonLookupSection extends StatelessWidget {
   const _PersonLookupSection({
     required this.state,
+    required this.focusNode,
     required this.onQueryChanged,
     required this.onSelected,
   });
 
   final CreateRequisitionState state;
+  final FocusNode focusNode;
   final ValueChanged<String> onQueryChanged;
   final ValueChanged<PersonSummary> onSelected;
 
@@ -411,6 +457,8 @@ class _PersonLookupSection extends StatelessWidget {
           const SizedBox(height: AppSpace.s),
           if (state.selectedPerson == null)
             SearchField<PersonSummary>(
+              focusNode: focusNode,
+              suggestionAction: SuggestionAction.unfocus,
               searchStyle: Theme.of(context).textTheme.bodyLarge,
               suggestionStyle: Theme.of(context).textTheme.bodyMedium,
               itemHeight: 80,
@@ -426,7 +474,10 @@ class _PersonLookupSection extends StatelessWidget {
               suggestions: _personSuggestions(state.personResults),
               onSuggestionTap: (suggestion) {
                 final person = suggestion.item;
-                if (person != null) onSelected(person);
+                if (person == null) return;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (context.mounted) onSelected(person);
+                });
               },
               searchInputDecoration: InputDecoration(
                 labelText: 'Buscar por CI',
@@ -537,6 +588,7 @@ class _ProcedureSection extends StatelessWidget {
                           useSafeArea: false,
                           enableDrag: false,
                           backgroundColor: Colors.transparent,
+                          maxWidth: 560,
                           builder: (_) => RequisitionLocationPicker(
                             initialPoint: location,
                           ),

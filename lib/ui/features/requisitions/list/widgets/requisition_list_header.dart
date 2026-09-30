@@ -18,8 +18,8 @@ class RequisitionListHeader extends StatelessWidget {
     required this.onSettings,
     required this.isRefreshing,
     required this.filtersActive,
-    this.identityLabel = 'C.I. 14258827,',
-    this.userName = 'Alberto Orlando Paredes Mamani',
+    this.identityLabel = 'C.I. — · ID —',
+    this.userName = 'Usuario',
     this.notificationCount = 2,
     super.key,
   });

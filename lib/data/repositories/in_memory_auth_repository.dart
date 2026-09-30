@@ -14,6 +14,7 @@ class InMemoryAuthRepository implements AuthRepository {
     final user = UserEntity(
       id: 1,
       usuario: usuario,
+      numeroDocumento: usuario,
       nombreCompleto: 'Operador Demo',
       dobleAutenticacion: 0,
       estado: 1,

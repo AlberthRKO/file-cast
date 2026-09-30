@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
 
@@ -5,8 +7,41 @@ class InMemoryRequisitionRepository implements RequisitionRepository {
   const InMemoryRequisitionRepository();
 
   @override
-  Future<List<Requisition>> getRequisitions() async {
-    return List<Requisition>.unmodifiable(_fixtures());
+  Future<RequisitionPage> getRequisitions({
+    required int page,
+    required int limit,
+    String? search,
+    RequisitionStatus? status,
+  }) async {
+    final normalizedQuery = search?.trim().toLowerCase() ?? '';
+    final filtered = _fixtures().where((item) {
+      final matchesQuery =
+          normalizedQuery.isEmpty ||
+          item.id.toLowerCase().contains(normalizedQuery) ||
+          (item.cud?.toLowerCase().contains(normalizedQuery) ?? false) ||
+          (item.subjectName?.toLowerCase().contains(normalizedQuery) ??
+              false) ||
+          item.caseName.toLowerCase().contains(normalizedQuery);
+      return matchesQuery && (status == null || item.status == status);
+    }).toList();
+
+    final safeLimit = math.max(1, limit);
+    final safePage = math.max(1, page);
+    final pageCount = (filtered.length / safeLimit).ceil();
+    final start = math.min((safePage - 1) * safeLimit, filtered.length);
+    final end = math.min(start + safeLimit, filtered.length);
+
+    return (
+      items: List<Requisition>.unmodifiable(filtered.sublist(start, end)),
+      page: safePage,
+      pageCount: pageCount,
+    );
+  }
+
+  @override
+  Future<void> finalizeRequisition(String requisitionId) async {
+    // This repository remains available for isolated UI previews. Production
+    // uses RemoteRequisitionRepository, where the backend performs the seal.
   }
 
   List<Requisition> _fixtures() {

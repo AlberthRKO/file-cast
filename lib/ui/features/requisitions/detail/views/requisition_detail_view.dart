@@ -127,6 +127,7 @@ class RequisitionDetailView extends StatelessWidget {
         useSafeArea: false,
         enableDrag: false,
         backgroundColor: Colors.transparent,
+        maxWidth: AppSize.formMaxWidth,
         builder: (sheetContext) => _AcquisitionActionSheet(
           isImporting: viewModel.isImporting,
           onCapture: () => _closeThen(context, sheetContext, () {
