@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
 import 'package:file_cast/ui/core/adaptive/adaptive_layout.dart';
+import 'package:file_cast/ui/core/feedback/app_feedback.dart';
 import 'package:file_cast/ui/core/navigation/app_route.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:file_cast/ui/features/requisitions/create/view_models/create_requisition_view_model.dart';
@@ -49,22 +52,85 @@ class CreateRequisitionSheet extends StatelessWidget {
         repository: context.read<RequisitionCreationRepository>(),
         initialMode: initialMode,
       ),
-      child: Builder(
-        builder: (context) {
-          final vm = context.read<CreateRequisitionViewModel>();
-          return ListenableBuilder(
-            listenable: vm,
-            builder: (context, _) {
-              final result = vm.state.createdResult;
-              if (result != null) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (context.mounted) onCompleted(result);
-                });
-              }
-              return _SheetSurface(viewModel: vm, onClose: onClose);
-            },
-          );
-        },
+      child: _CreateRequisitionSheetContent(
+        onCompleted: onCompleted,
+        onClose: onClose,
+      ),
+    );
+  }
+}
+
+class _CreateRequisitionSheetContent extends StatefulWidget {
+  const _CreateRequisitionSheetContent({
+    required this.onCompleted,
+    required this.onClose,
+  });
+
+  final ValueChanged<CreateRequisitionResult> onCompleted;
+  final VoidCallback onClose;
+
+  @override
+  State<_CreateRequisitionSheetContent> createState() =>
+      _CreateRequisitionSheetContentState();
+}
+
+class _CreateRequisitionSheetContentState
+    extends State<_CreateRequisitionSheetContent> {
+  late final CreateRequisitionViewModel _viewModel;
+  bool _completionHandled = false;
+  String? _presentedError;
+
+  @override
+  void initState() {
+    super.initState();
+    _viewModel = context.read<CreateRequisitionViewModel>();
+    _viewModel.addListener(_handleViewModelChange);
+  }
+
+  @override
+  void dispose() {
+    _viewModel.removeListener(_handleViewModelChange);
+    super.dispose();
+  }
+
+  void _handleViewModelChange() {
+    final state = _viewModel.state;
+    final result = state.createdResult;
+    if (result != null && !_completionHandled) {
+      _completionHandled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(_showCreationSuccess(result));
+      });
+    }
+
+    final errorMessage = state.errorMessage;
+    if (errorMessage == null) {
+      _presentedError = null;
+    } else if (_presentedError != errorMessage) {
+      _presentedError = errorMessage;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(showAppErrorBottomSheet(context, errorMessage));
+      });
+    }
+  }
+
+  Future<void> _showCreationSuccess(CreateRequisitionResult result) async {
+    await showAppSuccessBottomSheet(
+      context,
+      'La requisa fue registrada correctamente.',
+    );
+    if (mounted) widget.onCompleted(result);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: _viewModel,
+      builder: (context, _) => _SheetSurface(
+        viewModel: _viewModel,
+        onClose: widget.onClose,
       ),
     );
   }
@@ -81,28 +147,66 @@ class _CreateRequisitionConnector extends StatefulWidget {
 class _CreateRequisitionConnectorState
     extends State<_CreateRequisitionConnector> {
   bool _navigated = false;
+  String? _presentedError;
+  late final CreateRequisitionViewModel _viewModel;
 
   @override
-  Widget build(BuildContext context) {
-    final viewModel = context.watch<CreateRequisitionViewModel>();
-    final result = viewModel.state.createdResult;
+  void initState() {
+    super.initState();
+    _viewModel = context.read<CreateRequisitionViewModel>();
+    _viewModel.addListener(_handleViewModelChange);
+  }
 
+  @override
+  void dispose() {
+    _viewModel.removeListener(_handleViewModelChange);
+    super.dispose();
+  }
+
+  void _handleViewModelChange() {
+    final result = _viewModel.state.createdResult;
     if (!_navigated && result != null) {
       _navigated = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        context.goNamed(
-          AppRouteName.requisitionDetail,
-          pathParameters: {
-            'requisitionId': result.requisitionId,
-          },
-        );
+        unawaited(_showCreationSuccessAndNavigate(result));
       });
     }
 
-    return CreateRequisitionView(
-      viewModel: viewModel,
-      onCancel: () => context.goNamed(AppRouteName.requisitions),
+    final errorMessage = _viewModel.state.errorMessage;
+    if (errorMessage == null) {
+      _presentedError = null;
+    } else if (_presentedError != errorMessage) {
+      _presentedError = errorMessage;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(showAppErrorBottomSheet(context, errorMessage));
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: _viewModel,
+      builder: (context, _) => CreateRequisitionView(
+        viewModel: _viewModel,
+        onCancel: () => context.goNamed(AppRouteName.requisitions),
+      ),
+    );
+  }
+
+  Future<void> _showCreationSuccessAndNavigate(
+    CreateRequisitionResult result,
+  ) async {
+    await showAppSuccessBottomSheet(
+      context,
+      'La requisa fue registrada correctamente.',
+    );
+    if (!mounted) return;
+    context.goNamed(
+      AppRouteName.requisitionDetail,
+      pathParameters: {'requisitionId': result.requisitionId},
     );
   }
 }
@@ -176,15 +280,22 @@ class _SheetSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final compact = MediaQuery.sizeOf(context).width < 600;
+    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
+
     return SafeArea(
+      top: true,
+      bottom: false,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 860),
         child: Material(
           color: Theme.of(context).cardColor,
-          child: CreateRequisitionForm(
-            viewModel: viewModel,
-            compact: compact,
-            onCancel: onClose,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: bottomInset),
+            child: CreateRequisitionForm(
+              viewModel: viewModel,
+              compact: compact,
+              onCancel: onClose,
+            ),
           ),
         ),
       ),

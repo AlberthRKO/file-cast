@@ -1,6 +1,5 @@
 import 'package:file_cast/core/storage/secure_storage_service.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 class ThemeController extends ChangeNotifier {
   ThemeController({
@@ -28,9 +27,6 @@ class ThemeController extends ChangeNotifier {
 
     _darkMode = value;
     await _storage.write(_themeKey, value.toString());
-    SystemChrome.setSystemUIOverlayStyle(
-      value ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
-    );
     notifyListeners();
   }
 }

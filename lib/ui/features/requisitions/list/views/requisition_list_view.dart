@@ -7,6 +7,7 @@ import 'package:file_cast/ui/core/adaptive/constrained_content.dart';
 import 'package:file_cast/ui/core/adaptive/window_size_class.dart';
 import 'package:file_cast/ui/core/navigation/app_route.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
+import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/list/view_models/requisition_list_state.dart';
 import 'package:file_cast/ui/features/requisitions/list/view_models/requisition_list_view_model.dart';
 import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_card.dart';
@@ -175,9 +176,8 @@ class _RequisitionListViewState extends State<RequisitionListView> {
   }
 
   Future<void> _openFilters(BuildContext context) async {
-    await showModalBottomSheet<void>(
+    await showAppModalBottomSheet<void>(
       context: context,
-      isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Theme.of(context).cardColor,
       builder: (sheetContext) {
@@ -281,10 +281,11 @@ class _RequisitionListViewState extends State<RequisitionListView> {
 
   Future<void> _openCreateRequisition(RequisitionRegistrationMode mode) async {
     var completionHandled = false;
-    await showModalBottomSheet<void>(
+    await showAppModalBottomSheet<void>(
       context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
+      expand: true,
+      useSafeArea: false,
+      enableDrag: false,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => CreateRequisitionSheet(
         initialMode: mode,
@@ -312,12 +313,6 @@ class _RequisitionListViewState extends State<RequisitionListView> {
       AppRouteName.requisitionDetail,
       pathParameters: {'requisitionId': requisition.id},
     );
-  }
-
-  void _showPlaceholder(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
   }
 }
 

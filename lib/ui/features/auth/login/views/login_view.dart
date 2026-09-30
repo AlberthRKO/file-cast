@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:file_cast/core/config/config.dart';
 import 'package:file_cast/domain/repositories/auth_repository.dart';
 import 'package:file_cast/ui/core/adaptive/adaptive_layout.dart';
+import 'package:file_cast/ui/core/feedback/app_feedback.dart';
+import 'package:file_cast/ui/features/auth/login/view_models/login_state.dart';
 import 'package:file_cast/ui/features/auth/login/view_models/login_view_model.dart';
 import 'package:file_cast/ui/features/auth/login/widgets/login_layout.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
@@ -52,13 +56,51 @@ class _LoginViewState extends State<LoginView> {
     _passwordController = TextEditingController(
       text: _viewModel.state.password,
     );
+    _viewModel.addListener(_handleViewModelChange);
   }
 
   @override
   void dispose() {
+    _viewModel.removeListener(_handleViewModelChange);
     _documentController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  String? _presentedError;
+  bool _successFeedbackScheduled = false;
+
+  void _handleViewModelChange() {
+    final state = _viewModel.state;
+    if (state.errorMessage == null) {
+      _presentedError = null;
+    } else if (_presentedError != state.errorMessage) {
+      _presentedError = state.errorMessage;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(showAppErrorBottomSheet(context, state.errorMessage!));
+      });
+    }
+
+    if (state.phase != LoginPhase.success) {
+      _successFeedbackScheduled = false;
+      return;
+    }
+    if (_successFeedbackScheduled) return;
+
+    _successFeedbackScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_showLoginSuccess());
+    });
+  }
+
+  Future<void> _showLoginSuccess() async {
+    await showAppSuccessBottomSheet(
+      context,
+      'Tu sesión fue iniciada correctamente.',
+    );
+    if (mounted) _viewModel.completeAuthentication();
   }
 
   @override

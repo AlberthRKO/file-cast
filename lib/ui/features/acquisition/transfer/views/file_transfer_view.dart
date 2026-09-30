@@ -7,6 +7,7 @@ import 'package:file_cast/ui/core/theme/brand_theme.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:file_cast/ui/core/widgets/app_action_button.dart';
 import 'package:file_cast/ui/core/widgets/app_card_surface.dart';
+import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
 import 'package:file_cast/ui/features/acquisition/transfer/view_models/file_transfer_view_model.dart';
 import 'package:file_cast/ui/features/acquisition/transfer/widgets/file_transfer_widgets.dart';
 import 'package:file_cast/ui/features/acquisition/transfer/widgets/remote_file_preview_sheet.dart';
@@ -244,10 +245,10 @@ Future<void> _showRemotePreview(
     await viewModel.closePreview();
     return;
   }
-  await showModalBottomSheet<void>(
+  await showAppModalBottomSheet<void>(
     context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
+    expand: true,
+    useSafeArea: false,
     enableDrag: false,
     isDismissible: false,
     backgroundColor: Colors.transparent,

@@ -83,6 +83,7 @@ class _RemoteFilePreviewSheetState extends State<RemoteFilePreviewSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final windowSize = MediaQuery.sizeOf(context);
+    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
     return Align(
       alignment: Alignment.bottomCenter,
       child: AnimatedContainer(
@@ -98,12 +99,13 @@ class _RemoteFilePreviewSheetState extends State<RemoteFilePreviewSheet> {
           clipBehavior: Clip.antiAlias,
           child: SafeArea(
             top: false,
+            bottom: false,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(
+              padding: EdgeInsets.fromLTRB(
                 AppSpace.m,
                 AppSpace.s,
                 AppSpace.m,
-                AppSpace.m,
+                AppSpace.m + bottomInset,
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,

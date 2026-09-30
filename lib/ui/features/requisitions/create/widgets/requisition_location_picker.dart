@@ -61,7 +61,7 @@ class _RequisitionLocationPickerState extends State<RequisitionLocationPicker> {
               AppSpace.m,
               AppSpace.s,
               AppSpace.m,
-              AppSpace.m + MediaQuery.paddingOf(context).bottom,
+              AppSpace.m + MediaQuery.viewPaddingOf(context).bottom,
             ),
             child: Padding(
               padding: const EdgeInsets.all(AppSpace.m),

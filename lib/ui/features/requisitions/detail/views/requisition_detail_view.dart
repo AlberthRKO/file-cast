@@ -3,6 +3,7 @@ import 'package:file_cast/domain/repositories/requisition_detail_repository.dart
 import 'package:file_cast/ui/core/adaptive/constrained_content.dart';
 import 'package:file_cast/ui/core/navigation/app_route.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
+import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/detail/view_models/requisition_detail_view_model.dart';
 import 'package:file_cast/ui/features/requisitions/widgets/requisition_case_card.dart';
 import 'package:flutter/material.dart';
@@ -101,7 +102,11 @@ class RequisitionDetailView extends StatelessWidget {
                 0,
               ),
               child: ListView(
-                padding: const EdgeInsets.only(bottom: AppSpace.xxl * 2),
+                padding: EdgeInsets.only(
+                  bottom:
+                      AppSpace.xxl * 2 +
+                      MediaQuery.viewPaddingOf(context).bottom,
+                ),
                 children: [
                   _EvidenceTotals(categories: categories),
                   for (final category in categories) ...[
@@ -117,10 +122,10 @@ class RequisitionDetailView extends StatelessWidget {
   }
 
   Future<void> _showAcquisitionActions(BuildContext context) =>
-      showModalBottomSheet<void>(
+      showAppModalBottomSheet<void>(
         context: context,
-        isScrollControlled: true,
-        useSafeArea: true,
+        useSafeArea: false,
+        enableDrag: false,
         backgroundColor: Colors.transparent,
         builder: (sheetContext) => _AcquisitionActionSheet(
           isImporting: viewModel.isImporting,
@@ -347,10 +352,11 @@ class _EvidenceSection extends StatelessWidget {
     );
   }
 
-  Future<void> _showAll(BuildContext context) => showModalBottomSheet<void>(
+  Future<void> _showAll(BuildContext context) => showAppModalBottomSheet<void>(
     context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
+    expand: true,
+    useSafeArea: false,
+    enableDrag: false,
     backgroundColor: Colors.transparent,
     builder: (_) => _AllEvidenceSheet(
       title: _categoryTitle(summary.category),
@@ -462,55 +468,60 @@ class _AllEvidenceSheet extends StatelessWidget {
   final List<RequisitionEvidence> evidence;
 
   @override
-  Widget build(BuildContext context) => FractionallySizedBox(
-    heightFactor: .88,
-    child: Material(
-      color: Theme.of(context).cardColor,
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      clipBehavior: Clip.antiAlias,
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpace.m,
-            AppSpace.s,
-            AppSpace.m,
-            AppSpace.m,
-          ),
-          child: Column(
-            children: [
-              const _SheetHandle(),
-              _ModalHeader(
-                title: title,
-                subtitle: subtitle,
-                asset: 'folder.svg',
-                onClose: () => Navigator.of(context).pop(),
-              ),
-              const SizedBox(height: AppSpace.m),
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final columns = constraints.maxWidth >= 760 ? 2 : 1;
-                    return GridView.builder(
-                      itemCount: evidence.length,
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: columns,
-                        crossAxisSpacing: AppSpace.s,
-                        mainAxisSpacing: AppSpace.s,
-                        mainAxisExtent: 68,
-                      ),
-                      itemBuilder: (context, index) =>
-                          _EvidencePreview(evidence: evidence[index]),
-                    );
-                  },
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
+
+    return FractionallySizedBox(
+      heightFactor: .88,
+      child: Material(
+        color: Theme.of(context).cardColor,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        clipBehavior: Clip.antiAlias,
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              AppSpace.m,
+              AppSpace.s,
+              AppSpace.m,
+              AppSpace.m + bottomInset,
+            ),
+            child: Column(
+              children: [
+                const _SheetHandle(),
+                _ModalHeader(
+                  title: title,
+                  subtitle: subtitle,
+                  asset: 'folder.svg',
+                  onClose: () => Navigator.of(context).pop(),
                 ),
-              ),
-            ],
+                const SizedBox(height: AppSpace.m),
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final columns = constraints.maxWidth >= 760 ? 2 : 1;
+                      return GridView.builder(
+                        itemCount: evidence.length,
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          crossAxisSpacing: AppSpace.s,
+                          mainAxisSpacing: AppSpace.s,
+                          mainAxisExtent: 68,
+                        ),
+                        itemBuilder: (context, index) =>
+                            _EvidencePreview(evidence: evidence[index]),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _AcquisitionActionSheet extends StatelessWidget {
@@ -527,6 +538,7 @@ class _AcquisitionActionSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
     final actions = [
       _ActionData(
         title: 'Capturar pantalla',
@@ -553,13 +565,14 @@ class _AcquisitionActionSheet extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: SafeArea(
         top: false,
+        bottom: false,
         child: SingleChildScrollView(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(
+            padding: EdgeInsets.fromLTRB(
               AppSpace.m,
               AppSpace.s,
               AppSpace.m,
-              AppSpace.l,
+              AppSpace.l + bottomInset,
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
