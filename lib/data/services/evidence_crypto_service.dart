@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:cryptography/cryptography.dart';
+import 'package:file_cast/core/constants/storage_keys.dart';
 import 'package:file_cast/core/storage/secure_storage_service.dart';
 import 'package:file_cast/domain/services/evidence_decryption_service.dart';
 
@@ -21,7 +22,7 @@ class EvidenceCryptoService implements EvidenceDecryptionService {
   static const formatVersion = 1;
   static const chunkSize = 1024 * 1024;
   static const _vaultKeyName = 'file_cast_evidence_vault_key_v1';
-  static const _deviceIdName = 'file_cast_device_id_v1';
+  static const _deviceIdName = StorageKeys.deviceId;
   static const _aadPrefix = 'file-cast/evidence/v1';
   static const _magic = <int>[0x46, 0x43, 0x45, 0x01];
   static const _nonceLength = 12;
