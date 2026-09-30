@@ -30,6 +30,10 @@ GoRouter createAppRouter({
           location == AppRoutePath.started || location == AppRoutePath.login;
       final isPublicRoute = isAuthRoute || location == AppRoutePath.offline;
 
+      if (authSessionController.status == AuthSessionStatus.unknown) {
+        return location == AppRoutePath.started ? null : AppRoutePath.started;
+      }
+
       if (authSessionController.isAuthenticated && isAuthRoute) {
         return AppRoutePath.requisitions;
       }

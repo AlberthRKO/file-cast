@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 enum Flavor { development, production, staging, cliente1, cliente2 }
 
 class Config {
@@ -51,15 +53,40 @@ class Config {
   static String get baseUrl {
     switch (appFlavor) {
       case Flavor.development:
-        return 'https://dev-api.example.com';
+        return _developmentBaseUrl;
       case Flavor.staging:
-        return 'https://staging-api.example.com';
+        return const String.fromEnvironment(
+          'BASE_URL_FILE_CAST',
+          defaultValue: 'https://staging-api.example.com',
+        );
       case Flavor.production:
-        return 'https://api.example.com';
+        return const String.fromEnvironment(
+          'BASE_URL_FILE_CAST',
+          defaultValue: 'https://api.example.com',
+        );
       case Flavor.cliente1:
-        return 'https://api-cliente1.example.com';
+        return const String.fromEnvironment(
+          'BASE_URL_FILE_CAST',
+          defaultValue: 'https://api-cliente1.example.com',
+        );
       case Flavor.cliente2:
-        return 'https://api-cliente2.example.com';
+        return const String.fromEnvironment(
+          'BASE_URL_FILE_CAST',
+          defaultValue: 'https://api-cliente2.example.com',
+        );
     }
+  }
+
+  static String get _developmentBaseUrl {
+    const configuredBaseUrl = String.fromEnvironment('BASE_URL_FILE_CAST');
+    if (configuredBaseUrl.isNotEmpty) return configuredBaseUrl;
+
+    // Desde Android Emulator, localhost apunta al propio emulador. La
+    // dirección especial 10.0.2.2 apunta al equipo anfitrión.
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      return 'https://0dpchkdj-3000.brs.devtunnels.ms';
+    }
+
+    return 'https://0dpchkdj-3000.brs.devtunnels.ms';
   }
 }

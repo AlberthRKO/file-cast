@@ -1,5 +1,6 @@
 import 'package:file_cast/core/errors/either.dart';
 import 'package:file_cast/core/errors/failures.dart';
+import 'package:file_cast/domain/entities/user_entity.dart';
 import 'package:file_cast/domain/repositories/auth_repository.dart';
 import 'package:file_cast/ui/features/auth/login/view_models/login_state.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
@@ -18,9 +19,12 @@ class LoginViewModel extends ChangeNotifier {
   LoginState _state = const LoginState();
   LoginState get state => _state;
 
+  UserEntity? _pendingAuthenticatedUser;
+
   bool get isSubmitting => _state.phase == LoginPhase.submitting;
 
   void updateDocument(String value) {
+    _pendingAuthenticatedUser = null;
     _state = _state.copyWith(
       documentNumber: value,
       documentError: null,
@@ -31,6 +35,7 @@ class LoginViewModel extends ChangeNotifier {
   }
 
   void updatePassword(String value) {
+    _pendingAuthenticatedUser = null;
     _state = _state.copyWith(
       password: value,
       passwordError: null,
@@ -63,7 +68,7 @@ class LoginViewModel extends ChangeNotifier {
   }
 
   Future<void> submit() async {
-    if (isSubmitting) return;
+    if (isSubmitting || _pendingAuthenticatedUser != null) return;
 
     final documentError = validateDocument(_state.documentNumber);
     final passwordError = validatePassword(_state.password);
@@ -93,15 +98,27 @@ class LoginViewModel extends ChangeNotifier {
 
     switch (result) {
       case Left(leftValue: final failure):
+        _pendingAuthenticatedUser = null;
         _state = _state.copyWith(
           errorMessage: _messageFromFailure(failure),
           phase: LoginPhase.error,
         );
       case Right(rightValue: final user):
-        _sessionController.authenticated(user);
+        _pendingAuthenticatedUser = user;
         _state = _state.copyWith(phase: LoginPhase.success);
     }
     notifyListeners();
+  }
+
+  /// Completes the session after the UI has presented the successful response.
+  ///
+  /// Keeping this transition separate lets the login View show the global
+  /// feedback sheet before the router redirects to the protected area.
+  void completeAuthentication() {
+    final user = _pendingAuthenticatedUser;
+    if (user == null) return;
+    _pendingAuthenticatedUser = null;
+    _sessionController.authenticated(user);
   }
 
   String _messageFromFailure(Failure failure) {

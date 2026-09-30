@@ -30,7 +30,7 @@ La recomendación es construir primero un MVP Android de extremo a extremo y man
 | Capacidad | Estado observado | Resultado |
 |---|---|---|
 | Flavors Flutter | `development`, `staging`, `production`, `cliente1`, `cliente2` | Base disponible |
-| Login | Formulario visual; el botón navega directamente al home | Mock, sin autenticación real |
+| Login | Formulario MVVM conectado a `file-cast-back /api/v1/auth/*`, tokens seguros, restauración y refresh | Implementado en la rama `feat/implemetacion-login`; falta validación del propietario |
 | Listado de requisas | Feature MVVM adaptativa con lista/grid/tabla, filtros y carga progresiva | Mock detrás de `RequisitionRepository` in-memory; paginación real de API pendiente |
 | Crear requisa | Ruta `/requisitions/new` con modo CUD/persona, busquedas, fecha/hora, ubicacion visual y navegacion a conexion | Parcial; registro simulado, mapa/GPS nativo y persistencia offline reales pendientes |
 | Detalle de requisa | Ruta, card de caso, secciones de evidencias mock y acciones desde hoja inferior | Parcial; backend y persistencia pendientes |
@@ -77,9 +77,9 @@ La documentación [ADB_HANDSHAKE.md](ADB_HANDSHAKE.md) describe las fases 1 a 5,
 ### Flujo Flutter de negocio
 
 - Login y Started viven en `lib/ui/features/`, con navegación declarativa y estado separado de la composición visual.
-- La interfaz `AuthRepository` y los casos de uso existen, pero todavía no hay una implementación real registrada.
+- La interfaz `AuthRepository`, el repositorio remoto y el gestor de sesión persistente ya están registrados por inyección; los casos de uso siguen siendo reutilizables por las Views.
 - El listado usa un `RequisitionListViewModel`, estado Freezed y un `RequisitionRepository` in-memory registrado por inyección. Crear y abrir detalle siguen pendientes de sus rutas/features reales.
-- La inyección todavía necesita repositorios reales para autenticación, API, caché, evidencias y adquisición; el repositorio de listado actual es reemplazable y solo conserva el prototipo visual.
+- La inyección ya registra autenticación remota, sesión persistente y refresh; todavía necesita repositorios reales para requisas, API de negocio, caché y adquisición. El repositorio de listado actual conserva el prototipo visual.
 
 La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto, `MaterialApp.router`, `go_router`, tema central y adaptación por constraints. Se retiraron `lib/presentation`, ScreenUtil, los helpers por porcentaje/orientación y las rutas imperativas. La consola técnica de conexión fue sustituida por ViewModel, repositorio y servicio de plataforma; la deuda principal de adquisición pasa a ser persistencia/ledger, recuperación de sesión, errores tipados y validación física.
 
@@ -112,7 +112,7 @@ La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto,
 
 ### P1 — riesgos de producto y datos
 
-1. El login y las requisas son mocks.
+1. Las requisas y sus sesiones todavía son mocks; el login real ya está implementado, pero aún debe validarse contra el backend local y el entorno institucional.
 2. No hay API contractual, paginación real, control de concurrencia ni resolución de conflictos.
 3. No hay máquina de estados de requisa (`borrador`, `en progreso`, `finalizada`, `sellada`, etc.).
 4. No hay protección para impedir modificar una requisa finalizada.

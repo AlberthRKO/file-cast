@@ -80,15 +80,6 @@ class LoginForm extends StatelessWidget {
               textInputAction: TextInputAction.done,
               onFieldSubmitted: (_) => onSubmit(),
             ),
-            if (state.errorMessage != null) ...[
-              const SizedBox(height: AppSpace.m),
-              Text(
-                state.errorMessage!,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.error,
-                ),
-              ),
-            ],
             const SizedBox(height: AppSpace.xl),
             AppActionButton(
               label: 'Iniciar Sesión',

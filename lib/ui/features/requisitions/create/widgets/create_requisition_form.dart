@@ -1,6 +1,7 @@
 import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:file_cast/ui/core/widgets/app_form_input_icon.dart';
+import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/create/view_models/create_requisition_state.dart';
 import 'package:file_cast/ui/features/requisitions/create/view_models/create_requisition_view_model.dart';
 import 'package:file_cast/ui/features/requisitions/create/widgets/requisition_location_picker.dart';
@@ -58,15 +59,6 @@ class CreateRequisitionForm extends StatelessWidget {
               ),
               const SizedBox(height: AppSpace.m),
               _OfflineNotice(),
-              if (state.errorMessage != null) ...[
-                const SizedBox(height: AppSpace.m),
-                Text(
-                  state.errorMessage!,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
-                ),
-              ],
             ],
           ),
         ),
@@ -540,10 +532,11 @@ class _ProcedureSection extends StatelessWidget {
                     width: vertical ? double.infinity : 136,
                     child: FilledButton.tonalIcon(
                       onPressed: () async {
-                        final point = await showModalBottomSheet<GeoPoint>(
+                        final point = await showAppModalBottomSheet<GeoPoint>(
                           context: context,
-                          isScrollControlled: true,
-                          useSafeArea: true,
+                          useSafeArea: false,
+                          enableDrag: false,
+                          backgroundColor: Colors.transparent,
                           builder: (_) => RequisitionLocationPicker(
                             initialPoint: location,
                           ),

@@ -16,12 +16,16 @@ class Http {
     required String ip,
     String? uniqueDeviceId,
     Future<String?> Function()? tokenProvider,
-  })  : _client = client,
-        _baseUrl = baseUrl,
-        _userAgent = userAgent,
-        _ip = ip,
-        _uniqueDeviceId = uniqueDeviceId,
-        _tokenProvider = tokenProvider;
+    Future<bool> Function()? onUnauthorized,
+    VoidCallback? onSessionExpired,
+  }) : _client = client,
+       _baseUrl = baseUrl,
+       _userAgent = userAgent,
+       _ip = ip,
+       _uniqueDeviceId = uniqueDeviceId,
+       _tokenProvider = tokenProvider,
+       _onUnauthorized = onUnauthorized,
+       _onSessionExpired = onSessionExpired;
 
   final Client _client;
   final String _baseUrl;
@@ -30,8 +34,30 @@ class Http {
   //final IpServices _ipServices;
   final String? _uniqueDeviceId;
   final Future<String?> Function()? _tokenProvider;
+  final Future<bool> Function()? _onUnauthorized;
+  final VoidCallback? _onSessionExpired;
 
   String get xAplicacion => appMp;
+
+  Future<Response> _sendRequest({
+    required HttpMethod method,
+    required Uri url,
+    required Map<String, String> headers,
+    required String body,
+    required Duration timeOut,
+  }) {
+    return switch (method) {
+      HttpMethod.get => _client.get(url, headers: headers).timeout(timeOut),
+      HttpMethod.post =>
+        _client.post(url, headers: headers, body: body).timeout(timeOut),
+      HttpMethod.put =>
+        _client.put(url, headers: headers, body: body).timeout(timeOut),
+      HttpMethod.patch =>
+        _client.patch(url, headers: headers, body: body).timeout(timeOut),
+      HttpMethod.delete =>
+        _client.delete(url, headers: headers, body: body).timeout(timeOut),
+    };
+  }
 
   //static Function()? onUnauthorized;
 
@@ -93,8 +119,6 @@ class Http {
         ...headers,
       };
 
-      late final Response response;
-
       final bodyString = json.encode(body);
 
       // antes de hacer la solicitud mandamos a log la url
@@ -106,56 +130,43 @@ class Http {
         'startTime': DateTime.now().toString(),
       };
 
-      switch (method) {
-        case HttpMethod.get:
-          response = await _client
-              .get(
-                url,
-                headers: requestHeaders,
-              )
-              .timeout(timeOut);
-        case HttpMethod.post:
-          response = await _client
-              .post(
-                url,
-                headers: requestHeaders,
-                body: bodyString,
-              )
-              .timeout(timeOut);
-        case HttpMethod.put:
-          response = await _client
-              .put(
-                url,
-                headers: requestHeaders,
-                body: bodyString,
-              )
-              .timeout(timeOut);
-        case HttpMethod.patch:
-          response = await _client
-              .patch(
-                url,
-                headers: requestHeaders,
-                body: bodyString,
-              )
-              .timeout(timeOut);
-        case HttpMethod.delete:
-          response = await _client
-              .delete(
-                url,
-                headers: requestHeaders,
-                body: bodyString,
-              )
-              .timeout(timeOut);
+      var response = await _sendRequest(
+        method: method,
+        url: url,
+        headers: requestHeaders,
+        body: bodyString,
+        timeOut: timeOut,
+      );
+
+      if (response.statusCode == 401 && _onUnauthorized != null) {
+        final refreshed = await _onUnauthorized!();
+        if (refreshed) {
+          final refreshedToken = await _tokenProvider?.call();
+          final retryHeaders = <String, String>{...requestHeaders};
+          if (refreshedToken != null && refreshedToken.isNotEmpty) {
+            retryHeaders['Authorization'] = 'Bearer $refreshedToken';
+          }
+          response = await _sendRequest(
+            method: method,
+            url: url,
+            headers: retryHeaders,
+            body: bodyString,
+            timeOut: timeOut,
+          );
+        }
+        if (response.statusCode == 401) {
+          _onSessionExpired?.call();
+        }
       }
 
       final statusCode = response.statusCode;
       final responseBody = isImage
           ? response
           : isFile
-              ? response
-              : isFileV2
-                  ? response.bodyBytes
-                  : parserResponseBody(response.body);
+          ? response
+          : isFileV2
+          ? response.bodyBytes
+          : parserResponseBody(response.body);
       //print("Aqui muestra lo que devuelve el responseBody: $responseBody");
       logs = {
         ...logs,
@@ -172,17 +183,10 @@ class Http {
       }
 
       if (statusCode == 401) {
-        /* if (onUnauthorized != null) {
-          onUnauthorized!();
-        } */
-        return Either.left(
-          ErrorModel.fromJson(responseBody as Map<String, dynamic>),
-        );
+        return Either.left(_errorFromResponse(responseBody, statusCode));
       }
 
-      return Either.left(
-        ErrorModel.fromJson(responseBody as Map<String, dynamic>),
-      );
+      return Either.left(_errorFromResponse(responseBody, statusCode));
     } catch (e, s) {
       stackTrace = s;
       logs = {
@@ -214,6 +218,18 @@ class Http {
         );
       }
     }
+  }
+
+  ErrorModel _errorFromResponse(dynamic responseBody, int statusCode) {
+    if (responseBody is Map) {
+      final body = Map<String, dynamic>.from(responseBody);
+      body['status'] ??= statusCode;
+      return ErrorModel.fromJson(body);
+    }
+    return ErrorModel(
+      message: responseBody is String ? responseBody : 'Error HTTP $statusCode',
+      status: statusCode,
+    );
   }
 
   Future<Either<ErrorModel, R>> multipartRequest<R>(
@@ -282,17 +298,12 @@ class Http {
       }
 
       if (statusCode == 401) {
-        /* if (onUnauthorized != null) {
-          onUnauthorized!();
-        } */
-        return Either.left(
-          ErrorModel.fromJson(parsedBody as Map<String, dynamic>),
-        );
+        final refreshed = await _onUnauthorized?.call() ?? false;
+        if (!refreshed) _onSessionExpired?.call();
+        return Either.left(_errorFromResponse(parsedBody, statusCode));
       }
 
-      return Either.left(
-        ErrorModel.fromJson(parsedBody as Map<String, dynamic>),
-      );
+      return Either.left(_errorFromResponse(parsedBody, statusCode));
     } catch (e, s) {
       stackTrace = s;
       logs = {
@@ -360,9 +371,7 @@ class Http {
 
       // Añadir archivos
       // request.files.addAll(files);
-      if (files != null) {
-        request.files.addAll(files);
-      }
+      if (files != null) request.files.addAll(files);
 
       logs = {
         'url': url.toString(),
@@ -389,17 +398,12 @@ class Http {
       }
 
       if (statusCode == 401) {
-        /* if (onUnauthorized != null) {
-          onUnauthorized!();
-        } */
-        return Either.left(
-          ErrorModel.fromJson(parsedBody as Map<String, dynamic>),
-        );
+        final refreshed = await _onUnauthorized?.call() ?? false;
+        if (!refreshed) _onSessionExpired?.call();
+        return Either.left(_errorFromResponse(parsedBody, statusCode));
       }
 
-      return Either.left(
-        ErrorModel.fromJson(parsedBody as Map<String, dynamic>),
-      );
+      return Either.left(_errorFromResponse(parsedBody, statusCode));
     } catch (e, s) {
       stackTrace = s;
       logs = {
@@ -469,9 +473,12 @@ Map<String, String> _redactHeaders(Map<String, String> headers) {
   for (final entry in headers.entries) {
     final key = entry.key.toLowerCase();
     redacted[entry.key] =
-        key == 'authorization' || key == 'cookie' || key == 'idempotency-key'
-            ? '[REDACTED]'
-            : entry.value;
+        key == 'authorization' ||
+            key == 'cookie' ||
+            key == 'idempotency-key' ||
+            key == 'x-dispositivo-unico'
+        ? '[REDACTED]'
+        : entry.value;
   }
   return redacted;
 }

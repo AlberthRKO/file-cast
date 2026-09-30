@@ -2,7 +2,7 @@ import 'package:file_cast/core/adb/adb_client.dart';
 import 'package:file_cast/core/config/config.dart';
 import 'package:file_cast/core/network/http.dart';
 import 'package:file_cast/core/storage/secure_storage_service.dart';
-import 'package:file_cast/data/repositories/in_memory_auth_repository.dart';
+import 'package:file_cast/data/repositories/remote_auth_repository.dart';
 import 'package:file_cast/data/repositories/acquisition_repository_impl.dart';
 import 'package:file_cast/data/repositories/in_memory_requisition_repository.dart';
 import 'package:file_cast/data/repositories/in_memory_requisition_detail_repository.dart';
@@ -12,6 +12,7 @@ import 'package:file_cast/data/services/android_acquisition_platform_service.dar
 import 'package:file_cast/data/services/evidence_picker_service.dart';
 import 'package:file_cast/data/services/evidence_crypto_service.dart';
 import 'package:file_cast/data/services/evidence_sync_service.dart';
+import 'package:file_cast/data/services/auth_session_service.dart';
 import 'package:file_cast/data/services/local_evidence_database_service.dart';
 import 'package:file_cast/data/services/remote_document_preview_service.dart';
 import 'package:file_cast/domain/repositories/auth_repository.dart';
@@ -49,17 +50,33 @@ class DependencyInjection {
       ProxyProvider<EvidenceCryptoService, EvidenceDecryptionService>(
         update: (_, crypto, previous) => crypto,
       ),
-      ProxyProvider<SecureStorageService, Http>(
-        update: (_, storage, previous) => Http(
+      ProxyProvider<SecureStorageService, AuthSessionService>(
+        update: (_, storage, previous) => AuthSessionService(
+          client: http.Client(),
+          storage: storage,
+          baseUrl: Config.baseUrl,
+        ),
+      ),
+      ProxyProvider<AuthSessionService, AuthRepository>(
+        update: (_, sessionService, previous) => RemoteAuthRepository(
+          sessionService: sessionService,
+        ),
+      ),
+      ChangeNotifierProvider<AuthSessionController>(
+        create: (context) => AuthSessionController(
+          authRepository: context.read<AuthRepository>(),
+        )..restore(),
+      ),
+      ProxyProvider2<AuthSessionService, AuthSessionController, Http>(
+        update: (_, sessionService, sessionController, previous) => Http(
           client: http.Client(),
           baseUrl: Config.baseUrl,
           userAgent: 'FileCast',
           ip: '',
-          tokenProvider: storage.getToken,
+          tokenProvider: sessionService.getValidAccessToken,
+          onUnauthorized: sessionService.refreshTokenIfNeeded,
+          onSessionExpired: sessionController.unauthenticated,
         ),
-      ),
-      Provider<AuthRepository>(
-        create: (_) => InMemoryAuthRepository(),
       ),
       Provider<RequisitionRepository>(
         create: (_) => const InMemoryRequisitionRepository(),
@@ -132,9 +149,6 @@ class DependencyInjection {
                   documentPreviewService: documentPreviewService,
                   syncService: syncService,
                 ),
-      ),
-      ChangeNotifierProvider<AuthSessionController>(
-        create: (_) => AuthSessionController(),
       ),
       ProxyProvider<AuthSessionController, GoRouter>(
         update: (_, sessionController, previousRouter) =>

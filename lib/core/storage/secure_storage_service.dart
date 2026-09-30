@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:file_cast/core/constants/storage_keys.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -14,6 +16,40 @@ class SecureStorageService {
   Future<void> saveToken(String token) =>
       _storage.write(key: StorageKeys.token, value: token);
   Future<void> deleteToken() => _storage.delete(key: StorageKeys.token);
+
+  Future<String?> getRefreshToken() =>
+      _storage.read(key: StorageKeys.refreshToken);
+  Future<void> saveRefreshToken(String token) =>
+      _storage.write(key: StorageKeys.refreshToken, value: token);
+  Future<void> deleteRefreshToken() =>
+      _storage.delete(key: StorageKeys.refreshToken);
+
+  Future<String?> getTokenExpiresAt() =>
+      _storage.read(key: StorageKeys.tokenExpiresAt);
+  Future<void> saveTokenExpiresAt(String value) =>
+      _storage.write(key: StorageKeys.tokenExpiresAt, value: value);
+  Future<void> deleteTokenExpiresAt() =>
+      _storage.delete(key: StorageKeys.tokenExpiresAt);
+
+  Future<String?> getAuthenticatedUser() =>
+      _storage.read(key: StorageKeys.authenticatedUser);
+  Future<void> saveAuthenticatedUser(Map<String, dynamic> user) => _storage
+      .write(key: StorageKeys.authenticatedUser, value: jsonEncode(user));
+  Future<void> deleteAuthenticatedUser() =>
+      _storage.delete(key: StorageKeys.authenticatedUser);
+
+  Future<String?> getDeviceId() => _storage.read(key: StorageKeys.deviceId);
+  Future<void> saveDeviceId(String value) =>
+      _storage.write(key: StorageKeys.deviceId, value: value);
+
+  Future<void> clearAuthSession() async {
+    await Future.wait([
+      deleteToken(),
+      deleteRefreshToken(),
+      deleteTokenExpiresAt(),
+      deleteAuthenticatedUser(),
+    ]);
+  }
 
   Future<String?> getTokenAgetic() =>
       _storage.read(key: StorageKeys.tokenAgetic);
