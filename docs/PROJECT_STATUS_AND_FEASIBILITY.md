@@ -6,6 +6,7 @@ Limpieza de infraestructura Flutter: 31 de agosto de 2026
 Actualización de adquisición Android: 4 de septiembre de 2026
 Actualización de transferencia Android: 8 de septiembre de 2026
 Plan de adquisición USB iPhone: 10 de septiembre de 2026
+Actualización de cifrado local y outbox FCE: 29 de septiembre de 2026
 Alcance revisado: Flutter/Dart, Android nativo Kotlin, configuración iOS, documentación, historial Git reciente, mockups adjuntos y validadores locales.
 
 ## Dictamen ejecutivo
@@ -34,7 +35,7 @@ La recomendación es construir primero un MVP Android de extremo a extremo y man
 | Crear requisa | Ruta `/requisitions/new` con modo CUD/persona, busquedas, fecha/hora, ubicacion visual y navegacion a conexion | Parcial; registro simulado, mapa/GPS nativo y persistencia offline reales pendientes |
 | Detalle de requisa | Ruta, card de caso, secciones de evidencias mock y acciones desde hoja inferior | Parcial; backend y persistencia pendientes |
 | Archivos/evidencias por requisa | Resumen por categoría/peso, selector de imágenes, videos, audios y documentos, y carga simulada en memoria | Parcial; sin almacenamiento probatorio ni backend |
-| Offline y sincronización | Existen servicios generales de almacenamiento/conectividad, pero no un outbox de negocio | No implementado |
+| Offline y sincronización | SQLite SQLCipher, outbox de evidencias FCE y reintento al recuperar conectividad | Implementación local; sincronización real depende de sesión/autenticación API |
 | USB host Android | Detección, permisos, attach/detach | Implementado como prototipo |
 | ADB por USB | Handshake RSA, streams multiplexados, shell y push | Implementado como prototipo |
 | Espejo Android | scrcpy server 2.7, H.264, `MediaCodec` y `Texture` | Demostrado en código |
@@ -43,8 +44,9 @@ La recomendación es construir primero un MVP Android de extremo a extremo y man
 | Grabación | GOP H.264 acotado, `MediaMuxer`, contador, MP4 privado y SHA-256 | Implementado; corrección de finalización pendiente de revalidación física |
 | Transferencia desde objetivo | Browser de almacenamiento compartido con ADB Sync `LIST`/`STAT`/`RECV`, preview temporal de imágenes/videos/audios/PDF/DOCX/texto, selección múltiple, progreso, cancelación, temporal privado y SHA-256 | Implementación local inicial; falta validación física, preview ofimático legado, persistencia probatoria y deduplicación |
 | Integración iOS | `AppDelegate` estándar, sin canal/plugin de adquisición; plan USB/AFC documentado | No implementado; PoC diferida hasta cerrar Android |
-| Cadena de custodia | No hay ledger, manifiesto, hash por evidencia ni sellado | No implementado |
-| Pruebas | Solo helpers; no existen archivos `*_test.dart` | Ausentes |
+| Cifrado de evidencias | FCE AES-256-GCM por bloques, hashes plano/ciphertext y clave envuelta en bóveda segura | Implementado en código y documentado; recuperación institucional pendiente |
+| Cadena de custodia | No hay ledger, manifiesto, hash por evidencia ni sellado | Depende de la integración completa con el backend |
+| Pruebas | Existe prueba del servicio FCE | Debe ejecutarse con Flutter 3.35/Dart 3.9 en CI |
 
 ## Evidencia en el repositorio
 
@@ -90,7 +92,7 @@ La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto,
 ### P0 — imprescindibles antes de tratar archivos como evidencia
 
 1. **No existe cadena de custodia.** Cada evidencia debe tener identidad, fuente, operador, requisa, sesión de adquisición, timestamps UTC/monotónico, tamaño, MIME, método de captura, hash SHA-256 y eventos inmutables de custodia.
-2. **No existe almacenamiento probatorio.** Faltan cifrado local, escritura atómica, verificación tras escritura, protección de claves, cuota, recuperación después de cierre inesperado y borrado controlado.
+2. **La base probatoria local está en implementación inicial.** Ya existe cifrado FCE, SQLite SQLCipher, hashes y outbox; todavía faltan escritura atómica completa en todos los adaptadores, cuota, recuperación tras cierre inesperado, retención y borrado controlado.
 3. **El vínculo local todavía no es probatorio.** Las rutas, sesiones, carpetas y metadatos ya reciben `requisitionId` y `sessionId`, pero el catálogo continúa en memoria y falta un ledger persistente que impida reasignar o modificar evidencias.
 4. **El alcance iOS necesita redefinición contractual.** La captura/control por cable desde otro móvil no puede prometerse como equivalente a Android.
 5. **Se necesita autorización explícita y procedimiento operativo.** El producto debe registrar consentimiento/orden, operador y dispositivo antes de iniciar adquisición. La guía NIST de forense móvil separa preservación, adquisición, examen, análisis y reporte; la app debe reflejar esas fases.
@@ -114,7 +116,7 @@ La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto,
 2. No hay API contractual, paginación real, control de concurrencia ni resolución de conflictos.
 3. No hay máquina de estados de requisa (`borrador`, `en progreso`, `finalizada`, `sellada`, etc.).
 4. No hay protección para impedir modificar una requisa finalizada.
-5. No hay subida reanudable ni verificación de hash en servidor.
+5. No hay subida reanudable por partes ni recuperación institucional de claves.
 6. No hay telemetría segura, trazas correlacionadas o códigos de error estables.
 
 ### P2 — arquitectura, responsive y mantenibilidad
@@ -128,7 +130,8 @@ La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto,
 - `pubspec.yaml` exige Dart `^3.9.0` y Flutter `^3.35.0`.
 - El entorno activo durante la auditoría tiene Dart 3.6.0 y Flutter 3.27.1.
 - `flutter pub get` y `flutter analyze` no pudieron ejecutarse por esa incompatibilidad.
-- `flutter test` informó que no existen archivos terminados en `_test.dart`.
+- Se agregó `test/data/services/evidence_crypto_service_test.dart`; todavía no se
+  ejecutó porque el entorno activo no satisface el SDK mínimo del proyecto.
 - No hay configuración FVM/mise versionada que instale o seleccione el SDK requerido.
 
 Esto debe resolverse fijando una única versión de Flutter en CI y desarrollo antes de refactorizar.

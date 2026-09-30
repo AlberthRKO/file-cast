@@ -15,11 +15,13 @@ class Http {
     required String userAgent,
     required String ip,
     String? uniqueDeviceId,
-  }) : _client = client,
-       _baseUrl = baseUrl,
-       _userAgent = userAgent,
-       _ip = ip,
-       _uniqueDeviceId = uniqueDeviceId;
+    Future<String?> Function()? tokenProvider,
+  })  : _client = client,
+        _baseUrl = baseUrl,
+        _userAgent = userAgent,
+        _ip = ip,
+        _uniqueDeviceId = uniqueDeviceId,
+        _tokenProvider = tokenProvider;
 
   final Client _client;
   final String _baseUrl;
@@ -27,6 +29,7 @@ class Http {
   final String _ip;
   //final IpServices _ipServices;
   final String? _uniqueDeviceId;
+  final Future<String?> Function()? _tokenProvider;
 
   String get xAplicacion => appMp;
 
@@ -72,11 +75,13 @@ class Http {
         );
       }
 
+      final token = await _tokenProvider?.call();
       final Map<String, String> requestHeaders = {
         'x-aplicacion': isAppStatic ? 'roma' : xAplicacion,
         'x-user-ip': _ip,
         'user-agent': _userAgent,
         if (_uniqueDeviceId != null) 'x-dispositivo-unico': _uniqueDeviceId,
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
         if (isImage)
           'Accept': 'image/*'
         else if (isFile)
@@ -95,9 +100,9 @@ class Http {
       // antes de hacer la solicitud mandamos a log la url
       logs = {
         'url': url.toString(),
-        'headers': requestHeaders,
+        'headers': _redactHeaders(requestHeaders),
         'method': method.name,
-        'body': body,
+        'body': _redactValue(body),
         'startTime': DateTime.now().toString(),
       };
 
@@ -147,15 +152,15 @@ class Http {
       final responseBody = isImage
           ? response
           : isFile
-          ? response
-          : isFileV2
-          ? response.bodyBytes
-          : parserResponseBody(response.body);
+              ? response
+              : isFileV2
+                  ? response.bodyBytes
+                  : parserResponseBody(response.body);
       //print("Aqui muestra lo que devuelve el responseBody: $responseBody");
       logs = {
         ...logs,
         'statusCode': statusCode,
-        'responseBody': responseBody,
+        'responseBody': _redactValue(responseBody),
       };
 
       if (statusCode >= 200 && statusCode < 300) {
@@ -236,10 +241,12 @@ class Http {
       }
 
       final request = MultipartRequest(method.name, url);
+      final token = await _tokenProvider?.call();
 
       // Configurar headers
       request.headers.addAll({
         'x-aplicacion': xAplicacion,
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
         ...headers,
       });
 
@@ -252,7 +259,7 @@ class Http {
 
       logs = {
         'url': url.toString(),
-        'headers': request.headers,
+        'headers': _redactHeaders(request.headers),
         'method': method.name,
         'fields': fields,
         'file': files?.field,
@@ -267,7 +274,7 @@ class Http {
       logs = {
         ...logs,
         'statusCode': statusCode,
-        'responseBody': parsedBody,
+        'responseBody': _redactValue(parsedBody),
       };
 
       if (statusCode >= 200 && statusCode < 300) {
@@ -339,10 +346,12 @@ class Http {
       }
 
       final request = MultipartRequest(method.name, url);
+      final token = await _tokenProvider?.call();
 
       // Configurar headers
       request.headers.addAll({
         'x-aplicacion': xAplicacion,
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
         ...headers,
       });
 
@@ -357,7 +366,7 @@ class Http {
 
       logs = {
         'url': url.toString(),
-        'headers': request.headers,
+        'headers': _redactHeaders(request.headers),
         'method': method.name,
         'fields': fields,
         'files': files?.map((f) => f.field).toList(), // ⭐ Para un log más claro
@@ -372,7 +381,7 @@ class Http {
       logs = {
         ...logs,
         'statusCode': statusCode,
-        'responseBody': parsedBody,
+        'responseBody': _redactValue(parsedBody),
       };
 
       if (statusCode >= 200 && statusCode < 300) {
@@ -453,6 +462,40 @@ class Http {
   }) {
     return MultipartFile.fromString(field, value);
   }
+}
+
+Map<String, String> _redactHeaders(Map<String, String> headers) {
+  final redacted = <String, String>{};
+  for (final entry in headers.entries) {
+    final key = entry.key.toLowerCase();
+    redacted[entry.key] =
+        key == 'authorization' || key == 'cookie' || key == 'idempotency-key'
+            ? '[REDACTED]'
+            : entry.value;
+  }
+  return redacted;
+}
+
+dynamic _redactValue(dynamic value) {
+  if (value is Map) {
+    return {
+      for (final entry in value.entries)
+        entry.key: _isSensitiveKey(entry.key.toString())
+            ? '[REDACTED]'
+            : _redactValue(entry.value),
+    };
+  }
+  if (value is Iterable) return value.map(_redactValue).toList(growable: false);
+  return value;
+}
+
+bool _isSensitiveKey(String key) {
+  final normalized = key.toLowerCase();
+  return normalized.contains('authorization') ||
+      normalized.contains('token') ||
+      normalized.contains('password') ||
+      normalized.contains('wrappedkey') ||
+      normalized.contains('clave_envuelta');
 }
 
 // casos de Error

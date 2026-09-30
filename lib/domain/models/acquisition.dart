@@ -153,6 +153,15 @@ final class CapturedEvidence {
     required this.sha256,
     required this.createdAt,
     this.sourcePath,
+    this.mimeType,
+    this.encrypted = false,
+    this.encryptionAlgorithm,
+    this.encryptionVersion,
+    this.plaintextByteLength,
+    this.plaintextSha256,
+    this.aadHash,
+    this.wrappedKey,
+    this.keyVersion,
   });
 
   final String name;
@@ -161,4 +170,13 @@ final class CapturedEvidence {
   final String sha256;
   final DateTime createdAt;
   final String? sourcePath;
+  final String? mimeType;
+  final bool encrypted;
+  final String? encryptionAlgorithm;
+  final int? encryptionVersion;
+  final int? plaintextByteLength;
+  final String? plaintextSha256;
+  final String? aadHash;
+  final String? wrappedKey;
+  final int? keyVersion;
 }

@@ -11,6 +11,18 @@ final class ImportedEvidenceDraft {
     this.localPath,
     this.sha256,
     this.sourcePath,
+    this.sessionId,
+    this.mimeType,
+    this.acquisitionMethod,
+    this.encrypted = false,
+    this.encryptionAlgorithm,
+    this.encryptionVersion,
+    this.plaintextByteLength,
+    this.plaintextSha256,
+    this.aadHash,
+    this.wrappedKey,
+    this.keyVersion,
+    this.preserveSource = false,
   });
 
   final String name;
@@ -20,6 +32,18 @@ final class ImportedEvidenceDraft {
   final String? localPath;
   final String? sha256;
   final String? sourcePath;
+  final String? sessionId;
+  final String? mimeType;
+  final String? acquisitionMethod;
+  final bool encrypted;
+  final String? encryptionAlgorithm;
+  final int? encryptionVersion;
+  final int? plaintextByteLength;
+  final String? plaintextSha256;
+  final String? aadHash;
+  final String? wrappedKey;
+  final int? keyVersion;
+  final bool preserveSource;
 }
 
 final class RequisitionEvidence {
@@ -33,6 +57,16 @@ final class RequisitionEvidence {
     this.localPath,
     this.sha256,
     this.sourcePath,
+    this.sessionId,
+    this.mimeType,
+    this.encrypted = false,
+    this.encryptionAlgorithm,
+    this.encryptionVersion,
+    this.plaintextByteLength,
+    this.plaintextSha256,
+    this.aadHash,
+    this.wrappedKey,
+    this.keyVersion,
   });
 
   final String id;
@@ -44,6 +78,16 @@ final class RequisitionEvidence {
   final String? localPath;
   final String? sha256;
   final String? sourcePath;
+  final String? sessionId;
+  final String? mimeType;
+  final bool encrypted;
+  final String? encryptionAlgorithm;
+  final int? encryptionVersion;
+  final int? plaintextByteLength;
+  final String? plaintextSha256;
+  final String? aadHash;
+  final String? wrappedKey;
+  final int? keyVersion;
 }
 
 final class RequisitionDetail {

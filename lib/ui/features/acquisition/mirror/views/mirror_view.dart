@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:file_cast/domain/models/acquisition.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
+import 'package:file_cast/domain/services/evidence_decryption_service.dart';
 import 'package:file_cast/ui/core/navigation/route_args/mirror_route_args.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/view_models/mirror_view_model.dart';
@@ -477,7 +478,7 @@ class _EvidencePane extends StatelessWidget {
                 ? ListView.separated(
                     scrollDirection: Axis.horizontal,
                     itemCount: evidence.length,
-                    separatorBuilder: (_, _) =>
+                    separatorBuilder: (context, index) =>
                         const SizedBox(width: AppSpace.s),
                     itemBuilder: (_, index) => SizedBox(
                       width: 150,
@@ -521,6 +522,12 @@ class _EvidenceCard extends StatelessWidget {
             child: isImage
                 ? EvidenceThumbnail(
                     localPath: path,
+                    evidenceId: evidence.id,
+                    wrappedKey: evidence.wrappedKey,
+                    plaintextSha256: evidence.plaintextSha256,
+                    plaintextByteLength: evidence.plaintextByteLength,
+                    decryptionService: context
+                        .read<EvidenceDecryptionService>(),
                     fallback: const Icon(Icons.image_outlined, size: 36),
                   )
                 : Icon(
