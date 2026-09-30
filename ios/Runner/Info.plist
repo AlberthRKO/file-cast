@@ -33,6 +33,8 @@
 		<true />
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>File Cast necesita acceso a tus fotos para importarlas a la requisa seleccionada.</string>
+		<key>NSLocationWhenInUseUsageDescription</key>
+		<string>File Cast necesita tu ubicación mientras usas la aplicación para registrar el lugar del hecho.</string>
 		<key>UIApplicationSceneManifest</key>
 		<dict>
 			<key>UIApplicationSupportsMultipleScenes</key>

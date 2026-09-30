@@ -18,6 +18,7 @@ import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_card
 import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_filters.dart';
 import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_list_header.dart';
 import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_table.dart';
+import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_location_viewer.dart';
 import 'package:file_cast/ui/features/requisitions/create/views/create_requisition_view.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
 import 'package:flutter/material.dart';
@@ -211,6 +212,8 @@ class _RequisitionListViewState extends State<RequisitionListView> {
         hasMore: _viewModel.hasMore,
         canFinalize: widget.canFinalize,
         onPressed: _showDetailsPlaceholder,
+        onViewLocation: _showLocation,
+        locationFor: _viewModel.locationFor,
         onFinalize: _finalizeRequisition,
         onRefresh: _viewModel.refresh,
         isLoadingMore: _viewModel.isLoadingMore,
@@ -362,6 +365,29 @@ class _RequisitionListViewState extends State<RequisitionListView> {
     );
   }
 
+  Future<void> _showLocation(Requisition requisition) async {
+    final location = _viewModel.locationFor(requisition.id);
+    if (location == null || !location.isValid) {
+      await showAppErrorBottomSheet(
+        context,
+        'Esta requisa no tiene coordenadas de ubicación registradas.',
+      );
+      return;
+    }
+
+    await showAppModalBottomSheet<void>(
+      context: context,
+      enableDrag: false,
+      useSafeArea: false,
+      backgroundColor: Colors.transparent,
+      maxWidth: 560,
+      builder: (sheetContext) => RequisitionLocationViewer(
+        location: location,
+        onClose: () => Navigator.of(sheetContext).pop(),
+      ),
+    );
+  }
+
   Future<void> _finalizeRequisition(Requisition requisition) async {
     final confirmed = await showAppModalBottomSheet<bool>(
       context: context,
@@ -436,6 +462,8 @@ class _ContentResults extends StatelessWidget {
     required this.hasMore,
     required this.canFinalize,
     required this.onPressed,
+    required this.onViewLocation,
+    required this.locationFor,
     required this.onFinalize,
     required this.onRefresh,
     required this.isLoadingMore,
@@ -449,6 +477,8 @@ class _ContentResults extends StatelessWidget {
   final bool hasMore;
   final bool canFinalize;
   final ValueChanged<Requisition> onPressed;
+  final ValueChanged<Requisition> onViewLocation;
+  final RequisitionLocation? Function(String requisitionId) locationFor;
   final ValueChanged<Requisition> onFinalize;
   final Future<void> Function() onRefresh;
   final bool isLoadingMore;
@@ -464,6 +494,8 @@ class _ContentResults extends StatelessWidget {
         scrollController: scrollController,
         hasMore: hasMore,
         canFinalize: canFinalize,
+        locationFor: (requisition) => locationFor(requisition.id),
+        onViewLocation: onViewLocation,
         onFinalize: onFinalize,
         onRefresh: onRefresh,
         isLoadingMore: isLoadingMore,
@@ -501,6 +533,8 @@ class _ContentResults extends StatelessWidget {
                       requisition: items[index],
                       onPressed: () => onPressed(items[index]),
                       canFinalize: canFinalize,
+                      location: locationFor(items[index].id),
+                      onViewLocation: () => onViewLocation(items[index]),
                       onFinalize: () => onFinalize(items[index]),
                     ),
                     childCount: items.length,
@@ -540,6 +574,8 @@ class _ContentResults extends StatelessWidget {
                       requisition: item,
                       onPressed: () => onPressed(item),
                       canFinalize: canFinalize,
+                      location: locationFor(item.id),
+                      onViewLocation: () => onViewLocation(item),
                       onFinalize: () => onFinalize(item),
                     );
                   },

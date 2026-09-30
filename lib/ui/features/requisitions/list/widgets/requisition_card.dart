@@ -12,6 +12,8 @@ class RequisitionCard extends StatelessWidget {
     required this.requisition,
     required this.onPressed,
     required this.canFinalize,
+    this.location,
+    this.onViewLocation,
     this.onFinalize,
     super.key,
   });
@@ -19,6 +21,8 @@ class RequisitionCard extends StatelessWidget {
   final Requisition requisition;
   final VoidCallback onPressed;
   final bool canFinalize;
+  final RequisitionLocation? location;
+  final VoidCallback? onViewLocation;
   final VoidCallback? onFinalize;
 
   @override
@@ -81,6 +85,8 @@ class RequisitionCard extends StatelessWidget {
                   RequisitionActionsMenu(
                     requisition: requisition,
                     canFinalize: canFinalize,
+                    location: location,
+                    onViewLocation: onViewLocation,
                     onFinalize: onFinalize,
                   ),
                 ],

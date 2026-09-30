@@ -1,15 +1,12 @@
-import 'dart:developer';
-
 import 'package:file_cast/data/services/requisition_creation_service.dart';
 import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
-import 'package:flutter/foundation.dart';
 
 class RequisitionCreationRepositoryImpl
     implements RequisitionCreationRepository {
   const RequisitionCreationRepositoryImpl({
     required RequisitionCreationService service,
-    this.enableFallbackFixtures = true,
+    this.enableFallbackFixtures = false,
   }) : _service = service;
 
   final RequisitionCreationService _service;
@@ -38,36 +35,7 @@ class RequisitionCreationRepositoryImpl
 
   @override
   Future<CreateRequisitionResult> createDraft(CreateRequisitionDraft draft) {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final requisitionId = 'REQ-$now';
-    final sessionId = 'SES-$now';
-
-    if (kDebugMode) {
-      log(
-        {
-          'event': 'create_requisition_draft',
-          'mode': draft.mode.name,
-          'requisitionId': requisitionId,
-          'sessionId': sessionId,
-          'cud': draft.caseSummary?.cud,
-          'personCiTail': draft.personSummary?.ci.redactedTail,
-          'procedureAt': draft.procedureAt.toIso8601String(),
-          'location': {
-            'latitude': draft.location.latitude.toStringAsFixed(5),
-            'longitude': draft.location.longitude.toStringAsFixed(5),
-            'label': draft.location.label,
-          },
-        }.toString(),
-        name: 'CreateRequisition',
-      );
-    }
-
-    return Future.value(
-      CreateRequisitionResult(
-        requisitionId: requisitionId,
-        sessionId: sessionId,
-      ),
-    );
+    return _service.createDraft(draft);
   }
 
   List<EcosystemCaseSummary> _fallbackCases(String cud) {
@@ -94,12 +62,5 @@ class RequisitionCreationRepositoryImpl
       address: 'C/ Sanandita Nro. 1 - Sucre',
       phone: '79319449',
     );
-  }
-}
-
-extension on String {
-  String get redactedTail {
-    if (length <= 3) return '***';
-    return '***${substring(length - 3)}';
   }
 }

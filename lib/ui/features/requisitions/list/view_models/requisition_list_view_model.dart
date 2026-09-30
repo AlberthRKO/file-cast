@@ -25,9 +25,12 @@ class RequisitionListViewModel extends ChangeNotifier {
   bool _reloadWhenReady = false;
   String? _loadMoreError;
   String? _finalizingId;
+  final Map<String, RequisitionLocation> _locations = {};
 
   RequisitionListState get state => _state;
   List<Requisition> get visibleItems => _state.filteredItems;
+  RequisitionLocation? locationFor(String requisitionId) =>
+      _locations[requisitionId];
   bool get hasMore => _hasMore;
   bool get isLoadingMore => _isLoadingMore;
   String? get loadMoreError => _loadMoreError;
@@ -99,6 +102,9 @@ class RequisitionListViewModel extends ChangeNotifier {
         status: _state.statusFilter,
       );
       final merged = _mergeUnique(_state.items, page.items);
+      final incomingIds = page.items.map((item) => item.id).toSet();
+      _locations.removeWhere((id, _) => incomingIds.contains(id));
+      _locations.addAll(page.locations);
       _nextPage = page.page + 1;
       _hasMore = page.page < page.pageCount;
       final filtered = _filterByDate(merged);
@@ -175,6 +181,9 @@ class RequisitionListViewModel extends ChangeNotifier {
       if (requestId != _requestSequence) return;
 
       final filtered = _filterByDate(page.items);
+      final incomingIds = page.items.map((item) => item.id).toSet();
+      _locations.removeWhere((id, _) => incomingIds.contains(id));
+      _locations.addAll(page.locations);
       _nextPage = page.page + 1;
       _hasMore = page.page < page.pageCount;
       _state = _state.copyWith(

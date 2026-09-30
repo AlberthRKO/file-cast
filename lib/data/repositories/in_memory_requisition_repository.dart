@@ -30,11 +30,21 @@ class InMemoryRequisitionRepository implements RequisitionRepository {
     final pageCount = (filtered.length / safeLimit).ceil();
     final start = math.min((safePage - 1) * safeLimit, filtered.length);
     final end = math.min(start + safeLimit, filtered.length);
+    final pageItems = filtered.sublist(start, end);
 
     return (
-      items: List<Requisition>.unmodifiable(filtered.sublist(start, end)),
+      items: List<Requisition>.unmodifiable(pageItems),
       page: safePage,
       pageCount: pageCount,
+      locations: {
+        for (final item in pageItems)
+          if (item.id.hashCode.isEven)
+            item.id: RequisitionLocation(
+              latitude: -19.0478 + (item.id.hashCode % 100) / 100000,
+              longitude: -65.2592 + (item.id.hashCode % 100) / 100000,
+              label: 'Lugar de prueba',
+            ),
+      },
     );
   }
 

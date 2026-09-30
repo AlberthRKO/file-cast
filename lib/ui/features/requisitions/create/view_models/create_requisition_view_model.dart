@@ -2,23 +2,26 @@ import 'dart:async';
 
 import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
+import 'package:file_cast/data/services/location_service.dart';
 import 'package:file_cast/ui/features/requisitions/create/view_models/create_requisition_state.dart';
 import 'package:flutter/foundation.dart';
 
 class CreateRequisitionViewModel extends ChangeNotifier {
   CreateRequisitionViewModel({
     required RequisitionCreationRepository repository,
+    required LocationService locationService,
     RequisitionRegistrationMode initialMode =
         RequisitionRegistrationMode.existingCud,
   }) : _repository = repository,
+       _locationService = locationService,
        _state = CreateRequisitionState(
          mode: initialMode,
          procedureAt: DateTime.now(),
        );
 
   final RequisitionCreationRepository _repository;
+  final LocationService _locationService;
   Timer? _caseDebounce;
-  Timer? _personDebounce;
   int _caseSearchToken = 0;
   int _personSearchToken = 0;
 
@@ -102,24 +105,15 @@ class CreateRequisitionViewModel extends ChangeNotifier {
   }
 
   void updatePersonQuery(String value) {
-    _personDebounce?.cancel();
     _emit(
       _state.copyWith(
         personQuery: value,
         selectedPerson: null,
-        personResults: const [],
-        personSearchPhase: value.trim().length >= 4
-            ? AsyncPhase.loading
-            : AsyncPhase.initial,
+        personSearchPhase: AsyncPhase.initial,
         personError: null,
         errorMessage: null,
         createdResult: null,
       ),
-    );
-    if (value.trim().length < 4) return;
-    _personDebounce = Timer(
-      const Duration(milliseconds: 350),
-      () => searchPerson(),
     );
   }
 
@@ -134,7 +128,7 @@ class CreateRequisitionViewModel extends ChangeNotifier {
       if (token != _personSearchToken) return;
       _emit(
         _state.copyWith(
-          personResults: person == null ? const [] : [person],
+          selectedPerson: person,
           personSearchPhase: person == null
               ? AsyncPhase.empty
               : AsyncPhase.content,
@@ -149,19 +143,6 @@ class CreateRequisitionViewModel extends ChangeNotifier {
         ),
       );
     }
-  }
-
-  void selectPerson(PersonSummary value) {
-    _emit(
-      _state.copyWith(
-        selectedPerson: value,
-        personQuery: value.ci,
-        personResults: const [],
-        personSearchPhase: AsyncPhase.content,
-        personError: null,
-        createdResult: null,
-      ),
-    );
   }
 
   void updateProcedureAt(DateTime value) {
@@ -213,6 +194,35 @@ class CreateRequisitionViewModel extends ChangeNotifier {
         createdResult: null,
       ),
     );
+  }
+
+  Future<GeoPoint?> captureCurrentLocation() async {
+    _emit(
+      _state.copyWith(
+        isCapturingLocation: true,
+        locationError: null,
+      ),
+    );
+    try {
+      final location = await _locationService.captureCurrentLocation();
+      _emit(
+        _state.copyWith(
+          location: location,
+          isCapturingLocation: false,
+          locationError: null,
+          createdResult: null,
+        ),
+      );
+      return location;
+    } on LocationServiceException catch (error) {
+      _emit(
+        _state.copyWith(
+          isCapturingLocation: false,
+          locationError: error.message,
+        ),
+      );
+      return null;
+    }
   }
 
   Future<void> submit() async {
@@ -275,11 +285,11 @@ class CreateRequisitionViewModel extends ChangeNotifier {
           createdResult: result,
         ),
       );
-    } catch (_) {
+    } catch (error) {
       _emit(
         _state.copyWith(
           submitPhase: AsyncPhase.error,
-          errorMessage: 'No se pudo registrar la requisa.',
+          errorMessage: _messageFromError(error),
         ),
       );
     }
@@ -288,12 +298,16 @@ class CreateRequisitionViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _caseDebounce?.cancel();
-    _personDebounce?.cancel();
     super.dispose();
   }
 
   void _emit(CreateRequisitionState value) {
     _state = value;
     notifyListeners();
+  }
+
+  String _messageFromError(Object error) {
+    final message = error.toString().replaceFirst('Bad state: ', '').trim();
+    return message.isEmpty ? 'No se pudo registrar la requisa.' : message;
   }
 }

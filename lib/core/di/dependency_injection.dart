@@ -14,6 +14,7 @@ import 'package:file_cast/data/services/evidence_crypto_service.dart';
 import 'package:file_cast/data/services/evidence_sync_service.dart';
 import 'package:file_cast/data/services/auth_session_service.dart';
 import 'package:file_cast/data/services/local_evidence_database_service.dart';
+import 'package:file_cast/data/services/location_service.dart';
 import 'package:file_cast/data/services/remote_document_preview_service.dart';
 import 'package:file_cast/data/services/requisition_service.dart';
 import 'package:file_cast/domain/repositories/auth_repository.dart';
@@ -93,6 +94,7 @@ class DependencyInjection {
       Provider<RemoteDocumentPreviewService>(
         create: (_) => const RemoteDocumentPreviewService(),
       ),
+      Provider<LocationService>(create: (_) => const LocationService()),
       ProxyProvider3<
         EvidencePickerService,
         EvidenceCryptoService,
@@ -112,6 +114,7 @@ class DependencyInjection {
       ProxyProvider<RequisitionCreationService, RequisitionCreationRepository>(
         update: (_, service, previous) => RequisitionCreationRepositoryImpl(
           service: service,
+          enableFallbackFixtures: false,
         ),
       ),
       ProxyProvider3<

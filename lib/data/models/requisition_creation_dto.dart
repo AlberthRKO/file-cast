@@ -11,14 +11,24 @@ final class EcosystemCaseDto {
   });
 
   factory EcosystemCaseDto.fromJson(Map<String, dynamic> json) {
-    final divisions = _asList(json['casoCasosDivisiones']);
-    final people = _asList(json['suprCasosPersonas']);
-    final officials = _asList(json['persCasoFuncionarios']);
+    final divisions = _asList(
+      json['casoCasosDivisiones'] ?? json['divisions'] ?? json['divisiones'],
+    );
+    final people = _asList(
+      json['suprCasosPersonas'] ?? json['subjects'] ?? json['personas'],
+    );
+    final officials = _asList(
+      json['persCasoFuncionarios'] ?? json['officials'] ?? json['funcionarios'],
+    );
 
     return EcosystemCaseDto(
-      id: _asInt(json['id']),
-      cud: _asString(json['cud']) ?? 'Sin CUD',
-      type: _nestedName(json['casoTipoDenuncia']) ?? 'Sin tipo',
+      id: _asInt(json['id'] ?? json['casoId']),
+      cud: _asString(json['cud'] ?? json['codigoCud']) ?? 'Sin CUD',
+      type:
+          _nestedName(json['casoTipoDenuncia']) ??
+          _nestedName(json['tipoDenuncia']) ??
+          _asString(json['caseType']) ??
+          'Sin tipo',
       division: divisions
           .map(_divisionLabel)
           .where((value) => value.isNotEmpty)
@@ -57,22 +67,32 @@ final class EcosystemCaseDto {
     final map = _asMap(value);
     return _nestedName(map['division']) ??
         _nestedName(map['fiscaliaDivision']) ??
+        _nestedName(map['fiscalia']) ??
         _asString(map['nombre']) ??
+        _asString(map['name']) ??
         '';
   }
 
   static String _subjectLabel(Object? value) {
     final map = _asMap(value);
     final person = _asMap(map['suprPersona']);
+    final subject = <String, dynamic>{
+      ..._asMap(map['person']),
+      ..._asMap(map['persona']),
+    };
     final alias = _asString(map['alias']);
     final name =
         _asString(person['nombreCompleto']) ??
+        _asString(subject['nombreCompleto']) ??
         [
           _asString(person['nombres']),
           _asString(person['primerApellido']),
           _asString(person['segundoApellido']),
+          _asString(subject['nombres']),
+          _asString(subject['primerApellido']),
+          _asString(subject['segundoApellido']),
         ].whereType<String>().join(' ').trim();
-    return name.isNotEmpty ? name : alias ?? '';
+    return name.isNotEmpty ? name : alias ?? _asString(map['fullName']) ?? '';
   }
 
   static String _officialLabel(Object? value) {
@@ -82,6 +102,7 @@ final class EcosystemCaseDto {
     return _asString(map['nombreCompleto']) ??
         _asString(person['nombreCompleto']) ??
         _asString(funcionario['nombreCompleto']) ??
+        _asString(map['fullName']) ??
         _nestedName(map['cargo']) ??
         '';
   }
@@ -99,14 +120,29 @@ final class PersonSummaryDto {
 
   factory PersonSummaryDto.fromJson(Map<String, dynamic> json) {
     return PersonSummaryDto(
-      id: _asInt(json['id']),
-      name: _asString(json['nombreCompleto']) ?? 'Sin nombre',
-      ci: _asString(json['ci']) ?? 'Sin CI',
-      birthDate: DateTime.tryParse(_asString(json['fechaNacimiento']) ?? ''),
+      id: _asInt(json['id'] ?? json['personaId'] ?? json['segipPersonaId']),
+      name:
+          _asString(json['nombreCompleto']) ??
+          _asString(json['fullName']) ??
+          _joinName(json) ??
+          'Sin nombre',
+      ci:
+          _asString(json['ci']) ??
+          _asString(json['numeroDocumento']) ??
+          _asString(json['documentNumber']) ??
+          'Sin CI',
+      birthDate: DateTime.tryParse(
+        _asString(json['fechaNacimiento'] ?? json['birthDate']) ?? '',
+      ),
       address:
           _asString(json['domicilioDireccion']) ??
-          _asString(json['segipDireccion']),
-      phone: _asString(json['celular']) ?? _asString(json['domicilioTelefono']),
+          _asString(json['segipDireccion']) ??
+          _asString(json['address']),
+      phone:
+          _asString(json['celular']) ??
+          _asString(json['domicilioTelefono']) ??
+          _asString(json['domicilioCelular']) ??
+          _asString(json['phone']),
     );
   }
 
@@ -142,8 +178,21 @@ Map<String, dynamic> _asMap(Object? value) {
 }
 
 String? _nestedName(Object? value) {
+  if (value is String) return _asString(value);
   final map = _asMap(value);
-  return _asString(map['nombre']) ?? _asString(map['descripcion']);
+  return _asString(map['nombre']) ??
+      _asString(map['descripcion']) ??
+      _asString(map['name']) ??
+      _asString(map['label']);
+}
+
+String? _joinName(Map<String, dynamic> json) {
+  final value = [
+    _asString(json['nombres']),
+    _asString(json['primerApellido']),
+    _asString(json['segundoApellido']),
+  ].whereType<String>().join(' ').trim();
+  return value.isEmpty ? null : value;
 }
 
 String? _asString(Object? value) {

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
+import 'package:file_cast/data/services/location_service.dart';
 import 'package:file_cast/ui/core/adaptive/adaptive_layout.dart';
 import 'package:file_cast/ui/core/feedback/app_feedback.dart';
 import 'package:file_cast/ui/core/navigation/app_route.dart';
@@ -25,6 +26,7 @@ class CreateRequisitionRoute extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (context) => CreateRequisitionViewModel(
         repository: context.read<RequisitionCreationRepository>(),
+        locationService: context.read<LocationService>(),
         initialMode: initialMode,
       ),
       child: const _CreateRequisitionConnector(),
@@ -50,6 +52,7 @@ class CreateRequisitionSheet extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (context) => CreateRequisitionViewModel(
         repository: context.read<RequisitionCreationRepository>(),
+        locationService: context.read<LocationService>(),
         initialMode: initialMode,
       ),
       child: _CreateRequisitionSheetContent(

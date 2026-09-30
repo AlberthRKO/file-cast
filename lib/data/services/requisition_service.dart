@@ -62,14 +62,24 @@ class RequisitionService {
     final response = _asMap(envelope['response']);
     final data = response['data'];
     final pagination = _asMap(response['pagination']);
-    final items = data is List
-        ? data.whereType<Map<String, dynamic>>().map(_toDomain).toList()
-        : <Requisition>[];
+    final locations = <String, RequisitionLocation>{};
+    final items = <Requisition>[];
+    if (data is List) {
+      for (final rawItem in data.whereType<Map<String, dynamic>>()) {
+        final item = _toDomain(rawItem);
+        items.add(item);
+        final location = _locationFrom(rawItem);
+        if (location != null && location.isValid) {
+          locations[item.id] = location;
+        }
+      }
+    }
 
     return (
       items: List<Requisition>.unmodifiable(items),
       page: _asInt(pagination['page'], fallback: 1),
       pageCount: _asInt(pagination['pageCount']),
+      locations: Map<String, RequisitionLocation>.unmodifiable(locations),
     );
   }
 
@@ -96,6 +106,17 @@ class RequisitionService {
       isSynchronized: true,
       cud: cud,
       subjectName: subjectName,
+    );
+  }
+
+  RequisitionLocation? _locationFrom(Map<String, dynamic> json) {
+    final latitude = _asDouble(json['latitude']);
+    final longitude = _asDouble(json['longitude']);
+    if (latitude == null || longitude == null) return null;
+    return RequisitionLocation(
+      latitude: latitude,
+      longitude: longitude,
+      label: _asString(json['locationLabel']),
     );
   }
 
@@ -136,6 +157,11 @@ class RequisitionService {
   static int _asInt(Object? value, {int fallback = 0}) {
     if (value is int) return value;
     return int.tryParse(value?.toString() ?? '') ?? fallback;
+  }
+
+  static double? _asDouble(Object? value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
   }
 
   static DateTime? _asDate(Object? value) {

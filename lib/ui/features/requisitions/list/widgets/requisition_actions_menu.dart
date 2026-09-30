@@ -6,7 +6,7 @@ import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-enum RequisitionCardAction { finalize }
+enum RequisitionCardAction { viewLocation, finalize }
 
 /// Acciones mutables disponibles desde el listado.
 ///
@@ -16,12 +16,16 @@ class RequisitionActionsMenu extends StatelessWidget {
   const RequisitionActionsMenu({
     required this.requisition,
     required this.canFinalize,
+    this.location,
+    this.onViewLocation,
     this.onFinalize,
     super.key,
   });
 
   final Requisition requisition;
   final bool canFinalize;
+  final RequisitionLocation? location;
+  final VoidCallback? onViewLocation;
   final VoidCallback? onFinalize;
 
   bool get _canFinalize =>
@@ -30,9 +34,12 @@ class RequisitionActionsMenu extends StatelessWidget {
       (requisition.status == RequisitionStatus.draft ||
           requisition.status == RequisitionStatus.inProgress);
 
+  bool get _canViewLocation =>
+      location?.isValid == true && onViewLocation != null;
+
   @override
   Widget build(BuildContext context) {
-    if (!_canFinalize) return const SizedBox.shrink();
+    if (!_canFinalize && !_canViewLocation) return const SizedBox.shrink();
 
     final theme = Theme.of(context);
     final iconColor =
@@ -64,22 +71,36 @@ class RequisitionActionsMenu extends StatelessWidget {
               ),
             ),
             items: [
-              DropdownMenuItem<RequisitionCardAction>(
-                value: RequisitionCardAction.finalize,
-                child: _ActionMenuRow(
-                  iconAsset: 'lock.svg',
-                  label: 'Finalizar y sellar',
-                  color: theme.colorScheme.error,
+              if (_canViewLocation)
+                DropdownMenuItem<RequisitionCardAction>(
+                  value: RequisitionCardAction.viewLocation,
+                  child: _ActionMenuRow(
+                    iconAsset: 'punto.svg',
+                    label: 'Ver lugar del hecho',
+                    color: iconColor,
+                  ),
                 ),
-              ),
+              if (_canFinalize)
+                DropdownMenuItem<RequisitionCardAction>(
+                  value: RequisitionCardAction.finalize,
+                  child: _ActionMenuRow(
+                    iconAsset: 'lock.svg',
+                    label: 'Finalizar y sellar',
+                    color: theme.colorScheme.error,
+                  ),
+                ),
             ],
             onChanged: (action) {
-              if (action == RequisitionCardAction.finalize) {
-                onFinalize?.call();
+              if (action == null) return;
+              switch (action) {
+                case RequisitionCardAction.viewLocation:
+                  onViewLocation?.call();
+                case RequisitionCardAction.finalize:
+                  onFinalize?.call();
               }
             },
             dropdownStyleData: DropdownStyleData(
-              maxHeight: 160,
+              maxHeight: 220,
               width: menuWidth,
               padding: const EdgeInsets.symmetric(vertical: AppSpace.xs),
               decoration: BoxDecoration(
@@ -154,12 +175,14 @@ class RequisitionDetailsButton extends StatelessWidget {
 
 class _ActionMenuRow extends StatelessWidget {
   const _ActionMenuRow({
-    required this.iconAsset,
     required this.label,
     required this.color,
+    this.icon,
+    this.iconAsset,
   });
 
-  final String iconAsset;
+  final IconData? icon;
+  final String? iconAsset;
   final String label;
   final Color color;
 
@@ -167,11 +190,13 @@ class _ActionMenuRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        SvgPicture.asset(
-          '$assetImgIcon$iconAsset',
-          width: AppSize.iconM,
-          colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
-        ),
+        icon != null
+            ? Icon(icon, size: AppSize.iconM, color: color)
+            : SvgPicture.asset(
+                '$assetImgIcon$iconAsset',
+                width: AppSize.iconM,
+                colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+              ),
         const SizedBox(width: AppSpace.s),
         Expanded(
           child: Text(

@@ -9,10 +9,10 @@ final class CreateRequisitionState {
     this.selectedCase,
     this.personQuery = '',
     this.personSearchPhase = AsyncPhase.initial,
-    this.personResults = const [],
     this.selectedPerson,
     this.procedureAt,
     this.location,
+    this.isCapturingLocation = false,
     this.submitPhase = AsyncPhase.initial,
     this.errorMessage,
     this.cudError,
@@ -29,10 +29,10 @@ final class CreateRequisitionState {
   final EcosystemCaseSummary? selectedCase;
   final String personQuery;
   final AsyncPhase personSearchPhase;
-  final List<PersonSummary> personResults;
   final PersonSummary? selectedPerson;
   final DateTime? procedureAt;
   final GeoPoint? location;
+  final bool isCapturingLocation;
   final AsyncPhase submitPhase;
   final String? errorMessage;
   final String? cudError;
@@ -45,6 +45,7 @@ final class CreateRequisitionState {
 
   bool get canSubmit =>
       !isSubmitting &&
+      !isCapturingLocation &&
       procedureAt != null &&
       location != null &&
       switch (mode) {
@@ -60,10 +61,10 @@ final class CreateRequisitionState {
     Object? selectedCase = _sentinel,
     String? personQuery,
     AsyncPhase? personSearchPhase,
-    List<PersonSummary>? personResults,
     Object? selectedPerson = _sentinel,
     Object? procedureAt = _sentinel,
     Object? location = _sentinel,
+    bool? isCapturingLocation,
     AsyncPhase? submitPhase,
     Object? errorMessage = _sentinel,
     Object? cudError = _sentinel,
@@ -82,7 +83,6 @@ final class CreateRequisitionState {
           : selectedCase as EcosystemCaseSummary?,
       personQuery: personQuery ?? this.personQuery,
       personSearchPhase: personSearchPhase ?? this.personSearchPhase,
-      personResults: personResults ?? this.personResults,
       selectedPerson: selectedPerson == _sentinel
           ? this.selectedPerson
           : selectedPerson as PersonSummary?,
@@ -90,6 +90,7 @@ final class CreateRequisitionState {
           ? this.procedureAt
           : procedureAt as DateTime?,
       location: location == _sentinel ? this.location : location as GeoPoint?,
+      isCapturingLocation: isCapturingLocation ?? this.isCapturingLocation,
       submitPhase: submitPhase ?? this.submitPhase,
       errorMessage: errorMessage == _sentinel
           ? this.errorMessage

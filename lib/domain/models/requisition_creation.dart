@@ -79,11 +79,8 @@ final class CreateRequisitionDraft {
 }
 
 final class CreateRequisitionResult {
-  const CreateRequisitionResult({
-    required this.requisitionId,
-    required this.sessionId,
-  });
+  const CreateRequisitionResult({required this.requisitionId, this.sessionId});
 
   final String requisitionId;
-  final String sessionId;
+  final String? sessionId;
 }

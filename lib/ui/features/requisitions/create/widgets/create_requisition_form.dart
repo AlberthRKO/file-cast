@@ -1,5 +1,6 @@
 import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
+import 'package:file_cast/ui/core/feedback/app_feedback.dart';
 import 'package:file_cast/ui/core/widgets/app_form_input_icon.dart';
 import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/create/view_models/create_requisition_state.dart';
@@ -30,18 +31,21 @@ class CreateRequisitionForm extends StatefulWidget {
 class _CreateRequisitionFormState extends State<CreateRequisitionForm> {
   late final FocusNode _cudFocusNode;
   late final FocusNode _personFocusNode;
+  late final TextEditingController _personController;
 
   @override
   void initState() {
     super.initState();
     _cudFocusNode = FocusNode(debugLabel: 'requisition-cud-search');
     _personFocusNode = FocusNode(debugLabel: 'requisition-person-search');
+    _personController = TextEditingController();
   }
 
   @override
   void dispose() {
     _cudFocusNode.dispose();
     _personFocusNode.dispose();
+    _personController.dispose();
     super.dispose();
   }
 
@@ -85,14 +89,15 @@ class _CreateRequisitionFormState extends State<CreateRequisitionForm> {
                 _PersonLookupSection(
                   state: state,
                   focusNode: _personFocusNode,
+                  controller: _personController,
                   onQueryChanged: widget.viewModel.updatePersonQuery,
-                  onSelected: widget.viewModel.selectPerson,
+                  onSearch: widget.viewModel.searchPerson,
                 ),
               const SizedBox(height: AppSpace.m),
               _ProcedureSection(
                 state: state,
                 onDateChanged: widget.viewModel.updateProcedureAt,
-                onLocationChanged: widget.viewModel.updateLocation,
+                onCaptureLocation: _captureLocation,
               ),
               const SizedBox(height: AppSpace.m),
               _OfflineNotice(),
@@ -106,6 +111,37 @@ class _CreateRequisitionFormState extends State<CreateRequisitionForm> {
         ),
       ],
     );
+  }
+
+  Future<void> _captureLocation() async {
+    final point = await widget.viewModel.captureCurrentLocation();
+    if (!mounted) return;
+    if (point == null) {
+      final message = widget.viewModel.state.locationError;
+      if (message != null) {
+        await showAppErrorBottomSheet(context, message);
+      }
+      return;
+    }
+
+    final current = widget.viewModel.state.location;
+    final editedPoint = await showAppModalBottomSheet<GeoPoint>(
+      context: context,
+      useSafeArea: false,
+      enableDrag: false,
+      backgroundColor: Colors.transparent,
+      maxWidth: 560,
+      builder: (_) => RequisitionLocationPicker(
+        initialPoint: GeoPoint(
+          latitude: point.latitude,
+          longitude: point.longitude,
+          label: current?.label,
+        ),
+      ),
+    );
+    if (editedPoint != null && mounted) {
+      widget.viewModel.updateLocation(editedPoint);
+    }
   }
 }
 
@@ -436,14 +472,16 @@ class _PersonLookupSection extends StatelessWidget {
   const _PersonLookupSection({
     required this.state,
     required this.focusNode,
+    required this.controller,
     required this.onQueryChanged,
-    required this.onSelected,
+    required this.onSearch,
   });
 
   final CreateRequisitionState state;
   final FocusNode focusNode;
+  final TextEditingController controller;
   final ValueChanged<String> onQueryChanged;
-  final ValueChanged<PersonSummary> onSelected;
+  final VoidCallback onSearch;
 
   @override
   Widget build(BuildContext context) {
@@ -456,42 +494,59 @@ class _PersonLookupSection extends StatelessWidget {
           const _RequiredLabel(label: 'Carnet de identidad'),
           const SizedBox(height: AppSpace.s),
           if (state.selectedPerson == null)
-            SearchField<PersonSummary>(
-              focusNode: focusNode,
-              suggestionAction: SuggestionAction.unfocus,
-              searchStyle: Theme.of(context).textTheme.bodyLarge,
-              suggestionStyle: Theme.of(context).textTheme.bodyMedium,
-              itemHeight: 80,
-              maxSuggestionsInViewPort: 3,
-              suggestionsDecoration: SuggestionDecoration(
-                color: Theme.of(context).cardColor,
-                borderRadius: BorderRadius.circular(AppRadius.s),
-              ),
-              onSearchTextChanged: (query) {
-                onQueryChanged(query);
-                return _personSuggestions(state.personResults);
-              },
-              suggestions: _personSuggestions(state.personResults),
-              onSuggestionTap: (suggestion) {
-                final person = suggestion.item;
-                if (person == null) return;
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (context.mounted) onSelected(person);
-                });
-              },
-              searchInputDecoration: InputDecoration(
-                labelText: 'Buscar por CI',
-                labelStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.primary.withValues(
-                    alpha: .5,
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 420;
+                final canSearch =
+                    state.personQuery.trim().length >= 4 &&
+                    state.personSearchPhase != AsyncPhase.loading;
+                final field = Expanded(
+                  child: TextField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    keyboardType: TextInputType.text,
+                    textInputAction: TextInputAction.search,
+                    onChanged: onQueryChanged,
+                    onSubmitted: (_) {
+                      if (canSearch) onSearch();
+                    },
+                    style: Theme.of(context).textTheme.bodyLarge,
+                    decoration: InputDecoration(
+                      labelText: 'Buscar por CI',
+                      labelStyle: Theme.of(context).textTheme.bodyLarge
+                          ?.copyWith(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.primary.withValues(alpha: .5),
+                            height: 1,
+                          ),
+                      prefixIcon: const AppFormInputIcon(
+                        asset: 'assets/images/icons/cardEmployee.svg',
+                      ),
+                      errorText: state.personError,
+                    ),
                   ),
-                  height: 1,
-                ),
-                prefixIcon: const AppFormInputIcon(
-                  asset: 'assets/images/icons/cardEmployee.svg',
-                ),
-                errorText: state.personError,
-              ),
+                );
+                final searchButton = compact
+                    ? IconButton.filledTonal(
+                        tooltip: 'Buscar persona',
+                        onPressed: canSearch ? onSearch : null,
+                        icon: const Icon(Icons.search_rounded),
+                      )
+                    : FilledButton.icon(
+                        onPressed: canSearch ? onSearch : null,
+                        icon: const Icon(Icons.search_rounded),
+                        label: const Text('Buscar'),
+                      );
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    field,
+                    const SizedBox(width: AppSpace.s),
+                    searchButton,
+                  ],
+                );
+              },
             ),
           if (state.personSearchPhase == AsyncPhase.loading)
             const Padding(
@@ -507,42 +562,33 @@ class _PersonLookupSection extends StatelessWidget {
             const SizedBox(height: AppSpace.m),
             _SelectedPersonCard(
               person: state.selectedPerson!,
-              onChange: () => onQueryChanged(''),
+              onChange: () {
+                controller.clear();
+                onQueryChanged('');
+              },
             ),
           ],
           const SizedBox(height: AppSpace.s),
           const _MutedHelp(
             text:
-                'El endpoint disponible permite busqueda por CI. La busqueda por nombre queda pendiente hasta contar con el servicio.',
+                'Ingresa el CI y presiona Buscar. Puedes reemplazar la persona con la X antes de guardar.',
           ),
         ],
       ),
     );
   }
-
-  List<SearchFieldListItem<PersonSummary>> _personSuggestions(
-    List<PersonSummary> people,
-  ) => people
-      .map(
-        (person) => SearchFieldListItem<PersonSummary>(
-          person.ci,
-          item: person,
-          child: _PersonSuggestionCard(person: person),
-        ),
-      )
-      .toList();
 }
 
 class _ProcedureSection extends StatelessWidget {
   const _ProcedureSection({
     required this.state,
     required this.onDateChanged,
-    required this.onLocationChanged,
+    required this.onCaptureLocation,
   });
 
   final CreateRequisitionState state;
   final ValueChanged<DateTime> onDateChanged;
-  final ValueChanged<GeoPoint> onLocationChanged;
+  final Future<void> Function() onCaptureLocation;
 
   @override
   Widget build(BuildContext context) {
@@ -582,30 +628,31 @@ class _ProcedureSection extends StatelessWidget {
                   SizedBox(
                     width: vertical ? double.infinity : 136,
                     child: FilledButton.tonalIcon(
-                      onPressed: () async {
-                        final point = await showAppModalBottomSheet<GeoPoint>(
-                          context: context,
-                          useSafeArea: false,
-                          enableDrag: false,
-                          backgroundColor: Colors.transparent,
-                          maxWidth: 560,
-                          builder: (_) => RequisitionLocationPicker(
-                            initialPoint: location,
-                          ),
-                        );
-                        if (point != null) onLocationChanged(point);
-                      },
-                      icon: SvgPicture.asset(
-                        'assets/images/icons/gps.svg',
-                        width: AppSize.iconS,
-                        height: AppSize.iconS,
-                        colorFilter: ColorFilter.mode(
-                          Theme.of(context).colorScheme.onSecondaryContainer,
-                          BlendMode.srcIn,
-                        ),
-                      ),
+                      onPressed: state.isCapturingLocation
+                          ? null
+                          : onCaptureLocation,
+                      icon: state.isCapturingLocation
+                          ? const SizedBox.square(
+                              dimension: AppSize.iconS,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : SvgPicture.asset(
+                              'assets/images/icons/gps.svg',
+                              width: AppSize.iconS,
+                              height: AppSize.iconS,
+                              colorFilter: ColorFilter.mode(
+                                Theme.of(
+                                  context,
+                                ).colorScheme.onSecondaryContainer,
+                                BlendMode.srcIn,
+                              ),
+                            ),
                       label: Text(
-                        location == null ? 'Capturar' : 'Editar ubicación',
+                        state.isCapturingLocation
+                            ? 'Obteniendo ubicación…'
+                            : location == null
+                            ? 'Capturar'
+                            : 'Actualizar ubicación',
                       ),
                     ),
                   ),
@@ -786,20 +833,6 @@ class _SelectedPersonCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return _PersonSelectionCard(person: person, onRemove: onChange);
   }
-}
-
-class _PersonSuggestionCard extends StatelessWidget {
-  const _PersonSuggestionCard({required this.person});
-  final PersonSummary person;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(
-      horizontal: AppSpace.s,
-      vertical: AppSpace.xs,
-    ),
-    child: _PersonCardContent(person: person),
-  );
 }
 
 class _PersonSelectionCard extends StatelessWidget {

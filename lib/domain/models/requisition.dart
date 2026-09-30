@@ -1,3 +1,4 @@
+import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 
 part 'requisition.freezed.dart';
@@ -8,6 +9,18 @@ enum RequisitionStatus {
   finalizing,
   finalized,
   cancelled,
+}
+
+/// Alias semántico para las coordenadas que llegan en el resumen del listado.
+/// El valor se comparte con el formulario de registro y no duplica el modelo.
+typedef RequisitionLocation = GeoPoint;
+
+extension RequisitionLocationValidation on GeoPoint {
+  bool get isValid =>
+      latitude >= -90 &&
+      latitude <= 90 &&
+      longitude >= -180 &&
+      longitude <= 180;
 }
 
 @freezed

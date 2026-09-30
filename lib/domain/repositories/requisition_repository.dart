@@ -4,6 +4,7 @@ typedef RequisitionPage = ({
   List<Requisition> items,
   int page,
   int pageCount,
+  Map<String, RequisitionLocation> locations,
 });
 
 abstract interface class RequisitionRepository {

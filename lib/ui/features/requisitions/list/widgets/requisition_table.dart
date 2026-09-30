@@ -12,6 +12,8 @@ class RequisitionTable extends StatelessWidget {
     required this.scrollController,
     required this.hasMore,
     required this.canFinalize,
+    required this.locationFor,
+    required this.onViewLocation,
     required this.onFinalize,
     required this.onRefresh,
     required this.isLoadingMore,
@@ -25,6 +27,8 @@ class RequisitionTable extends StatelessWidget {
   final ScrollController scrollController;
   final bool hasMore;
   final bool canFinalize;
+  final RequisitionLocation? Function(Requisition requisition) locationFor;
+  final ValueChanged<Requisition> onViewLocation;
   final ValueChanged<Requisition> onFinalize;
   final Future<void> Function() onRefresh;
   final bool isLoadingMore;
@@ -105,6 +109,8 @@ class RequisitionTable extends StatelessWidget {
                     requisition: item,
                     onPressed: () => onPressed(item),
                     canFinalize: canFinalize,
+                    location: locationFor(item),
+                    onViewLocation: () => onViewLocation(item),
                     onFinalize: () => onFinalize(item),
                   );
                 },
@@ -162,12 +168,16 @@ class _RequisitionTableRow extends StatelessWidget {
     required this.requisition,
     required this.onPressed,
     required this.canFinalize,
+    required this.location,
+    required this.onViewLocation,
     required this.onFinalize,
   });
 
   final Requisition requisition;
   final VoidCallback onPressed;
   final bool canFinalize;
+  final RequisitionLocation? location;
+  final VoidCallback onViewLocation;
   final VoidCallback onFinalize;
 
   @override
@@ -247,6 +257,8 @@ class _RequisitionTableRow extends StatelessWidget {
                   RequisitionActionsMenu(
                     requisition: requisition,
                     canFinalize: canFinalize,
+                    location: location,
+                    onViewLocation: onViewLocation,
                     onFinalize: onFinalize,
                   ),
                 ],
