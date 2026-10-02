@@ -54,6 +54,29 @@ class InMemoryRequisitionRepository implements RequisitionRepository {
     // uses RemoteRequisitionRepository, where the backend performs the seal.
   }
 
+  @override
+  Future<String> createAcquisitionSession({
+    required String requisitionId,
+    required String sourcePlatform,
+    required String transport,
+  }) async {
+    return '00000000-0000-4000-8000-${requisitionId.hashCode.abs().toString().padLeft(12, '0').substring(0, 12)}';
+  }
+
+  @override
+  Future<void> linkCase({
+    required String requisitionId,
+    required int? externalCaseId,
+    required String cud,
+    required String type,
+    required String division,
+    required List<String> subjects,
+    required List<String> participants,
+  }) async {
+    // This repository remains available for isolated UI previews. Production
+    // uses RemoteRequisitionRepository, where the backend persists the link.
+  }
+
   List<Requisition> _fixtures() {
     const cases = [
       'Robo calificado',

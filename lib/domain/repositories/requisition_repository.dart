@@ -15,5 +15,21 @@ abstract interface class RequisitionRepository {
     RequisitionStatus? status,
   });
 
+  Future<String> createAcquisitionSession({
+    required String requisitionId,
+    required String sourcePlatform,
+    required String transport,
+  });
+
+  Future<void> linkCase({
+    required String requisitionId,
+    required int? externalCaseId,
+    required String cud,
+    required String type,
+    required String division,
+    required List<String> subjects,
+    required List<String> participants,
+  });
+
   Future<void> finalizeRequisition(String requisitionId);
 }

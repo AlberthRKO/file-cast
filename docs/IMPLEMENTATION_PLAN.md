@@ -25,6 +25,12 @@ File Cast permitirá que un operador autorizado:
 9. sincronice la outbox cifrada al servicio cuando haya conectividad;
 10. finalice y selle la requisa sin perder el historial de custodia.
 
+En el detalle, la cabecera fija debe centralizar el contexto de caso/persona,
+sujetos, participantes y ubicación. Una requisa creada por persona puede
+vincularse posteriormente a un CUD mediante la búsqueda del ecosistema; esa
+acción actualiza el vínculo actual y su snapshot, y queda registrada por el
+backend como evento `CASE_LINKED`.
+
 No forma parte del alcance base: bypass de bloqueo, explotación, root/jailbreak, extracción física, acceso a datos privados de terceros ni control general de iOS desde otro móvil.
 
 ## Decisiones de producto recomendadas
@@ -452,8 +458,8 @@ Salida: una evidencia fixture se registra, recupera y verifica offline.
 - implementar AuthRepository/API/tokens/guards;
 - listado con cursor, filtros y cache;
 - crear/editar detalle;
-- detalle mock actual documentado en `docs/modules/requisitions_detail.md`; falta persistencia, API y cadena de custodia;
-- estados y finalización inicial;
+- detalle remoto implementado y documentado en `docs/modules/requisitions_detail.md`, incluyendo lectura de evidencias/sesiones, creación de sesión y finalización; continúan pendientes la sincronización completa, galería interactiva y cadena de custodia;
+- estados y finalización inicial (la lectura y el sellado del detalle ya consumen la API; quedan pendientes sincronización y recuperación completa);
 - reemplazar mocks del home.
 
 Salida: flujo login -> lista -> crear -> detalle, online/offline, probado.

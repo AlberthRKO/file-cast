@@ -308,7 +308,7 @@ class _NotificationButton extends StatelessWidget {
     final theme = Theme.of(context);
 
     return Tooltip(
-      message: 'Notificaciones y configuración',
+      message: 'Abrir configuración',
       child: InkWell(
         onTap: onTap,
         customBorder: const CircleBorder(),

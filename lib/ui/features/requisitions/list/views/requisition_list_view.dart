@@ -10,6 +10,7 @@ import 'package:file_cast/ui/core/adaptive/constrained_content.dart';
 import 'package:file_cast/ui/core/adaptive/window_size_class.dart';
 import 'package:file_cast/ui/core/navigation/app_route.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
+import 'package:file_cast/ui/core/theme/theme_controller.dart';
 import 'package:file_cast/ui/core/feedback/app_feedback.dart';
 import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/list/view_models/requisition_list_state.dart';
@@ -21,6 +22,7 @@ import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_tabl
 import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_location_viewer.dart';
 import 'package:file_cast/ui/features/requisitions/create/views/create_requisition_view.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
+import 'package:file_cast/ui/features/settings/widgets/settings_actions_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -44,7 +46,9 @@ class _RequisitionListConnector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final user = context.watch<AuthSessionController>().user;
+    final authSessionController = context.watch<AuthSessionController>();
+    final user = authSessionController.user;
+    final themeController = context.read<ThemeController>();
     final canFinalize =
         user?.permisos?.any(
           (permission) =>
@@ -59,6 +63,31 @@ class _RequisitionListConnector extends StatelessWidget {
       userName: user?.nombreCompleto?.trim().isNotEmpty == true
           ? user!.nombreCompleto!.trim()
           : 'Usuario',
+      onOpenSettings: () => unawaited(
+        _openSettings(
+          context,
+          themeController: themeController,
+          authSessionController: authSessionController,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openSettings(
+    BuildContext context, {
+    required ThemeController themeController,
+    required AuthSessionController authSessionController,
+  }) {
+    return showAppModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).cardColor,
+      maxWidth: AppSize.formMaxWidth,
+      builder: (sheetContext) => SettingsActionsSheet(
+        themeController: themeController,
+        onClose: () => Navigator.of(sheetContext).pop(),
+        onLogout: authSessionController.logout,
+      ),
     );
   }
 
@@ -79,6 +108,7 @@ class RequisitionListView extends StatefulWidget {
     required this.canFinalize,
     required this.identityLabel,
     required this.userName,
+    required this.onOpenSettings,
     super.key,
   });
 
@@ -86,6 +116,7 @@ class RequisitionListView extends StatefulWidget {
   final bool canFinalize;
   final String identityLabel;
   final String userName;
+  final VoidCallback onOpenSettings;
 
   @override
   State<RequisitionListView> createState() => _RequisitionListViewState();
@@ -150,7 +181,7 @@ class _RequisitionListViewState extends State<RequisitionListView> {
                 onQueryChanged: _updateQuery,
                 onOpenFilters: () => _openFilters(context),
                 onRefresh: _viewModel.refresh,
-                onSettings: () => context.pushNamed(AppRouteName.settings),
+                onSettings: widget.onOpenSettings,
                 isRefreshing: _viewModel.state.isRefreshing,
                 filtersActive:
                     _viewModel.state.statusFilter != null ||
@@ -211,7 +242,7 @@ class _RequisitionListViewState extends State<RequisitionListView> {
         scrollController: _scrollController,
         hasMore: _viewModel.hasMore,
         canFinalize: widget.canFinalize,
-        onPressed: _showDetailsPlaceholder,
+        onPressed: _openDetails,
         onViewLocation: _showLocation,
         locationFor: _viewModel.locationFor,
         onFinalize: _finalizeRequisition,
@@ -358,7 +389,7 @@ class _RequisitionListViewState extends State<RequisitionListView> {
     );
   }
 
-  void _showDetailsPlaceholder(Requisition requisition) {
+  void _openDetails(Requisition requisition) {
     context.pushNamed(
       AppRouteName.requisitionDetail,
       pathParameters: {'requisitionId': requisition.id},

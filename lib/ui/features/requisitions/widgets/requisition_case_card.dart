@@ -10,6 +10,7 @@ class RequisitionCaseCard extends StatelessWidget {
     required this.division,
     required this.subjectCount,
     this.statusLabel = 'Vinculado',
+    this.identifierLabel = 'CUD',
     this.onRemove,
     super.key,
   });
@@ -19,6 +20,7 @@ class RequisitionCaseCard extends StatelessWidget {
   final String division;
   final int subjectCount;
   final String statusLabel;
+  final String identifierLabel;
   final VoidCallback? onRemove;
 
   @override
@@ -51,7 +53,7 @@ class RequisitionCaseCard extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        'CUD: $cud',
+                        '$identifierLabel: $cud',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.titleSmall?.copyWith(

@@ -4,8 +4,8 @@ import 'package:file_cast/core/network/http.dart';
 import 'package:file_cast/core/storage/secure_storage_service.dart';
 import 'package:file_cast/data/repositories/remote_auth_repository.dart';
 import 'package:file_cast/data/repositories/acquisition_repository_impl.dart';
-import 'package:file_cast/data/repositories/in_memory_requisition_detail_repository.dart';
 import 'package:file_cast/data/repositories/remote_requisition_repository.dart';
+import 'package:file_cast/data/repositories/remote_requisition_detail_repository.dart';
 import 'package:file_cast/data/repositories/requisition_creation_repository_impl.dart';
 import 'package:file_cast/data/services/requisition_creation_service.dart';
 import 'package:file_cast/data/services/android_acquisition_platform_service.dart';
@@ -17,6 +17,7 @@ import 'package:file_cast/data/services/local_evidence_database_service.dart';
 import 'package:file_cast/data/services/location_service.dart';
 import 'package:file_cast/data/services/remote_document_preview_service.dart';
 import 'package:file_cast/data/services/requisition_service.dart';
+import 'package:file_cast/data/services/requisition_detail_service.dart';
 import 'package:file_cast/domain/repositories/auth_repository.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
@@ -88,6 +89,9 @@ class DependencyInjection {
           service: service,
         ),
       ),
+      ProxyProvider<Http, RequisitionDetailService>(
+        update: (_, http, previous) => RequisitionDetailService(http: http),
+      ),
       Provider<EvidencePickerService>(
         create: (_) => EvidencePickerService(),
       ),
@@ -95,28 +99,6 @@ class DependencyInjection {
         create: (_) => const RemoteDocumentPreviewService(),
       ),
       Provider<LocationService>(create: (_) => const LocationService()),
-      ProxyProvider3<
-        EvidencePickerService,
-        EvidenceCryptoService,
-        LocalEvidenceDatabaseService,
-        RequisitionDetailRepository
-      >(
-        update: (_, picker, crypto, database, previous) =>
-            InMemoryRequisitionDetailRepository(
-              pickerService: picker,
-              cryptoService: crypto,
-              database: database,
-            ),
-      ),
-      ProxyProvider<Http, RequisitionCreationService>(
-        update: (_, http, previous) => RequisitionCreationService(http: http),
-      ),
-      ProxyProvider<RequisitionCreationService, RequisitionCreationRepository>(
-        update: (_, service, previous) => RequisitionCreationRepositoryImpl(
-          service: service,
-          enableFallbackFixtures: false,
-        ),
-      ),
       ProxyProvider3<
         Http,
         LocalEvidenceDatabaseService,
@@ -128,6 +110,40 @@ class DependencyInjection {
           database: database,
           crypto: crypto,
         )..start(),
+      ),
+      ProxyProvider5<
+        RequisitionDetailService,
+        EvidencePickerService,
+        EvidenceCryptoService,
+        LocalEvidenceDatabaseService,
+        EvidenceSyncService,
+        RequisitionDetailRepository
+      >(
+        update:
+            (
+              _,
+              detailService,
+              picker,
+              crypto,
+              database,
+              syncService,
+              previous,
+            ) => RemoteRequisitionDetailRepository(
+              detailService: detailService,
+              pickerService: picker,
+              cryptoService: crypto,
+              database: database,
+              syncService: syncService,
+            ),
+      ),
+      ProxyProvider<Http, RequisitionCreationService>(
+        update: (_, http, previous) => RequisitionCreationService(http: http),
+      ),
+      ProxyProvider<RequisitionCreationService, RequisitionCreationRepository>(
+        update: (_, service, previous) => RequisitionCreationRepositoryImpl(
+          service: service,
+          enableFallbackFixtures: false,
+        ),
       ),
       Provider<AdbClient>(create: (_) => AdbClient()),
       ProxyProvider<AdbClient, AndroidAcquisitionPlatformService>(

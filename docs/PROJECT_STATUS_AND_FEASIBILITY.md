@@ -31,10 +31,10 @@ La recomendación es construir primero un MVP Android de extremo a extremo y man
 |---|---|---|
 | Flavors Flutter | `development`, `staging`, `production`, `cliente1`, `cliente2` | Base disponible |
 | Login | Formulario MVVM conectado a `file-cast-back /api/v1/auth/*`, tokens seguros, restauración y refresh | Implementado en la rama `feat/implemetacion-login`; falta validación del propietario |
-| Listado de requisas | Feature MVVM adaptativa con lista/grid/tabla, filtros y carga progresiva | Mock detrás de `RequisitionRepository` in-memory; paginación real de API pendiente |
+| Listado de requisas | Feature MVVM adaptativa con lista/grid/tabla, filtros y carga progresiva | Conectado a `GET /api/v1/requisitions`; cache offline y resolución de conflictos pendientes |
 | Crear requisa | Ruta `/requisitions/new` con modo CUD/persona, busquedas, fecha/hora, ubicacion visual y navegacion a conexion | Parcial; registro simulado, mapa/GPS nativo y persistencia offline reales pendientes |
-| Detalle de requisa | Ruta, card de caso, secciones de evidencias mock y acciones desde hoja inferior | Parcial; backend y persistencia pendientes |
-| Archivos/evidencias por requisa | Resumen por categoría/peso, selector de imágenes, videos, audios y documentos, y carga simulada en memoria | Parcial; sin almacenamiento probatorio ni backend |
+| Detalle de requisa | Cabecera fija adaptativa caso/persona, sujetos, participantes, ubicación, vínculo CUD, sesiones, evidencias y acciones | Implementado contra `GET /api/v1/requisitions/:id`; búsqueda/vínculo mediante `POST /api/v1/requisitions/:id/case-links`, creación de sesiones y sellado conectados; galería remota y sincronización probatoria aún pendientes |
+| Archivos/evidencias por requisa | Resumen por categoría/peso, selector de imágenes, videos, audios y documentos, cifrado local, outbox y disparo de sincronización | Parcial; estados visibles de reintento, galería remota y validación probatoria end-to-end pendientes |
 | Offline y sincronización | SQLite SQLCipher, outbox de evidencias FCE y reintento al recuperar conectividad | Implementación local; sincronización real depende de sesión/autenticación API |
 | USB host Android | Detección, permisos, attach/detach | Implementado como prototipo |
 | ADB por USB | Handshake RSA, streams multiplexados, shell y push | Implementado como prototipo |
@@ -78,8 +78,8 @@ La documentación [ADB_HANDSHAKE.md](ADB_HANDSHAKE.md) describe las fases 1 a 5,
 
 - Login y Started viven en `lib/ui/features/`, con navegación declarativa y estado separado de la composición visual.
 - La interfaz `AuthRepository`, el repositorio remoto y el gestor de sesión persistente ya están registrados por inyección; los casos de uso siguen siendo reutilizables por las Views.
-- El listado usa un `RequisitionListViewModel`, estado Freezed y un `RequisitionRepository` in-memory registrado por inyección. Crear y abrir detalle siguen pendientes de sus rutas/features reales.
-- La inyección ya registra autenticación remota, sesión persistente y refresh; todavía necesita repositorios reales para requisas, API de negocio, caché y adquisición. El repositorio de listado actual conserva el prototipo visual.
+- El listado usa un `RequisitionListViewModel`, estado Freezed y un `RequisitionRepository` remoto registrado por inyección. Crear y abrir detalle ya tienen rutas/features reales; el detalle consulta el backend y conserva un outbox local para evidencias pendientes.
+- La inyección ya registra autenticación remota, sesión persistente y refresh, además de los repositorios remotos de listado, detalle y creación; caché, reconciliación y sincronización probatoria siguen pendientes.
 
 La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto, `MaterialApp.router`, `go_router`, tema central y adaptación por constraints. Se retiraron `lib/presentation`, ScreenUtil, los helpers por porcentaje/orientación y las rutas imperativas. La consola técnica de conexión fue sustituida por ViewModel, repositorio y servicio de plataforma; la deuda principal de adquisición pasa a ser persistencia/ledger, recuperación de sesión, errores tipados y validación física.
 
@@ -112,7 +112,7 @@ La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto,
 
 ### P1 — riesgos de producto y datos
 
-1. Las requisas y sus sesiones todavía son mocks; el login real ya está implementado, pero aún debe validarse contra el backend local y el entorno institucional.
+1. La creación de requisas y la sincronización de evidencias todavía tienen cobertura parcial; listado, detalle, sesiones y finalización ya consumen el backend, pero el login y el flujo completo aún deben validarse contra el backend local y el entorno institucional.
 2. No hay API contractual, paginación real, control de concurrencia ni resolución de conflictos.
 3. No hay máquina de estados de requisa (`borrador`, `en progreso`, `finalizada`, `sellada`, etc.).
 4. No hay protección para impedir modificar una requisa finalizada.

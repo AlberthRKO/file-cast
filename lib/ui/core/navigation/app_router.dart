@@ -13,7 +13,6 @@ import 'package:file_cast/ui/features/onboarding/started/views/started_view.dart
 import 'package:file_cast/ui/features/requisitions/create/views/create_requisition_view.dart';
 import 'package:file_cast/ui/features/requisitions/detail/views/requisition_detail_view.dart';
 import 'package:file_cast/ui/features/requisitions/list/views/requisition_list_view.dart';
-import 'package:file_cast/ui/features/settings/views/settings_view.dart';
 import 'package:go_router/go_router.dart';
 
 /// Central router for the application.
@@ -89,9 +88,16 @@ GoRouter createAppRouter({
       GoRoute(
         name: AppRouteName.requisitionDetail,
         path: AppRoutePath.requisitionDetail,
-        builder: (context, state) => RequisitionDetailRoute(
-          requisitionId: state.pathParameters['requisitionId']!,
-        ),
+        builder: (context, state) {
+          final requisitionId = state.pathParameters['requisitionId'];
+          if (requisitionId == null || requisitionId.trim().isEmpty) {
+            return const AppRouteErrorView(
+              message:
+                  'La requisa solicitada no tiene un identificador válido.',
+            );
+          }
+          return RequisitionDetailRoute(requisitionId: requisitionId);
+        },
       ),
       GoRoute(
         name: AppRouteName.fileTransfer,
@@ -105,11 +111,6 @@ GoRouter createAppRouter({
         name: AppRouteName.offline,
         path: AppRoutePath.offline,
         builder: (context, state) => const OfflineView(),
-      ),
-      GoRoute(
-        name: AppRouteName.settings,
-        path: AppRoutePath.settings,
-        builder: (context, state) => const SettingsView(),
       ),
       GoRoute(
         name: AppRouteName.acquisitionConnect,

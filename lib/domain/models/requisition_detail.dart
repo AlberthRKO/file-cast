@@ -2,6 +2,50 @@ import 'package:file_cast/domain/models/requisition.dart';
 
 enum RequisitionEvidenceType { image, video, audio, document, other }
 
+enum RequisitionSessionStatus { open, completed, failed, cancelled }
+
+final class RequisitionSubjectSummary {
+  const RequisitionSubjectSummary({
+    required this.name,
+    this.documentNumber,
+    this.role,
+  });
+
+  final String name;
+  final String? documentNumber;
+  final String? role;
+}
+
+final class RequisitionParticipantSummary {
+  const RequisitionParticipantSummary({
+    required this.actorId,
+    required this.role,
+  });
+
+  final String actorId;
+  final String role;
+}
+
+final class RequisitionAcquisitionSession {
+  const RequisitionAcquisitionSession({
+    required this.id,
+    required this.status,
+    required this.sourcePlatform,
+    required this.transport,
+    required this.startedAt,
+    this.endedAt,
+  });
+
+  final String id;
+  final RequisitionSessionStatus status;
+  final String sourcePlatform;
+  final String transport;
+  final DateTime startedAt;
+  final DateTime? endedAt;
+
+  bool get isOpen => status == RequisitionSessionStatus.open;
+}
+
 final class ImportedEvidenceDraft {
   const ImportedEvidenceDraft({
     required this.name,
@@ -67,6 +111,9 @@ final class RequisitionEvidence {
     this.aadHash,
     this.wrappedKey,
     this.keyVersion,
+    this.uploadStatus,
+    this.contentUrl,
+    this.downloadUrl,
   });
 
   final String id;
@@ -88,6 +135,9 @@ final class RequisitionEvidence {
   final String? aadHash;
   final String? wrappedKey;
   final int? keyVersion;
+  final String? uploadStatus;
+  final String? contentUrl;
+  final String? downloadUrl;
 }
 
 final class RequisitionDetail {
@@ -97,11 +147,45 @@ final class RequisitionDetail {
     required this.subjects,
     required this.sessionId,
     required this.evidence,
+    this.sessions = const [],
+    this.subjectDetails = const [],
+    this.participants = const [],
+    this.description,
+    this.procedureAt,
+    this.locationLabel,
+    this.latitude,
+    this.longitude,
+    this.version = 1,
+    this.createdAt,
+    this.updatedAt,
   });
 
   final Requisition requisition;
   final String division;
   final List<String> subjects;
+  final List<RequisitionSubjectSummary> subjectDetails;
+  final List<RequisitionParticipantSummary> participants;
   final String sessionId;
   final List<RequisitionEvidence> evidence;
+  final List<RequisitionAcquisitionSession> sessions;
+  final String? description;
+  final DateTime? procedureAt;
+  final String? locationLabel;
+  final double? latitude;
+  final double? longitude;
+  final int version;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+
+  RequisitionLocation? get location {
+    final lat = latitude;
+    final lng = longitude;
+    if (lat == null || lng == null) return null;
+    final value = RequisitionLocation(
+      latitude: lat,
+      longitude: lng,
+      label: locationLabel,
+    );
+    return value.isValid ? value : null;
+  }
 }

@@ -41,7 +41,9 @@ class RequisitionService {
     final result = await _http.request<void>(
       '/api/v1/requisitions/$requisitionId/finalize',
       method: HttpMethod.post,
-      headers: {'Idempotency-Key': _idempotencyKey(requisitionId)},
+      headers: {
+        'Idempotency-Key': _idempotencyKey('finalize', requisitionId),
+      },
       onSucces: (_) {},
     );
 
@@ -55,6 +57,90 @@ class RequisitionService {
       case Either():
         throw StateError('Respuesta inesperada al finalizar la requisa.');
     }
+  }
+
+  Future<void> linkCase({
+    required String requisitionId,
+    required int? externalCaseId,
+    required String cud,
+    required String type,
+    required String division,
+    required List<String> subjects,
+    required List<String> participants,
+  }) async {
+    final result = await _http.request<void>(
+      '/api/v1/requisitions/$requisitionId/case-links',
+      method: HttpMethod.post,
+      headers: {
+        'Idempotency-Key': _idempotencyKey('link-case', requisitionId),
+      },
+      body: {
+        if (externalCaseId != null && externalCaseId > 0)
+          'externalCaseId': externalCaseId,
+        'cud': cud,
+        'snapshot': {
+          'type': type,
+          'division': division,
+          'subjects': subjects,
+          'officials': participants,
+        },
+      },
+      onSucces: (_) {},
+    );
+
+    switch (result) {
+      case Left(leftValue: final error):
+        throw StateError(error.message ?? 'No se pudo vincular el CUD.');
+      case Right():
+        return;
+      case Either():
+        throw StateError('Respuesta inesperada al vincular el CUD.');
+    }
+  }
+
+  Future<String> createAcquisitionSession({
+    required String requisitionId,
+    required String sourcePlatform,
+    required String transport,
+  }) async {
+    final result = await _http.request<String>(
+      '/api/v1/requisitions/$requisitionId/sessions',
+      method: HttpMethod.post,
+      headers: {'Idempotency-Key': _idempotencyKey('session', requisitionId)},
+      body: {
+        'sourcePlatform': sourcePlatform,
+        'transport': transport,
+        'capabilities': {
+          'canMirror': sourcePlatform == 'ANDROID',
+          'canControl': sourcePlatform == 'ANDROID',
+          'canCaptureScreenshot': sourcePlatform == 'ANDROID',
+          'canRecordScreen': sourcePlatform == 'ANDROID',
+          'canBrowseSharedFiles': sourcePlatform == 'ANDROID',
+        },
+      },
+      onSucces: (body) {
+        final envelope = _asMap(body);
+        final response = _asMap(envelope['response']);
+        final data = _asMap(response['data']);
+        final sessionId = _asString(data['id']);
+        if (sessionId == null) {
+          throw const FormatException(
+            'El backend no devolvió el identificador de la sesión.',
+          );
+        }
+        return sessionId;
+      },
+    );
+
+    return switch (result) {
+      Left(leftValue: final error) => throw StateError(
+        error.message ?? 'No se pudo abrir la sesión de adquisición.',
+      ),
+      Right(rightValue: final sessionId) => sessionId,
+      Either() => throw StateError(
+        'Respuesta inesperada al abrir la sesión de adquisición.',
+      ),
+    };
   }
 
   RequisitionPage _parsePage(dynamic body) {
@@ -120,9 +206,9 @@ class RequisitionService {
     );
   }
 
-  String _idempotencyKey(String requisitionId) {
+  String _idempotencyKey(String operation, String requisitionId) {
     final suffix = _random.nextInt(0x7fffffff).toRadixString(36);
-    return 'finalize-$requisitionId-${DateTime.now().microsecondsSinceEpoch}-$suffix';
+    return '$operation-$requisitionId-${DateTime.now().microsecondsSinceEpoch}-$suffix';
   }
 
   String _statusValue(RequisitionStatus status) => switch (status) {

@@ -6,7 +6,6 @@ abstract final class AppRouteName {
   static const requisitionDetail = 'requisition-detail';
   static const fileTransfer = 'file-transfer';
   static const offline = 'offline';
-  static const settings = 'settings';
   static const acquisitionConnect = 'acquisition-connect';
   static const mirror = 'mirror';
 }
@@ -21,7 +20,6 @@ abstract final class AppRoutePath {
   static const fileTransfer =
       '/requisitions/:requisitionId/acquisitions/:sessionId/transfer';
   static const offline = '/offline';
-  static const settings = '/settings';
   static const acquisitionConnect =
       '/requisitions/:requisitionId/acquisitions/:sessionId/connect';
   static const mirror =

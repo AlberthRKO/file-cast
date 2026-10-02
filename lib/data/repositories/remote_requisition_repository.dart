@@ -24,6 +24,40 @@ class RemoteRequisitionRepository implements RequisitionRepository {
   }
 
   @override
+  Future<String> createAcquisitionSession({
+    required String requisitionId,
+    required String sourcePlatform,
+    required String transport,
+  }) {
+    return _service.createAcquisitionSession(
+      requisitionId: requisitionId,
+      sourcePlatform: sourcePlatform,
+      transport: transport,
+    );
+  }
+
+  @override
+  Future<void> linkCase({
+    required String requisitionId,
+    required int? externalCaseId,
+    required String cud,
+    required String type,
+    required String division,
+    required List<String> subjects,
+    required List<String> participants,
+  }) {
+    return _service.linkCase(
+      requisitionId: requisitionId,
+      externalCaseId: externalCaseId,
+      cud: cud,
+      type: type,
+      division: division,
+      subjects: subjects,
+      participants: participants,
+    );
+  }
+
+  @override
   Future<void> finalizeRequisition(String requisitionId) {
     return _service.finalizeRequisition(requisitionId);
   }

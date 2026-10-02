@@ -1,10 +1,16 @@
 import 'dart:async';
 
+import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
+import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
+import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
+import 'package:file_cast/domain/repositories/requisition_repository.dart';
 import 'package:flutter/foundation.dart';
 
 enum RequisitionDetailPhase { loading, content, error }
+
+enum CaseLinkSearchPhase { initial, loading, content, empty, error }
 
 enum EvidenceCategory { images, videos, files }
 
@@ -23,11 +29,21 @@ final class EvidenceCategorySummary {
 class RequisitionDetailViewModel extends ChangeNotifier {
   RequisitionDetailViewModel({
     required RequisitionDetailRepository repository,
+    required RequisitionRepository requisitionRepository,
+    required RequisitionCreationRepository creationRepository,
     required this.requisitionId,
-  }) : _repository = repository;
+    this.currentActorId,
+    this.currentActorName,
+  }) : _repository = repository,
+       _requisitionRepository = requisitionRepository,
+       _creationRepository = creationRepository;
 
   final RequisitionDetailRepository _repository;
+  final RequisitionRepository _requisitionRepository;
+  final RequisitionCreationRepository _creationRepository;
   final String requisitionId;
+  final String? currentActorId;
+  final String? currentActorName;
   RequisitionDetailPhase _phase = RequisitionDetailPhase.loading;
   RequisitionDetailPhase get phase => _phase;
   RequisitionDetail? _detail;
@@ -35,9 +51,51 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
   bool _isImporting = false;
+  bool _isCreatingSession = false;
+  bool _isFinalizing = false;
+  bool _isLinkingCase = false;
+  Timer? _caseLinkDebounce;
+  int _caseLinkSearchToken = 0;
+  String _caseLinkQuery = '';
+  List<EcosystemCaseSummary> _caseLinkResults = const [];
+  CaseLinkSearchPhase _caseLinkSearchPhase = CaseLinkSearchPhase.initial;
+  String? _caseLinkError;
   StreamSubscription<String>? _changesSubscription;
   bool _disposed = false;
   bool get isImporting => _isImporting;
+  bool get isFinalizing => _isFinalizing;
+  bool get canFinalize {
+    final status = _detail?.requisition.status;
+    return status == RequisitionStatus.draft ||
+        status == RequisitionStatus.inProgress;
+  }
+
+  bool get canSeal =>
+      canFinalize && (_detail?.requisition.isSynchronized ?? false);
+
+  bool get canAcquire {
+    final status = _detail?.requisition.status;
+    return status == RequisitionStatus.draft ||
+        status == RequisitionStatus.inProgress;
+  }
+
+  String get caseLinkQuery => _caseLinkQuery;
+  List<EcosystemCaseSummary> get caseLinkResults => _caseLinkResults;
+  CaseLinkSearchPhase get caseLinkSearchPhase => _caseLinkSearchPhase;
+  String? get caseLinkError => _caseLinkError;
+  bool get isLinkingCase => _isLinkingCase;
+  bool get canLinkCase =>
+      _detail?.requisition.cud == null &&
+      (_detail?.requisition.status == RequisitionStatus.draft ||
+          _detail?.requisition.status == RequisitionStatus.inProgress);
+
+  String participantName(RequisitionParticipantSummary participant) {
+    if (currentActorId == participant.actorId &&
+        currentActorName?.trim().isNotEmpty == true) {
+      return currentActorName!.trim();
+    }
+    return 'Participante asignado';
+  }
 
   List<EvidenceCategorySummary> get evidenceCategories {
     final evidence = _detail?.evidence ?? const <RequisitionEvidence>[];
@@ -75,6 +133,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
       if (changedId == requisitionId) unawaited(_reloadSilently());
     });
     _phase = RequisitionDetailPhase.loading;
+    _errorMessage = null;
     if (!_disposed) notifyListeners();
     try {
       _detail = await _repository.getDetail(requisitionId);
@@ -96,23 +155,181 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     }
   }
 
-  Future<void> importEvidence({required bool imagesOnly}) async {
-    if (_isImporting || _disposed) return;
+  Future<bool> importEvidence({required bool imagesOnly}) async {
+    if (_isImporting || _disposed) return false;
     _isImporting = true;
     _errorMessage = null;
+    var imported = false;
     if (!_disposed) notifyListeners();
     try {
-      final result = await _repository.importFromDevice(
-        requisitionId: requisitionId,
-        imagesOnly: imagesOnly,
-        sessionId: _detail?.sessionId,
+      final sessionId = await ensureAcquisitionSession(
+        sourcePlatform: 'FILE_CAST',
+        transport: 'SYSTEM_PICKER',
       );
-      if (result != null) _detail = result;
-    } catch (_) {
-      _errorMessage = 'No se pudo registrar la evidencia localmente.';
+      if (sessionId != null) {
+        final result = await _repository.importFromDevice(
+          requisitionId: requisitionId,
+          imagesOnly: imagesOnly,
+          sessionId: sessionId,
+        );
+        if (result != null) {
+          _detail = result;
+          imported = true;
+        }
+      }
+    } catch (error) {
+      _errorMessage = _messageFromError(
+        error,
+        fallback: 'No se pudo registrar la evidencia localmente.',
+      );
     }
     _isImporting = false;
     if (!_disposed) notifyListeners();
+    return imported;
+  }
+
+  Future<String?> ensureAcquisitionSession({
+    required String sourcePlatform,
+    required String transport,
+  }) async {
+    final existing = _detail?.sessionId.trim();
+    if (existing != null && existing.isNotEmpty) return existing;
+    if (_isCreatingSession || _disposed) return null;
+
+    _isCreatingSession = true;
+    _errorMessage = null;
+    if (!_disposed) notifyListeners();
+    try {
+      final sessionId = await _requisitionRepository.createAcquisitionSession(
+        requisitionId: requisitionId,
+        sourcePlatform: sourcePlatform,
+        transport: transport,
+      );
+      await _reloadSilently();
+      return sessionId;
+    } catch (error) {
+      _errorMessage = _messageFromError(
+        error,
+        fallback: 'No se pudo abrir la sesión de adquisición.',
+      );
+      return null;
+    } finally {
+      _isCreatingSession = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  Future<String?> finalizeRequisition() async {
+    if (_isFinalizing || _disposed || !canFinalize) return null;
+    if (!canSeal) {
+      const message =
+          'No se puede sellar mientras existan evidencias pendientes de sincronización.';
+      _errorMessage = message;
+      if (!_disposed) notifyListeners();
+      return message;
+    }
+    _isFinalizing = true;
+    _errorMessage = null;
+    if (!_disposed) notifyListeners();
+    try {
+      await _requisitionRepository.finalizeRequisition(requisitionId);
+      await _reloadSilently();
+      return null;
+    } catch (error) {
+      final message = _messageFromError(
+        error,
+        fallback: 'No se pudo finalizar la requisa.',
+      );
+      _errorMessage = message;
+      return message;
+    } finally {
+      _isFinalizing = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  void updateCaseLinkQuery(String value) {
+    _caseLinkDebounce?.cancel();
+    _caseLinkQuery = value;
+    _caseLinkResults = const [];
+    _caseLinkError = null;
+    _caseLinkSearchPhase = value.trim().length >= 4
+        ? CaseLinkSearchPhase.loading
+        : CaseLinkSearchPhase.initial;
+    if (!_disposed) notifyListeners();
+    if (value.trim().length < 4) return;
+    _caseLinkDebounce = Timer(
+      const Duration(milliseconds: 350),
+      searchCaseLinkCandidates,
+    );
+  }
+
+  Future<void> searchCaseLinkCandidates() async {
+    final query = _caseLinkQuery.trim();
+    if (query.length < 4 || _disposed) return;
+    final token = ++_caseLinkSearchToken;
+    _caseLinkSearchPhase = CaseLinkSearchPhase.loading;
+    _caseLinkError = null;
+    if (!_disposed) notifyListeners();
+    try {
+      final results = await _creationRepository.searchCasesByCud(query);
+      if (token != _caseLinkSearchToken || _disposed) return;
+      _caseLinkResults = results;
+      _caseLinkSearchPhase = results.isEmpty
+          ? CaseLinkSearchPhase.empty
+          : CaseLinkSearchPhase.content;
+    } catch (error) {
+      if (token != _caseLinkSearchToken || _disposed) return;
+      _caseLinkResults = const [];
+      _caseLinkSearchPhase = CaseLinkSearchPhase.error;
+      _caseLinkError = _messageFromError(
+        error,
+        fallback: 'No se pudo buscar el CUD.',
+      );
+    }
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<String?> linkCase(EcosystemCaseSummary caseSummary) async {
+    if (_disposed) return 'El detalle de la requisa ya no está disponible.';
+    if (_isLinkingCase) return 'Ya hay una vinculación en curso.';
+    if (!canLinkCase) {
+      return 'La requisa no admite vincular un caso en su estado actual.';
+    }
+    _isLinkingCase = true;
+    _caseLinkError = null;
+    if (!_disposed) notifyListeners();
+    try {
+      await _requisitionRepository.linkCase(
+        requisitionId: requisitionId,
+        externalCaseId: caseSummary.id > 0 ? caseSummary.id : null,
+        cud: caseSummary.cud,
+        type: caseSummary.type,
+        division: caseSummary.division,
+        subjects: caseSummary.subjects,
+        participants: caseSummary.officials,
+      );
+      await _reloadSilently();
+      _caseLinkQuery = '';
+      _caseLinkResults = const [];
+      _caseLinkSearchPhase = CaseLinkSearchPhase.initial;
+      return null;
+    } catch (error) {
+      final message = _messageFromError(
+        error,
+        fallback: 'No se pudo vincular el CUD.',
+      );
+      _caseLinkError = message;
+      return message;
+    } finally {
+      _isLinkingCase = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  String _messageFromError(Object error, {required String fallback}) {
+    final message = error.toString().replaceFirst('Bad state: ', '').trim();
+    return message.isEmpty ? fallback : message;
   }
 
   String _formatSize(int bytes) {
@@ -128,6 +345,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _caseLinkDebounce?.cancel();
     _changesSubscription?.cancel();
     super.dispose();
   }
