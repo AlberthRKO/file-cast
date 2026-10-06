@@ -877,6 +877,7 @@ class _UploadProgressIndicator extends StatelessWidget {
         ? '$pendingCount ${pendingCount == 1 ? 'archivo pendiente' : 'archivos pendientes'}'
         : 'Evidencias sincronizadas';
     final subtitle =
+        progress?.errorMessage ??
         progress?.currentFileName ??
         (isImporting
             ? 'Se están cifrando localmente.'

@@ -9,6 +9,7 @@ final class EvidenceUploadProgress {
     required this.stage,
     required this.isActive,
     this.currentFileName,
+    this.errorMessage,
   });
 
   final String requisitionId;
@@ -18,6 +19,7 @@ final class EvidenceUploadProgress {
   final EvidenceUploadStage stage;
   final bool isActive;
   final String? currentFileName;
+  final String? errorMessage;
 
   int get processed => completed + failed;
 

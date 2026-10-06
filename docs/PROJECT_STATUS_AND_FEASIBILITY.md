@@ -7,7 +7,7 @@ Actualización de adquisición Android: 4 de septiembre de 2026
 Actualización de transferencia Android: 8 de septiembre de 2026
 Actualización de previews de video y ciclo de vida del mirror: 6 de octubre de 2026
 Plan de adquisición USB iPhone: 10 de septiembre de 2026
-Actualización de cifrado local y outbox FCE: 29 de septiembre de 2026
+Actualización de cifrado local, outbox FCE y recuperación entre dispositivos: 6 de octubre de 2026
 Alcance revisado: Flutter/Dart, Android nativo Kotlin, configuración iOS, documentación, historial Git reciente, mockups adjuntos y validadores locales.
 
 ## Dictamen ejecutivo
@@ -35,7 +35,7 @@ La recomendación es construir primero un MVP Android de extremo a extremo y man
 | Listado de requisas | Feature MVVM adaptativa con lista/grid/tabla, filtros y carga progresiva | Conectado a `GET /api/v1/requisitions`; cache offline y resolución de conflictos pendientes |
 | Crear requisa | Ruta `/requisitions/new` con modo CUD/persona, busquedas, fecha/hora, ubicacion visual y navegacion a conexion | Parcial; registro simulado, mapa/GPS nativo y persistencia offline reales pendientes |
 | Detalle de requisa | Cabecera fija adaptativa caso/persona, sujetos, participantes, ubicación, vínculo CUD, sesiones, evidencias y acciones | Implementado contra `GET /api/v1/requisitions/:id`; búsqueda/vínculo mediante `POST /api/v1/requisitions/:id/case-links`, creación de sesiones y sellado conectados; cabecera colapsable, estados de sincronización y preview local/remoto disponibles |
-| Archivos/evidencias por requisa | Resumen por categoría/peso, selector múltiple de imágenes, videos, audios y documentos, cifrado local, outbox, sincronización y preview | Implementado como vertical local: selección múltiple con preview antes de confirmar, sesión creada al aceptar, importación cifrada, carga en segundo plano con progreso por lote, reintento visible, miniaturas y preview de imágenes, videos, audio, PDF y texto/DOCX; pendiente validación probatoria end-to-end y preview de cifrados desde otro dispositivo |
+| Archivos/evidencias por requisa | Resumen por categoría/peso, selector múltiple de imágenes, videos, audios y documentos, cifrado local, outbox, sincronización y preview | Implementado como vertical local: selección múltiple con preview antes de confirmar, sesión creada al aceptar, importación cifrada, carga en segundo plano con progreso por lote, reintento visible, miniaturas y preview de imágenes, videos, audio, PDF y texto/DOCX; las evidencias cifradas comparten DEK por dispositivo autorizado y descargan el FCE mediante el puente autenticado de `file-cast-back`, sin exponer URL firmada ni `x-session-token` al móvil; pendiente validación probatoria end-to-end |
 | Offline y sincronización | SQLite SQLCipher, outbox de evidencias FCE y reintento al recuperar conectividad | Implementación local; sincronización real depende de sesión/autenticación API |
 | USB host Android | Detección, permisos, attach/detach | Implementado como prototipo |
 | ADB por USB | Handshake RSA, streams multiplexados, shell y push | Implementado como prototipo |
@@ -45,7 +45,7 @@ La recomendación es construir primero un MVP Android de extremo a extremo y man
 | Grabación | GOP H.264 acotado, conversión Annex-B a AVC/AVCC, `MediaMuxer`, contador, MP4 privado y SHA-256 | Implementado en código; requiere revalidación física del MP4 generado |
 | Transferencia desde objetivo | Browser de almacenamiento compartido con ADB Sync `LIST`/`STAT`/`RECV`, preview temporal de imágenes/videos/audios/PDF/DOCX/texto, selección múltiple, progreso, cancelación, temporal privado y SHA-256 | Implementación local inicial; falta validación física, preview ofimático legado, persistencia probatoria y deduplicación |
 | Integración iOS | `AppDelegate` estándar, sin canal/plugin de adquisición; plan USB/AFC documentado | No implementado; PoC diferida hasta cerrar Android |
-| Cifrado de evidencias | FCE AES-256-GCM por bloques, hashes plano/ciphertext y clave envuelta en bóveda segura | Implementado en código y documentado; recuperación institucional pendiente |
+| Cifrado de evidencias | FCE AES-256-GCM por bloques, hashes plano/ciphertext y clave envuelta en bóveda segura | Implementado con envolturas X25519 por dispositivo autorizado y escrow institucional para recuperar tras pérdida, cambio o reinstalación; requiere secreto/KMS configurado. Las evidencias históricas sin envoltura `RECOVERY` no son reconstruibles tras perder su única bóveda local |
 | Cadena de custodia | No hay ledger, manifiesto, hash por evidencia ni sellado | Depende de la integración completa con el backend |
 | Pruebas | Existe prueba del servicio FCE | Debe ejecutarse con Flutter 3.35/Dart 3.9 en CI |
 
@@ -117,7 +117,7 @@ La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto,
 2. No hay API contractual, paginación real, control de concurrencia ni resolución de conflictos.
 3. No hay máquina de estados de requisa (`borrador`, `en progreso`, `finalizada`, `sellada`, etc.).
 4. No hay protección para impedir modificar una requisa finalizada.
-5. No hay subida reanudable por partes ni recuperación institucional de claves.
+5. No hay subida reanudable por partes. La recuperación institucional de claves ya está implementada mediante envolturas X25519; falta conectar el secreto a un KMS/HSM administrado y definir su rotación operativa.
 6. No hay telemetría segura, trazas correlacionadas o códigos de error estables.
 
 ### P2 — arquitectura, responsive y mantenibilidad

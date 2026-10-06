@@ -11,6 +11,7 @@ import 'package:file_cast/data/services/requisition_creation_service.dart';
 import 'package:file_cast/data/services/android_acquisition_platform_service.dart';
 import 'package:file_cast/data/services/evidence_picker_service.dart';
 import 'package:file_cast/data/services/evidence_crypto_service.dart';
+import 'package:file_cast/data/services/evidence_key_exchange_service.dart';
 import 'package:file_cast/data/services/evidence_preview_service.dart';
 import 'package:file_cast/data/services/evidence_sync_service.dart';
 import 'package:file_cast/data/services/auth_session_service.dart';
@@ -86,6 +87,12 @@ class DependencyInjection {
       ProxyProvider<Http, RequisitionService>(
         update: (_, http, previous) => RequisitionService(http: http),
       ),
+      ProxyProvider2<Http, EvidenceCryptoService, EvidenceKeyExchangeService>(
+        update: (_, http, crypto, previous) => EvidenceKeyExchangeService(
+          http: http,
+          crypto: crypto,
+        ),
+      ),
       ProxyProvider<RequisitionService, RequisitionRepository>(
         update: (_, service, previous) => RemoteRequisitionRepository(
           service: service,
@@ -100,38 +107,44 @@ class DependencyInjection {
       Provider<RemoteDocumentPreviewService>(
         create: (_) => const RemoteDocumentPreviewService(),
       ),
-      ProxyProvider3<
+      ProxyProvider4<
         Http,
         EvidenceCryptoService,
         RemoteDocumentPreviewService,
+        EvidenceKeyExchangeService,
         EvidencePreviewService
       >(
-        update: (_, http, crypto, documentPreview, previous) =>
+        update: (_, http, crypto, documentPreview, keyExchange, previous) =>
             RemoteEvidencePreviewService(
               http: http,
               crypto: crypto,
+              keyExchange: keyExchange,
               documentPreview: documentPreview,
             ),
       ),
       Provider<LocationService>(create: (_) => const LocationService()),
-      ProxyProvider3<
+      ProxyProvider4<
         Http,
         LocalEvidenceDatabaseService,
         EvidenceCryptoService,
+        EvidenceKeyExchangeService,
         EvidenceSyncService
       >(
-        update: (_, http, database, crypto, previous) => EvidenceSyncService(
-          http: http,
-          database: database,
-          crypto: crypto,
-        )..start(),
+        update: (_, http, database, crypto, keyExchange, previous) =>
+            EvidenceSyncService(
+              http: http,
+              database: database,
+              crypto: crypto,
+              keyExchange: keyExchange,
+            )..start(),
       ),
-      ProxyProvider5<
+      ProxyProvider6<
         RequisitionDetailService,
         EvidencePickerService,
         EvidenceCryptoService,
         LocalEvidenceDatabaseService,
         EvidenceSyncService,
+        EvidenceKeyExchangeService,
         RequisitionDetailRepository
       >(
         update:
@@ -142,6 +155,7 @@ class DependencyInjection {
               crypto,
               database,
               syncService,
+              keyExchange,
               previous,
             ) => RemoteRequisitionDetailRepository(
               detailService: detailService,
@@ -149,6 +163,7 @@ class DependencyInjection {
               cryptoService: crypto,
               database: database,
               syncService: syncService,
+              keyExchange: keyExchange,
             ),
       ),
       ProxyProvider<Http, RequisitionCreationService>(

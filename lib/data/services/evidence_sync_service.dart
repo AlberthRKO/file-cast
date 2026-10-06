@@ -4,6 +4,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:file_cast/core/errors/either.dart';
 import 'package:file_cast/core/network/http.dart';
 import 'package:file_cast/data/services/evidence_crypto_service.dart';
+import 'package:file_cast/data/services/evidence_key_exchange_service.dart';
 import 'package:file_cast/data/services/local_evidence_database_service.dart';
 import 'package:file_cast/domain/models/evidence_upload_progress.dart';
 import 'package:http/http.dart' as http;
@@ -15,13 +16,16 @@ class EvidenceSyncService {
     required Http http,
     required LocalEvidenceDatabaseService database,
     required EvidenceCryptoService crypto,
+    required EvidenceKeyExchangeService keyExchange,
   }) : _http = http,
        _database = database,
-       _crypto = crypto;
+       _crypto = crypto,
+       _keyExchange = keyExchange;
 
   final Http _http;
   final LocalEvidenceDatabaseService _database;
   final EvidenceCryptoService _crypto;
+  final EvidenceKeyExchangeService _keyExchange;
   final Connectivity _connectivity = Connectivity();
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   final StreamController<String> _changesController =
@@ -29,6 +33,7 @@ class EvidenceSyncService {
   final StreamController<EvidenceUploadProgress> _progressController =
       StreamController<EvidenceUploadProgress>.broadcast();
   Future<int>? _activeRun;
+  bool _runAgainWhenIdle = false;
 
   Stream<String> get changes => _changesController.stream;
   Stream<EvidenceUploadProgress> get progress => _progressController.stream;
@@ -54,18 +59,36 @@ class EvidenceSyncService {
 
   Future<int> syncPending({int limit = 50}) {
     final activeRun = _activeRun;
-    if (activeRun != null) return activeRun;
+    if (activeRun != null) {
+      // La sincronización inicial puede estar consultando la outbox mientras
+      // el usuario termina de cifrar una nueva selección. No descartamos esa
+      // solicitud: ejecutamos otro ciclo al liberar el actual.
+      _runAgainWhenIdle = true;
+      return activeRun;
+    }
     final run = _syncPending(limit: limit);
     _activeRun = run;
     run.then<void>(
       (_) {
-        if (identical(_activeRun, run)) _activeRun = null;
+        if (identical(_activeRun, run)) {
+          _activeRun = null;
+          _startQueuedRunIfNeeded();
+        }
       },
       onError: (Object _, StackTrace __) {
-        if (identical(_activeRun, run)) _activeRun = null;
+        if (identical(_activeRun, run)) {
+          _activeRun = null;
+          _startQueuedRunIfNeeded();
+        }
       },
     );
     return run;
+  }
+
+  void _startQueuedRunIfNeeded() {
+    if (!_runAgainWhenIdle) return;
+    _runAgainWhenIdle = false;
+    unawaited(_triggerSync());
   }
 
   Future<int> _syncPending({required int limit}) async {
@@ -82,6 +105,7 @@ class EvidenceSyncService {
     }
     final completed = <String, int>{};
     final failed = <String, int>{};
+    final errors = <String, String>{};
     var synchronized = 0;
     for (final evidence in pending) {
       _emitProgress(
@@ -103,7 +127,9 @@ class EvidenceSyncService {
         );
         synchronized += 1;
       } catch (error) {
-        await _database.markError(evidence.id, _safeMessage(error));
+        final message = _safeMessage(error);
+        await _database.markError(evidence.id, message);
+        errors[evidence.requisitionId] = message;
         failed.update(
           evidence.requisitionId,
           (value) => value + 1,
@@ -124,6 +150,7 @@ class EvidenceSyncService {
             ? EvidenceUploadStage.error
             : EvidenceUploadStage.completed,
         isActive: false,
+        errorMessage: errors[requisitionId],
       );
       if (!_changesController.isClosed) {
         _changesController.add(requisitionId);
@@ -147,6 +174,7 @@ class EvidenceSyncService {
     required EvidenceUploadStage stage,
     required bool isActive,
     String? currentFileName,
+    String? errorMessage,
   }) {
     if (_progressController.isClosed) return;
     _progressController.add(
@@ -158,11 +186,46 @@ class EvidenceSyncService {
         stage: stage,
         isActive: isActive,
         currentFileName: currentFileName,
+        errorMessage: errorMessage,
       ),
     );
   }
 
   Future<String> _syncOne(LocalEvidenceRecord evidence) async {
+    await _keyExchange.ensureRegistered(evidence.requisitionId);
+    final recipients = await _keyExchange.recipients(evidence.requisitionId);
+    final currentDeviceId = await _crypto.encryptionDeviceId;
+    final keyEnvelopes = <Map<String, dynamic>>[];
+    for (final recipient in recipients) {
+      if (recipient.publicKey.isEmpty) continue;
+      try {
+        final wrappedKey = await _crypto.wrapLocalDataKeyForDevice(
+          wrappedKey: evidence.wrappedKey,
+          evidenceId: evidence.id,
+          recipientPublicKey: recipient.publicKey,
+        );
+        keyEnvelopes.add({
+          'recipientType': 'DEVICE',
+          'recipientId': recipient.deviceId,
+          'wrapAlgorithm': EvidenceCryptoService.deviceKeyAlgorithm,
+          'keyVersion': recipient.keyVersion,
+          'wrappedKey': wrappedKey,
+        });
+      } on Object {
+        // Una clave pública incompatible no debe bloquear el resto del lote.
+      }
+    }
+    final recoveryKey = await _keyExchange.recoveryKey(evidence.requisitionId);
+    if (recoveryKey == null) {
+      throw StateError(
+        'La recuperación institucional no está configurada. La evidencia queda pendiente para evitar una pérdida de acceso.',
+      );
+    }
+    final recoveryWrappedKey = await _crypto.wrapLocalDataKeyForRecovery(
+      wrappedKey: evidence.wrappedKey,
+      evidenceId: evidence.id,
+      recoveryPublicKey: recoveryKey.publicKey,
+    );
     final intent = await _http.request<dynamic>(
       '/api/v1/requisitions/${evidence.requisitionId}/evidence-intents',
       method: HttpMethod.post,
@@ -182,13 +245,24 @@ class EvidenceSyncService {
         'plaintextSha256': evidence.plaintextSha256,
         'ciphertextSha256': evidence.ciphertextSha256,
         'aadHash': evidence.aadHash,
-        'keyEnvelope': {
-          'recipientType': 'DEVICE',
-          'recipientId': await _crypto.deviceId,
-          'wrapAlgorithm': 'AES-256-GCM-LOCAL-VAULT',
-          'keyVersion': evidence.keyVersion,
-          'wrappedKey': evidence.wrappedKey,
-        },
+        if (keyEnvelopes.isNotEmpty)
+          'keyEnvelopes': keyEnvelopes
+        else
+          'keyEnvelope': {
+            'recipientType': 'DEVICE',
+            'recipientId': currentDeviceId,
+            'wrapAlgorithm': EvidenceCryptoService.localKeyWrapAlgorithm,
+            'keyVersion': evidence.keyVersion,
+            'wrappedKey': evidence.wrappedKey,
+          },
+        if (recoveryKey != null && recoveryWrappedKey != null)
+          'recoveryEnvelope': {
+            'recipientType': 'RECOVERY',
+            'recipientId': recoveryKey.keyId,
+            'wrapAlgorithm': recoveryKey.algorithm,
+            'keyVersion': recoveryKey.version,
+            'wrappedKey': recoveryWrappedKey,
+          },
         'kind': evidence.type,
         'acquisitionMethod': evidence.acquisitionMethod,
         'sourcePath': evidence.sourcePath,
@@ -242,6 +316,23 @@ class EvidenceSyncService {
       '_id',
     ]);
     if (remoteId == null) throw StateError('La API no devolvió el msFileId.');
+    for (final envelope in keyEnvelopes) {
+      await _keyExchange.addEnvelope(
+        requisitionId: evidence.requisitionId,
+        evidenceId: evidence.id,
+        recipientId: envelope['recipientId']! as String,
+        wrappedKey: envelope['wrappedKey']! as String,
+        keyVersion: envelope['keyVersion']! as int,
+      );
+    }
+    if (recoveryKey != null && recoveryWrappedKey != null) {
+      await _keyExchange.addRecoveryEnvelope(
+        requisitionId: evidence.requisitionId,
+        evidenceId: evidence.id,
+        recoveryKey: recoveryKey,
+        wrappedKey: recoveryWrappedKey,
+      );
+    }
     return remoteId;
   }
 

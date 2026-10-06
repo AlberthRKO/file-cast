@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:file_cast/data/services/evidence_crypto_service.dart';
 import 'package:file_cast/data/services/evidence_picker_service.dart';
+import 'package:file_cast/data/services/evidence_key_exchange_service.dart';
 import 'package:file_cast/data/services/evidence_sync_service.dart';
 import 'package:file_cast/data/services/local_evidence_database_service.dart';
 import 'package:file_cast/data/services/requisition_detail_service.dart';
@@ -19,11 +20,13 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     EvidenceCryptoService? cryptoService,
     LocalEvidenceDatabaseService? database,
     EvidenceSyncService? syncService,
+    EvidenceKeyExchangeService? keyExchange,
   }) : _detailService = detailService,
        _pickerService = pickerService ?? EvidencePickerService(),
        _cryptoService = cryptoService,
        _database = database,
-       _syncService = syncService {
+       _syncService = syncService,
+       _keyExchange = keyExchange {
     _syncChangesSubscription = syncService?.changes.listen(
       _onEvidenceSyncChanged,
     );
@@ -39,6 +42,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
   final EvidenceCryptoService? _cryptoService;
   final LocalEvidenceDatabaseService? _database;
   final EvidenceSyncService? _syncService;
+  final EvidenceKeyExchangeService? _keyExchange;
   late final StreamSubscription<String>? _syncChangesSubscription;
   final StreamController<String> _changesController =
       StreamController<String>.broadcast();
@@ -98,16 +102,78 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
 
   @override
   Future<RequisitionDetail> getDetail(String requisitionId) async {
+    try {
+      await _keyExchange?.ensureRegistered(requisitionId);
+    } on Object {
+      // La carga del detalle sigue disponible aunque el registro criptográfico
+      // quede pendiente por conectividad o por una versión antigua del backend.
+    }
     RequisitionDetail remote;
     try {
       remote = await _detailService.getDetail(requisitionId);
       _cachedRemoteDetails[requisitionId] = remote;
+      await _sharePersistedKeys(requisitionId, remote);
     } catch (_) {
       final cached = _cachedRemoteDetails[requisitionId];
       if (cached == null) rethrow;
       remote = cached;
     }
     return _mergeRemoteDetail(remote, requisitionId);
+  }
+
+  Future<void> _sharePersistedKeys(
+    String requisitionId,
+    RequisitionDetail remote,
+  ) async {
+    final keyExchange = _keyExchange;
+    final crypto = _cryptoService;
+    final database = _database;
+    if (keyExchange == null || crypto == null || database == null) return;
+    if (!keyExchange.canShareKeys(requisitionId)) return;
+    final local = await database.forRequisition(requisitionId);
+    if (local.isEmpty) return;
+    final remoteById = {
+      for (final evidence in remote.evidence)
+        if (evidence.encrypted && evidence.id.isNotEmpty) evidence.id: evidence,
+    };
+    if (remoteById.isEmpty) return;
+    try {
+      final recipients = await keyExchange.recipients(requisitionId);
+      final recoveryKey = await keyExchange.recoveryKey(requisitionId);
+      for (final localEvidence in local) {
+        final remoteEvidence = remoteById[localEvidence.id];
+        if (remoteEvidence?.uploadStatus != 'AVAILABLE') continue;
+        if (recoveryKey != null) {
+          final recoveryWrappedKey = await crypto.wrapLocalDataKeyForRecovery(
+            wrappedKey: localEvidence.wrappedKey,
+            evidenceId: localEvidence.id,
+            recoveryPublicKey: recoveryKey.publicKey,
+          );
+          await keyExchange.addRecoveryEnvelope(
+            requisitionId: requisitionId,
+            evidenceId: localEvidence.id,
+            recoveryKey: recoveryKey,
+            wrappedKey: recoveryWrappedKey,
+          );
+        }
+        for (final recipient in recipients) {
+          final wrappedKey = await crypto.wrapLocalDataKeyForDevice(
+            wrappedKey: localEvidence.wrappedKey,
+            evidenceId: localEvidence.id,
+            recipientPublicKey: recipient.publicKey,
+          );
+          await keyExchange.addEnvelope(
+            requisitionId: requisitionId,
+            evidenceId: localEvidence.id,
+            recipientId: recipient.deviceId,
+            wrappedKey: wrappedKey,
+            keyVersion: recipient.keyVersion,
+          );
+        }
+      }
+    } on Object {
+      // La galería no debe quedar bloqueada por una reparación de envolturas.
+    }
   }
 
   Future<RequisitionDetail> _mergeRemoteDetail(
@@ -286,6 +352,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       imported.add(
         RequisitionEvidence(
           id: evidenceId,
+          requisitionId: requisitionId,
           name: normalized.name,
           type: normalized.type,
           createdAt: timestamp,
@@ -421,6 +488,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     };
     return RequisitionEvidence(
       id: record.id,
+      requisitionId: record.requisitionId,
       name: record.originalName,
       type: type,
       createdAt: record.createdAt,
@@ -453,6 +521,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     if (persisted != null) {
       return RequisitionEvidence(
         id: remote.id,
+        requisitionId: remote.requisitionId,
         name: remote.name,
         type: remote.type,
         createdAt: remote.createdAt,
@@ -473,15 +542,19 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
         plaintextSha256: remote.plaintextSha256 ?? persisted.plaintextSha256,
         aadHash: remote.aadHash ?? persisted.aadHash,
         wrappedKey: remote.wrappedKey ?? persisted.wrappedKey,
+        remoteWrappedKey: remote.remoteWrappedKey,
+        remoteWrapAlgorithm: remote.remoteWrapAlgorithm,
         keyVersion: remote.keyVersion ?? persisted.keyVersion,
         uploadStatus: remote.uploadStatus,
         contentUrl: remote.contentUrl,
         downloadUrl: remote.downloadUrl,
+        contentSessionToken: remote.contentSessionToken,
       );
     }
     if (imported == null || imported.localPath == null) return remote;
     return RequisitionEvidence(
       id: remote.id,
+      requisitionId: remote.requisitionId,
       name: remote.name,
       type: remote.type,
       createdAt: remote.createdAt,
@@ -501,10 +574,13 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       plaintextSha256: remote.plaintextSha256 ?? imported.plaintextSha256,
       aadHash: remote.aadHash ?? imported.aadHash,
       wrappedKey: remote.wrappedKey ?? imported.wrappedKey,
+      remoteWrappedKey: remote.remoteWrappedKey,
+      remoteWrapAlgorithm: remote.remoteWrapAlgorithm,
       keyVersion: remote.keyVersion ?? imported.keyVersion,
       uploadStatus: remote.uploadStatus,
       contentUrl: remote.contentUrl,
       downloadUrl: remote.downloadUrl,
+      contentSessionToken: remote.contentSessionToken,
     );
   }
 }

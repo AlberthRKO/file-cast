@@ -120,6 +120,7 @@ final class ImportedEvidenceDraft {
 final class RequisitionEvidence {
   const RequisitionEvidence({
     required this.id,
+    this.requisitionId,
     required this.name,
     required this.type,
     required this.createdAt,
@@ -137,13 +138,17 @@ final class RequisitionEvidence {
     this.plaintextSha256,
     this.aadHash,
     this.wrappedKey,
+    this.remoteWrappedKey,
+    this.remoteWrapAlgorithm,
     this.keyVersion,
     this.uploadStatus,
     this.contentUrl,
     this.downloadUrl,
+    this.contentSessionToken,
   });
 
   final String id;
+  final String? requisitionId;
   final String name;
   final RequisitionEvidenceType type;
   final DateTime createdAt;
@@ -161,10 +166,13 @@ final class RequisitionEvidence {
   final String? plaintextSha256;
   final String? aadHash;
   final String? wrappedKey;
+  final String? remoteWrappedKey;
+  final String? remoteWrapAlgorithm;
   final int? keyVersion;
   final String? uploadStatus;
   final String? contentUrl;
   final String? downloadUrl;
+  final String? contentSessionToken;
 }
 
 final class RequisitionDetail {

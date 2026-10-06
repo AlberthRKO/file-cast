@@ -31,9 +31,13 @@ eliminan cuando el widget se desmonta.
 - La AAD incluye el UUID de la evidencia y el índice de bloque.
 - Se calcula SHA-256 del plano y del FCE completo.
 
-Cada evidencia usa una DEK aleatoria. La DEK se envuelve con una clave de bóveda
-de 256 bits almacenada en `flutter_secure_storage`. La base SQLCipher tiene otra
-clave aleatoria almacenada en el mismo almacén seguro.
+Cada evidencia usa una DEK aleatoria. La DEK se envuelve localmente con una
+clave de bóveda de 256 bits almacenada en `flutter_secure_storage`. Para permitir
+el acceso de participantes, el dispositivo también genera un par X25519: solo
+la clave pública se registra en el backend y la privada permanece en el almacén
+seguro. La DEK se envuelve una vez por cada dispositivo autorizado usando
+X25519 + HKDF-SHA256 + AES-256-GCM. La base SQLCipher tiene otra clave aleatoria
+almacenada en el mismo almacén seguro.
 
 En Android, el build release conserva las clases nativas de SQLCipher mediante
 `android/app/proguard-rules.pro`. Antes de distribuir una versión release se
@@ -59,7 +63,7 @@ La app crea primero `POST /api/v1/requisitions/{id}/evidence-intents` con:
 - `byteLength` y `sha256` del FCE;
 - `plaintextByteLength` y `plaintextSha256`;
 - `encryptionAlgorithm`, `encryptionVersion` y `aadHash`;
-- `keyEnvelope` dirigida al dispositivo;
+- `keyEnvelopes` dirigidas a los dispositivos activos de los actores con acceso;
 - tipo y método de adquisición.
 
 Después envía el mismo `evidenceId` en
@@ -72,10 +76,51 @@ evidencia.
 
 ## Recuperación
 
-La versión actual permite leer la evidencia en el dispositivo que conserva su
-clave de bóveda. Para recuperación institucional o cambio de dispositivo se
-debe agregar una segunda envoltura de la DEK con una clave pública institucional
-o KMS/Vault. No se debe sincronizar la clave privada del dispositivo.
+Al registrar una requisa, cada dispositivo autorizado publica su clave X25519.
+El dueño/editor obtiene las claves públicas activas y envía al backend una
+envoltura de la misma DEK por dispositivo. Un participante obtiene únicamente
+su envoltura mediante `GET .../key-envelope`, solicita el contenido mediante la
+ruta autenticada de `file-cast-back` y descifra localmente. `file-cast-back`
+genera internamente la URL firmada y envía el `x-session-token` a `ms-files-v2`;
+el token y la URL firmada ya no llegan al móvil. `ms-files-v2` nunca recibe la
+DEK ni el contenido plano. En el modo de recuperación institucional,
+`file-cast-back`/KMS abre temporalmente la envoltura de recuperación únicamente
+para volver a envolver la DEK con la clave pública del nuevo dispositivo; la
+DEK no se persiste en claro.
+
+La vista previa escribe cada descarga en un temporal único, verifica que el
+archivo recibido tenga el tamaño FCE esperado y lee el contenedor por completo
+aunque el sistema entregue lecturas parciales. El hash del contenido plano
+continúa siendo la validación final; esto permite abrir evidencias antiguas con
+metadatos de tamaño plano desactualizados sin aceptar contenido alterado.
+
+Si el dueño agrega un dispositivo después de haber subido evidencias, el
+backend provisiona las envolturas desde la copia institucional y la app del
+dueño también puede reparar evidencias antiguas mientras conserve la bóveda
+local. Por eso la pérdida, robo, cambio o desinstalación del teléfono no
+elimina el acceso: al registrar el nuevo dispositivo se reenvuelven todas las
+DEK disponibles y cada preview descarga el FCE remoto y descifra localmente.
+
+La recuperación requiere configurar `ENV_ENCRYPTION_RECOVERY_PRIVATE_KEY` en
+un secreto/KMS del backend. Sin esa copia institucional, una evidencia creada
+antes de la recuperación o con el secreto deshabilitado solo puede recuperarse
+desde un dispositivo autorizado que conserve su clave privada.
+
+Una evidencia antigua no se puede reconstruir después de desinstalar el único
+dispositivo que conservaba la bóveda local si nunca llegó a existir su
+envoltura `RECOVERY`. En ese caso el backend seguirá mostrando el archivo FCE,
+pero `GET .../key-envelope` responderá sin datos: ms-files-v2 conserva el
+ciphertext, no la DEK. La reparación de evidencias antiguas solo es posible
+antes de perder ese dispositivo, abriendo la requisa con la app actual para
+que el dueño/editor publique la envoltura institucional.
+
+Durante una sincronización, el detalle de la requisa puede mostrar el error
+local de preparación de la envoltura y el botón de reintento conserva la misma
+operación idempotente. Si la outbox ya estaba ejecutándose al confirmar una
+nueva selección, se agenda automáticamente otro ciclo al terminar el actual.
+Las envolturas X25519 llevan una clave de idempotencia derivada de su contenido:
+una repetición exacta se reproduce y una nueva envoltura aleatoria puede
+actualizar de forma segura el registro sin provocar un conflicto artificial.
 
 ## Prueba local
 

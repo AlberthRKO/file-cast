@@ -42,9 +42,10 @@ class RequisitionDetailService {
     final currentCase = _asMap(data['currentCase']);
     final primarySubject = _asMap(data['primarySubject']);
     final caseSnapshot = _asMap(currentCase['snapshot']);
-    final evidence = _asList(
-      data['evidences'],
-    ).map(_parseEvidence).toList(growable: false);
+    final requisitionId = _text(data['id']) ?? '';
+    final evidence = _asList(data['evidences'])
+        .map((item) => _parseEvidence(item, requisitionId))
+        .toList(growable: false);
     final sessions = _asList(
       data['sessions'],
     ).map(_parseSession).toList(growable: false);
@@ -123,12 +124,14 @@ class RequisitionDetailService {
     );
   }
 
-  RequisitionEvidence _parseEvidence(Object? raw) {
+  RequisitionEvidence _parseEvidence(Object? raw, String requisitionId) {
     final data = _asMap(raw);
     final byteLength = _int(data['byteLength']);
     final urls = _asMap(data['urls']);
+    final keyEnvelope = _asMap(data['keyEnvelope']);
     return RequisitionEvidence(
       id: _text(data['id']) ?? '',
+      requisitionId: requisitionId,
       name: _text(data['originalName']) ?? 'Evidencia',
       type: _evidenceType(data['kind']),
       createdAt:
@@ -146,6 +149,9 @@ class RequisitionDetailService {
       uploadStatus: _text(data['uploadStatus']),
       contentUrl: _text(urls['content']),
       downloadUrl: _text(urls['download']),
+      contentSessionToken: _text(urls['sessionToken']),
+      remoteWrappedKey: _text(keyEnvelope['wrappedKey']),
+      remoteWrapAlgorithm: _text(keyEnvelope['wrapAlgorithm']),
     );
   }
 

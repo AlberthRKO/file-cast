@@ -7,46 +7,94 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test(
-      'cifra por bloques, elimina el plano y permite descifrar con verificación',
-      () async {
-    final storage = _MemorySecureStorage();
-    final service = EvidenceCryptoService(storage: storage);
-    final directory =
-        await Directory.systemTemp.createTemp('file_cast_crypto_test_');
-    final input = File('${directory.path}/captura.png');
-    final original = List<int>.generate(
-      EvidenceCryptoService.chunkSize + 137,
-      (index) => index % 251,
-    );
-    await input.writeAsBytes(original, flush: true);
-
-    try {
-      final encrypted = await service.encryptEvidence(
-        evidenceId: '11111111-1111-4111-8111-111111111111',
-        inputPath: input.path,
-        originalName: 'captura.png',
-        mimeType: 'image/png',
+    'cifra por bloques, elimina el plano y permite descifrar con verificación',
+    () async {
+      final storage = _MemorySecureStorage();
+      final service = EvidenceCryptoService(storage: storage);
+      final directory = await Directory.systemTemp.createTemp(
+        'file_cast_crypto_test_',
       );
-
-      expect(await input.exists(), isFalse);
-      expect(await File(encrypted.localPath).exists(), isTrue);
-      expect(encrypted.plaintextByteLength, original.length);
-      expect(encrypted.plaintextSha256, hasLength(64));
-      expect(encrypted.sha256, hasLength(64));
-
-      final decryptedPath = await service.decryptToTemporaryFile(
-        evidenceId: '11111111-1111-4111-8111-111111111111',
-        encryptedPath: encrypted.localPath,
-        wrappedKey: encrypted.wrappedKey,
-        expectedPlaintextSha256: encrypted.plaintextSha256,
-        expectedPlaintextByteLength: encrypted.plaintextByteLength,
+      final input = File('${directory.path}/captura.png');
+      final original = List<int>.generate(
+        EvidenceCryptoService.chunkSize + 137,
+        (index) => index % 251,
       );
-      expect(await File(decryptedPath).readAsBytes(), original);
-      await File(decryptedPath).delete();
-    } finally {
-      await directory.delete(recursive: true);
-    }
-  });
+      await input.writeAsBytes(original, flush: true);
+
+      try {
+        final encrypted = await service.encryptEvidence(
+          evidenceId: '11111111-1111-4111-8111-111111111111',
+          inputPath: input.path,
+          originalName: 'captura.png',
+          mimeType: 'image/png',
+        );
+
+        expect(await input.exists(), isFalse);
+        expect(await File(encrypted.localPath).exists(), isTrue);
+        expect(encrypted.plaintextByteLength, original.length);
+        expect(encrypted.plaintextSha256, hasLength(64));
+        expect(encrypted.sha256, hasLength(64));
+
+        final decryptedPath = await service.decryptToTemporaryFile(
+          evidenceId: '11111111-1111-4111-8111-111111111111',
+          encryptedPath: encrypted.localPath,
+          wrappedKey: encrypted.wrappedKey,
+          expectedPlaintextSha256: encrypted.plaintextSha256,
+          expectedPlaintextByteLength: encrypted.plaintextByteLength,
+        );
+        expect(await File(decryptedPath).readAsBytes(), original);
+        await File(decryptedPath).delete();
+      } finally {
+        await directory.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'permite descifrar la misma DEK en otro dispositivo autorizado',
+    () async {
+      final ownerStorage = _MemorySecureStorage();
+      final participantStorage = _MemorySecureStorage();
+      final owner = EvidenceCryptoService(storage: ownerStorage);
+      final participant = EvidenceCryptoService(storage: participantStorage);
+      final directory = await Directory.systemTemp.createTemp(
+        'file_cast_shared_key_test_',
+      );
+      final input = File('${directory.path}/captura.png');
+      const evidenceId = '22222222-2222-4222-8222-222222222222';
+      final original = List<int>.generate(4097, (index) => index % 251);
+      await input.writeAsBytes(original, flush: true);
+
+      try {
+        final encrypted = await owner.encryptEvidence(
+          evidenceId: evidenceId,
+          inputPath: input.path,
+          originalName: 'captura.png',
+          mimeType: 'image/png',
+        );
+        final participantEnvelope = await owner.wrapLocalDataKeyForDevice(
+          wrappedKey: encrypted.wrappedKey,
+          evidenceId: evidenceId,
+          recipientPublicKey: await participant.encryptionPublicKey(),
+        );
+        final remoteCiphertext = File('${directory.path}/remote.fce');
+        await File(encrypted.localPath).copy(remoteCiphertext.path);
+
+        final decryptedPath = await participant.decryptToTemporaryFile(
+          evidenceId: evidenceId,
+          encryptedPath: remoteCiphertext.path,
+          wrappedKey: participantEnvelope,
+          wrapAlgorithm: EvidenceCryptoService.deviceKeyAlgorithm,
+          expectedPlaintextSha256: encrypted.plaintextSha256,
+          expectedPlaintextByteLength: encrypted.plaintextByteLength,
+        );
+        expect(await File(decryptedPath).readAsBytes(), original);
+        await File(decryptedPath).delete();
+      } finally {
+        await directory.delete(recursive: true);
+      }
+    },
+  );
 }
 
 final class _MemorySecureStorage extends SecureStorageService {

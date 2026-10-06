@@ -165,13 +165,17 @@ class Http {
           : isFile
           ? response
           : isFileV2
-          ? response.bodyBytes
+          ? statusCode >= 200 && statusCode < 300
+                ? response.bodyBytes
+                : parserResponseBody(response.body)
           : parserResponseBody(response.body);
       //print("Aqui muestra lo que devuelve el responseBody: $responseBody");
       logs = {
         ...logs,
         'statusCode': statusCode,
-        'responseBody': _redactValue(responseBody),
+        'responseBody': isFileV2 && responseBody is List<int>
+            ? {'byteLength': responseBody.length}
+            : _redactValue(responseBody),
       };
 
       if (statusCode >= 200 && statusCode < 300) {
@@ -192,6 +196,7 @@ class Http {
       logs = {
         ...logs,
         'exception': e.runtimeType.toString(),
+        'exceptionMessage': e.toString(),
         // 'stacktrace': s.toString(),
       };
       if (e is SocketException || e is ClientException) {
@@ -209,7 +214,7 @@ class Http {
         ...logs,
         'endTime': DateTime.now().toString(),
       };
-      if (kDebugMode && !isImage && !isFile && !isFileV2) {
+      if (kDebugMode && !isImage && !isFile) {
         log(
           '''------------------------------------------------
           ${const JsonEncoder.withIndent('  ').convert(logs)}
@@ -476,7 +481,8 @@ Map<String, String> _redactHeaders(Map<String, String> headers) {
         key == 'authorization' ||
             key == 'cookie' ||
             key == 'idempotency-key' ||
-            key == 'x-dispositivo-unico'
+            key == 'x-dispositivo-unico' ||
+            key == 'x-session-token'
         ? '[REDACTED]'
         : entry.value;
   }
