@@ -1,10 +1,10 @@
 import 'dart:async';
 
 import 'package:file_cast/core/theme/colors.dart';
+import 'package:file_cast/domain/models/evidence_upload_progress.dart';
 import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
-import 'package:file_cast/domain/models/evidence_upload_progress.dart';
 import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
@@ -364,7 +364,6 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
     RequisitionEvidence evidence,
   ) => showDialog<void>(
     context: context,
-    barrierDismissible: true,
     builder: (dialogContext) {
       final windowSize = MediaQuery.sizeOf(dialogContext);
       final availableWidth = windowSize.width - (AppSpace.m * 2);
@@ -834,7 +833,7 @@ class _SummaryFooter extends StatelessWidget {
       children: [
         if (isImporting ||
             isSyncing ||
-            uploadProgress?.isActive == true ||
+            (uploadProgress?.isActive ?? false) ||
             pendingCount > 0) ...[
           uploadIndicator,
           const SizedBox(height: AppSpace.s),
@@ -864,7 +863,7 @@ class _UploadProgressIndicator extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final active = isImporting || isSyncing || progress?.isActive == true;
+    final active = isImporting || isSyncing || (progress?.isActive ?? false);
     final hasError = !active && pendingCount > 0;
     final completed = progress?.processed ?? 0;
     final total = progress?.total ?? pendingCount;
@@ -1831,7 +1830,6 @@ class _EvidencePreview extends StatelessWidget {
     return Material(
       color: theme.cardColor,
       borderRadius: BorderRadius.circular(AppRadius.m),
-      elevation: 0,
       shadowColor: Colors.transparent,
       child: InkWell(
         onTap: onOpen,
@@ -1845,7 +1843,6 @@ class _EvidencePreview extends StatelessWidget {
                 child: Container(
                   width: AppSize.minTouchTarget,
                   height: AppSize.minTouchTarget,
-                  padding: const EdgeInsets.all(AppSpace.m - AppSpace.s),
                   decoration: BoxDecoration(
                     color: scheme.primary.withValues(alpha: .14),
                     borderRadius: BorderRadius.circular(AppRadius.s),
@@ -1869,11 +1866,16 @@ class _EvidencePreview extends StatelessWidget {
                                 errorBuilder: (_, _, _) => imageFallback,
                               )
                             : imageFallback
-                      : SvgPicture.asset(
-                          'assets/images/icons/$iconAsset',
-                          colorFilter: ColorFilter.mode(
-                            scheme.primary,
-                            BlendMode.srcIn,
+                      : Padding(
+                          padding: const EdgeInsets.all(
+                            AppSpace.m - AppSpace.s,
+                          ),
+                          child: SvgPicture.asset(
+                            'assets/images/icons/$iconAsset',
+                            colorFilter: ColorFilter.mode(
+                              scheme.primary,
+                              BlendMode.srcIn,
+                            ),
                           ),
                         ),
                 ),

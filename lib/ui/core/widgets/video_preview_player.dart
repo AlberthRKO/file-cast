@@ -31,6 +31,7 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
 
   Duration? _scrubPosition;
   bool _wasPlayingBeforeScrub = false;
+  bool _isMuted = false;
 
   @override
   void initState() {
@@ -105,6 +106,12 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
     await _controller.play();
   }
 
+  Future<void> _toggleMute() async {
+    final nextMuted = !_isMuted;
+    setState(() => _isMuted = nextMuted);
+    await _controller.setVolume(nextMuted ? 0 : 1);
+  }
+
   @override
   Widget build(BuildContext context) => FutureBuilder<void>(
     future: _initialization,
@@ -121,6 +128,8 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
       return ValueListenableBuilder<VideoPlayerValue>(
         valueListenable: _controller,
         builder: (context, value, _) {
+          final theme = Theme.of(context);
+          final scheme = theme.colorScheme;
           final duration = value.duration;
           final position = _scrubPosition ?? value.position;
           final maximum = duration.inMilliseconds.toDouble();
@@ -130,86 +139,145 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
                     .clamp(0, duration.inMilliseconds)
                     .toDouble();
 
-          return Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Expanded(
-                child: Center(
-                  child: AspectRatio(
-                    aspectRatio: value.aspectRatio,
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        VideoPlayer(_controller),
-                        if (value.isBuffering)
-                          const IgnorePointer(
-                            child: SizedBox(
-                              width: 42,
-                              height: 42,
-                              child: CircularProgressIndicator(strokeWidth: 3),
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(AppRadius.l),
+            child: ColoredBox(
+              color: theme.cardColor,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Center(
+                      child: AspectRatio(
+                        aspectRatio: value.aspectRatio,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(AppRadius.l),
+                          child: ColoredBox(
+                            color: Colors.black,
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                VideoPlayer(_controller),
+                                if (value.isBuffering)
+                                  const IgnorePointer(
+                                    child: SizedBox(
+                                      width: 42,
+                                      height: 42,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 3,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                if (!value.isPlaying && !value.isBuffering)
+                                  IconButton(
+                                    tooltip: 'Reproducir',
+                                    iconSize: 38,
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: Colors.white,
+                                      foregroundColor: Colors.black,
+                                      minimumSize: const Size(68, 68),
+                                      padding: const EdgeInsets.only(left: 4),
+                                    ),
+                                    onPressed: () =>
+                                        unawaited(_togglePlayback()),
+                                    icon: const Icon(
+                                      Icons.play_arrow_rounded,
+                                    ),
+                                  ),
+                              ],
                             ),
                           ),
-                        IconButton.filled(
-                          tooltip: value.isPlaying ? 'Pausar' : 'Reproducir',
-                          iconSize: 34,
-                          onPressed: () => unawaited(_togglePlayback()),
-                          icon: Icon(
-                            value.isPlaying
-                                ? Icons.pause_rounded
-                                : Icons.play_arrow_rounded,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpace.m,
+                      AppSpace.s,
+                      AppSpace.m,
+                      AppSpace.xs,
+                    ),
+                    child: Column(
+                      children: [
+                        SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            trackHeight: 4,
+                            thumbShape: const RoundSliderThumbShape(
+                              enabledThumbRadius: 7,
+                            ),
+                            overlayShape: const RoundSliderOverlayShape(
+                              overlayRadius: 15,
+                            ),
+                            activeTrackColor: scheme.primary,
+                            inactiveTrackColor: scheme.onSurface.withValues(
+                              alpha: .22,
+                            ),
+                            thumbColor: scheme.primary,
                           ),
+                          child: Slider(
+                            min: 0,
+                            max: maximum > 0 ? maximum : 1,
+                            value: sliderValue,
+                            onChangeStart: maximum <= 0 ? null : _onScrubStart,
+                            onChanged: maximum <= 0 ? null : _onScrubChanged,
+                            onChangeEnd: maximum <= 0 ? null : _onScrubEnd,
+                          ),
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              _formatVideoDuration(position),
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                            Text(
+                              _formatVideoDuration(duration),
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Row(
+                          children: [
+                            IconButton(
+                              tooltip: value.isPlaying
+                                  ? 'Pausar'
+                                  : 'Reproducir',
+                              color: scheme.onSurface,
+                              iconSize: 27,
+                              onPressed: () => unawaited(_togglePlayback()),
+                              icon: Icon(
+                                value.isPlaying
+                                    ? Icons.pause_rounded
+                                    : Icons.play_arrow_rounded,
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: _isMuted
+                                  ? 'Activar sonido'
+                                  : 'Silenciar',
+                              color: scheme.onSurface,
+                              iconSize: 25,
+                              onPressed: () => unawaited(_toggleMute()),
+                              icon: Icon(
+                                _isMuted
+                                    ? Icons.volume_off_rounded
+                                    : Icons.volume_up_rounded,
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
                   ),
-                ),
+                ],
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpace.m,
-                  AppSpace.s,
-                  AppSpace.m,
-                  0,
-                ),
-                child: Column(
-                  children: [
-                    SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
-                        trackHeight: 4,
-                        thumbShape: const RoundSliderThumbShape(
-                          enabledThumbRadius: 7,
-                        ),
-                        overlayShape: const RoundSliderOverlayShape(
-                          overlayRadius: 15,
-                        ),
-                        activeTrackColor: Theme.of(
-                          context,
-                        ).colorScheme.primary,
-                        inactiveTrackColor: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withValues(alpha: .22),
-                        thumbColor: Theme.of(context).colorScheme.primary,
-                      ),
-                      child: Slider(
-                        min: 0,
-                        max: maximum > 0 ? maximum : 1,
-                        value: sliderValue,
-                        onChangeStart: maximum <= 0 ? null : _onScrubStart,
-                        onChanged: maximum <= 0 ? null : _onScrubChanged,
-                        onChangeEnd: maximum <= 0 ? null : _onScrubEnd,
-                      ),
-                    ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(_formatVideoDuration(position)),
-                        Text(_formatVideoDuration(duration)),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            ),
           );
         },
       );
