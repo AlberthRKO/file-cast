@@ -7,6 +7,7 @@ import 'package:file_cast/data/services/evidence_picker_service.dart';
 import 'package:file_cast/data/services/evidence_sync_service.dart';
 import 'package:file_cast/data/services/local_evidence_database_service.dart';
 import 'package:file_cast/data/services/requisition_detail_service.dart';
+import 'package:file_cast/domain/models/evidence_upload_progress.dart';
 import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
@@ -22,7 +23,14 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
        _pickerService = pickerService ?? EvidencePickerService(),
        _cryptoService = cryptoService,
        _database = database,
-       _syncService = syncService;
+       _syncService = syncService {
+    _syncChangesSubscription = syncService?.changes.listen(
+      _onEvidenceSyncChanged,
+    );
+    _syncProgressSubscription = syncService?.progress.listen(
+      _onEvidenceUploadProgress,
+    );
+  }
 
   final RequisitionDetailService _detailService;
   final Map<String, List<RequisitionEvidence>> _imported = {};
@@ -31,12 +39,62 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
   final EvidenceCryptoService? _cryptoService;
   final LocalEvidenceDatabaseService? _database;
   final EvidenceSyncService? _syncService;
+  late final StreamSubscription<String>? _syncChangesSubscription;
   final StreamController<String> _changesController =
       StreamController<String>.broadcast();
+  final StreamController<EvidenceUploadProgress> _progressController =
+      StreamController<EvidenceUploadProgress>.broadcast();
   final Random _random = Random.secure();
+  late final StreamSubscription<EvidenceUploadProgress>?
+  _syncProgressSubscription;
+
+  void _onEvidenceSyncChanged(String requisitionId) {
+    if (!_changesController.isClosed) _changesController.add(requisitionId);
+  }
+
+  void _onEvidenceUploadProgress(EvidenceUploadProgress progress) {
+    if (!_progressController.isClosed) _progressController.add(progress);
+  }
+
+  Future<void> dispose() async {
+    await _syncChangesSubscription?.cancel();
+    await _syncProgressSubscription?.cancel();
+    await _changesController.close();
+    await _progressController.close();
+  }
 
   @override
   Stream<String> get changes => _changesController.stream;
+
+  @override
+  Stream<EvidenceUploadProgress> get uploadProgress =>
+      _progressController.stream;
+
+  @override
+  Future<int> syncPendingEvidence() =>
+      _syncService?.syncPending() ?? Future<int>.value(0);
+
+  @override
+  Future<List<ImportedEvidenceDraft>?> pickEvidence({
+    required bool imagesOnly,
+  }) async {
+    final picked = await _pickerService.pickFiles(imagesOnly: imagesOnly);
+    if (picked == null || picked.isEmpty) return null;
+    return picked
+        .map(
+          (file) => ImportedEvidenceDraft(
+            name: file.name,
+            type: file.type,
+            sizeLabel: file.sizeLabel,
+            byteLength: file.byteLength,
+            localPath: file.localPath,
+            mimeType: file.mimeType,
+            acquisitionMethod: 'IMPORTED_FILE',
+            preserveSource: true,
+          ),
+        )
+        .toList(growable: false);
+  }
 
   @override
   Future<RequisitionDetail> getDetail(String requisitionId) async {
@@ -61,6 +119,21 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
         const <LocalEvidenceRecord>[];
     final imported = _imported[requisitionId] ?? const <RequisitionEvidence>[];
     final serverIds = remote.evidence.map((item) => item.id).toSet();
+    final persistedById = {
+      for (final item in persisted) item.id: item,
+    };
+    final importedById = {
+      for (final item in imported) item.id: item,
+    };
+    final remoteEvidence = remote.evidence
+        .map(
+          (item) => _mergeLocalPreview(
+            item,
+            persistedById[item.id],
+            importedById[item.id],
+          ),
+        )
+        .toList(growable: false);
     final localEvidence = <RequisitionEvidence>[
       ...imported.where((item) => !serverIds.contains(item.id)),
       ...persisted
@@ -71,7 +144,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
           )
           .map(_toEvidence),
     ];
-    final evidence = [...remote.evidence, ...localEvidence];
+    final evidence = [...remoteEvidence, ...localEvidence];
     final imageCount = evidence
         .where((item) => item.type == RequisitionEvidenceType.image)
         .length;
@@ -240,12 +313,9 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       (items) => [...items, ...imported],
       ifAbsent: () => imported,
     );
-    _changesController.add(requisitionId);
-    final syncService = _syncService;
-    if (syncService != null) {
-      unawaited(syncService.syncPending().then<void>((_) {}));
-    }
-    return getDetail(requisitionId);
+    final cachedRemote = _cachedRemoteDetails[requisitionId];
+    if (cachedRemote == null) return getDetail(requisitionId);
+    return _mergeRemoteDetail(cachedRemote, requisitionId);
   }
 
   @override
@@ -254,21 +324,13 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     required bool imagesOnly,
     String? sessionId,
   }) async {
-    final picked = imagesOnly
-        ? await _pickerService.pickImage()
-        : await _pickerService.pickFile();
-    if (picked == null) return null;
-    return addImportedEvidence(
+    final selected = await pickEvidence(imagesOnly: imagesOnly);
+    if (selected == null || selected.isEmpty) return null;
+    return addImportedEvidenceBatch(
       requisitionId: requisitionId,
-      name: picked.name,
-      type: picked.type,
-      sizeLabel: picked.sizeLabel,
-      byteLength: picked.byteLength,
-      localPath: picked.localPath,
-      mimeType: picked.mimeType,
-      acquisitionMethod: 'IMPORTED_FILE',
-      sessionId: sessionId,
-      preserveSource: true,
+      evidence: selected
+          .map((draft) => draft.copyWith(sessionId: sessionId))
+          .toList(growable: false),
     );
   }
 
@@ -380,6 +442,69 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       uploadStatus: record.state == 'SINCRONIZADA'
           ? 'AVAILABLE'
           : 'PENDING_UPLOAD',
+    );
+  }
+
+  RequisitionEvidence _mergeLocalPreview(
+    RequisitionEvidence remote,
+    LocalEvidenceRecord? persisted,
+    RequisitionEvidence? imported,
+  ) {
+    if (persisted != null) {
+      return RequisitionEvidence(
+        id: remote.id,
+        name: remote.name,
+        type: remote.type,
+        createdAt: remote.createdAt,
+        sizeLabel: remote.sizeLabel,
+        byteLength: remote.byteLength,
+        localPath: persisted.encryptedPath,
+        sha256: remote.sha256 ?? persisted.ciphertextSha256,
+        sourcePath: persisted.sourcePath ?? remote.sourcePath,
+        sessionId: remote.sessionId ?? persisted.sessionId,
+        mimeType: remote.mimeType ?? persisted.mimeType,
+        encrypted: remote.encrypted || persisted.encryptionAlgorithm.isNotEmpty,
+        encryptionAlgorithm:
+            remote.encryptionAlgorithm ?? persisted.encryptionAlgorithm,
+        encryptionVersion:
+            remote.encryptionVersion ?? persisted.encryptionVersion,
+        plaintextByteLength:
+            remote.plaintextByteLength ?? persisted.plaintextByteLength,
+        plaintextSha256: remote.plaintextSha256 ?? persisted.plaintextSha256,
+        aadHash: remote.aadHash ?? persisted.aadHash,
+        wrappedKey: remote.wrappedKey ?? persisted.wrappedKey,
+        keyVersion: remote.keyVersion ?? persisted.keyVersion,
+        uploadStatus: remote.uploadStatus,
+        contentUrl: remote.contentUrl,
+        downloadUrl: remote.downloadUrl,
+      );
+    }
+    if (imported == null || imported.localPath == null) return remote;
+    return RequisitionEvidence(
+      id: remote.id,
+      name: remote.name,
+      type: remote.type,
+      createdAt: remote.createdAt,
+      sizeLabel: remote.sizeLabel,
+      byteLength: remote.byteLength,
+      localPath: imported.localPath,
+      sha256: remote.sha256 ?? imported.sha256,
+      sourcePath: imported.sourcePath ?? remote.sourcePath,
+      sessionId: remote.sessionId ?? imported.sessionId,
+      mimeType: remote.mimeType ?? imported.mimeType,
+      encrypted: remote.encrypted || imported.encrypted,
+      encryptionAlgorithm:
+          remote.encryptionAlgorithm ?? imported.encryptionAlgorithm,
+      encryptionVersion: remote.encryptionVersion ?? imported.encryptionVersion,
+      plaintextByteLength:
+          remote.plaintextByteLength ?? imported.plaintextByteLength,
+      plaintextSha256: remote.plaintextSha256 ?? imported.plaintextSha256,
+      aadHash: remote.aadHash ?? imported.aadHash,
+      wrappedKey: remote.wrappedKey ?? imported.wrappedKey,
+      keyVersion: remote.keyVersion ?? imported.keyVersion,
+      uploadStatus: remote.uploadStatus,
+      contentUrl: remote.contentUrl,
+      downloadUrl: remote.downloadUrl,
     );
   }
 }

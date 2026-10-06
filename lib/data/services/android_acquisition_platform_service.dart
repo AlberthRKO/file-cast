@@ -22,6 +22,7 @@ class AndroidAcquisitionPlatformService {
   int? _latestVideoWidth;
   int? _latestVideoHeight;
   Future<AcquisitionMirrorSession>? _connectOperation;
+  Future<void>? _disconnectOperation;
   StreamSubscription<UsbEvent>? _usbSubscription;
   String _serverLogHistory = '';
   final StreamController<void> _deviceChangesController =
@@ -73,6 +74,7 @@ class AndroidAcquisitionPlatformService {
     required String requisitionId,
     required String sessionId,
   }) async {
+    await _awaitPendingDisconnect();
     final reusable = await activeSession(
       requisitionId: requisitionId,
       sessionId: sessionId,
@@ -160,6 +162,7 @@ class AndroidAcquisitionPlatformService {
     required String requisitionId,
     required String sessionId,
   }) async {
+    await _awaitPendingDisconnect();
     final reusable = await activeConnection(
       requisitionId: requisitionId,
       sessionId: sessionId,
@@ -257,10 +260,27 @@ class AndroidAcquisitionPlatformService {
     );
   }
 
-  Future<void> disconnect() async {
+  Future<void> disconnect() {
+    final running = _disconnectOperation;
+    if (running != null) return running;
+    final operation = _disconnectAndReset();
+    _disconnectOperation = operation;
+    return operation.whenComplete(() {
+      if (identical(_disconnectOperation, operation)) {
+        _disconnectOperation = null;
+      }
+    });
+  }
+
+  Future<void> _disconnectAndReset() async {
     _activeSession = null;
     _activeConnection = null;
     await _resetNativeSession();
+  }
+
+  Future<void> _awaitPendingDisconnect() async {
+    final pending = _disconnectOperation;
+    if (pending != null) await pending;
   }
 
   Future<List<RemoteFileEntry>> listRemoteFiles(String remotePath) async {
@@ -390,7 +410,20 @@ class AndroidAcquisitionPlatformService {
     }.contains(extension)) {
       return RemoteFileKind.image;
     }
-    if (const {'mp4', 'mkv', 'mov', 'avi', 'webm', '3gp'}.contains(extension)) {
+    if (const {
+      'mp4',
+      'mkv',
+      'mov',
+      'avi',
+      'webm',
+      '3gp',
+      'm4v',
+      'ts',
+      'mts',
+      'm2ts',
+      'flv',
+      'wmv',
+    }.contains(extension)) {
       return RemoteFileKind.video;
     }
     if (const {

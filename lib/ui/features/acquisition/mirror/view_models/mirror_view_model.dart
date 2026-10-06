@@ -271,14 +271,22 @@ class MirrorViewModel extends ChangeNotifier {
     _recordingTimer?.cancel();
     _messageTimer?.cancel();
     _diagnosticTimer?.cancel();
+    unawaited(_releaseAcquisitionSession());
+    super.dispose();
+  }
+
+  Future<void> _releaseAcquisitionSession() async {
     if (_recordingPhase == AcquisitionRecordingPhase.recording) {
-      unawaited(
-        _repository.stopRecording(
+      try {
+        await _repository.stopRecording(
           requisitionId: requisitionId,
           sessionId: sessionId,
-        ),
-      );
+        );
+      } catch (_) {
+        // disconnect() still releases the native mirror even if finalizing the
+        // recording fails while the route is being closed.
+      }
     }
-    super.dispose();
+    await _repository.disconnect();
   }
 }

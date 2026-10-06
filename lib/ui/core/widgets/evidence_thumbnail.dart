@@ -14,6 +14,7 @@ class EvidenceThumbnail extends StatefulWidget {
     this.decryptionService,
     super.key,
   });
+
   final String? localPath;
   final Widget fallback;
   final String? evidenceId;
@@ -79,7 +80,7 @@ class _EvidenceThumbnailState extends State<EvidenceThumbnail> {
     try {
       await File(path).delete();
     } on FileSystemException {
-      // El temporal se limpia al cerrar la aplicación.
+      // El temporal se limpia con el almacenamiento temporal del sistema.
     }
   }
 

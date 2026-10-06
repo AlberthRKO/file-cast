@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/models/requisition_creation.dart';
+import 'package:file_cast/domain/models/evidence_upload_progress.dart';
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
+import 'package:file_cast/domain/services/evidence_preview_service.dart';
 import 'package:flutter/foundation.dart';
 
 enum RequisitionDetailPhase { loading, content, error }
@@ -31,16 +33,19 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     required RequisitionDetailRepository repository,
     required RequisitionRepository requisitionRepository,
     required RequisitionCreationRepository creationRepository,
+    required EvidencePreviewService previewService,
     required this.requisitionId,
     this.currentActorId,
     this.currentActorName,
   }) : _repository = repository,
        _requisitionRepository = requisitionRepository,
-       _creationRepository = creationRepository;
+       _creationRepository = creationRepository,
+       _previewService = previewService;
 
   final RequisitionDetailRepository _repository;
   final RequisitionRepository _requisitionRepository;
   final RequisitionCreationRepository _creationRepository;
+  final EvidencePreviewService _previewService;
   final String requisitionId;
   final String? currentActorId;
   final String? currentActorName;
@@ -51,6 +56,8 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
   bool _isImporting = false;
+  bool _isSelectingEvidence = false;
+  bool _isSyncing = false;
   bool _isCreatingSession = false;
   bool _isFinalizing = false;
   bool _isLinkingCase = false;
@@ -61,8 +68,15 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   CaseLinkSearchPhase _caseLinkSearchPhase = CaseLinkSearchPhase.initial;
   String? _caseLinkError;
   StreamSubscription<String>? _changesSubscription;
+  StreamSubscription<EvidenceUploadProgress>? _uploadProgressSubscription;
+  List<ImportedEvidenceDraft> _selectedEvidence = const [];
+  EvidenceUploadProgress? _uploadProgress;
   bool _disposed = false;
   bool get isImporting => _isImporting;
+  bool get isSelectingEvidence => _isSelectingEvidence;
+  bool get isSyncing => _isSyncing;
+  List<ImportedEvidenceDraft> get selectedEvidence => _selectedEvidence;
+  EvidenceUploadProgress? get uploadProgress => _uploadProgress;
   bool get isFinalizing => _isFinalizing;
   bool get canFinalize {
     final status = _detail?.requisition.status;
@@ -78,6 +92,18 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     return status == RequisitionStatus.draft ||
         status == RequisitionStatus.inProgress;
   }
+
+  int get pendingEvidenceCount =>
+      _detail?.evidence
+          .where(
+            (item) => const {'PENDING_UPLOAD', 'UPLOADING', 'ERROR'}.contains(
+              item.uploadStatus?.toUpperCase(),
+            ),
+          )
+          .length ??
+      0;
+
+  bool get hasPendingEvidence => pendingEvidenceCount > 0;
 
   String get caseLinkQuery => _caseLinkQuery;
   List<EcosystemCaseSummary> get caseLinkResults => _caseLinkResults;
@@ -132,6 +158,18 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     _changesSubscription ??= _repository.changes.listen((changedId) {
       if (changedId == requisitionId) unawaited(_reloadSilently());
     });
+    _uploadProgressSubscription ??= _repository.uploadProgress.listen((
+      progress,
+    ) {
+      if (progress.requisitionId != requisitionId || _disposed) return;
+      _uploadProgress = progress;
+      if (progress.isActive) {
+        _isSyncing = true;
+      } else if (_isSyncing) {
+        _isSyncing = false;
+      }
+      notifyListeners();
+    });
     _phase = RequisitionDetailPhase.loading;
     _errorMessage = null;
     if (!_disposed) notifyListeners();
@@ -156,7 +194,45 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   }
 
   Future<bool> importEvidence({required bool imagesOnly}) async {
-    if (_isImporting || _disposed) return false;
+    final selected = await selectEvidence(imagesOnly: imagesOnly);
+    if (selected.isEmpty) return false;
+    return confirmSelectedEvidence();
+  }
+
+  Future<List<ImportedEvidenceDraft>> selectEvidence({
+    required bool imagesOnly,
+  }) async {
+    if (_isSelectingEvidence || _isImporting || _disposed) {
+      return const [];
+    }
+    _isSelectingEvidence = true;
+    _selectedEvidence = const [];
+    _errorMessage = null;
+    if (!_disposed) notifyListeners();
+    try {
+      _selectedEvidence =
+          await _repository.pickEvidence(imagesOnly: imagesOnly) ?? const [];
+      return _selectedEvidence;
+    } catch (error) {
+      _errorMessage = _messageFromError(
+        error,
+        fallback: 'No se pudieron seleccionar los archivos.',
+      );
+      return const [];
+    } finally {
+      _isSelectingEvidence = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  void clearSelectedEvidence() {
+    if (_selectedEvidence.isEmpty) return;
+    _selectedEvidence = const [];
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<bool> confirmSelectedEvidence() async {
+    if (_isImporting || _disposed || _selectedEvidence.isEmpty) return false;
     _isImporting = true;
     _errorMessage = null;
     var imported = false;
@@ -167,14 +243,24 @@ class RequisitionDetailViewModel extends ChangeNotifier {
         transport: 'SYSTEM_PICKER',
       );
       if (sessionId != null) {
-        final result = await _repository.importFromDevice(
+        final drafts = _selectedEvidence
+            .map(
+              (draft) => draft.copyWith(
+                sessionId: sessionId,
+              ),
+            )
+            .toList(growable: false);
+        final result = await _repository.addImportedEvidenceBatch(
           requisitionId: requisitionId,
-          imagesOnly: imagesOnly,
-          sessionId: sessionId,
+          evidence: drafts,
         );
         if (result != null) {
           _detail = result;
           imported = true;
+          _selectedEvidence = const [];
+          _isSyncing = true;
+          if (!_disposed) notifyListeners();
+          unawaited(_syncImportedEvidence());
         }
       }
     } catch (error) {
@@ -187,6 +273,34 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     if (!_disposed) notifyListeners();
     return imported;
   }
+
+  Future<void> _syncImportedEvidence() async {
+    try {
+      await _repository.syncPendingEvidence();
+    } catch (error) {
+      _errorMessage = _messageFromError(
+        error,
+        fallback: 'La evidencia quedó guardada y se reintentará más tarde.',
+      );
+    } finally {
+      _isSyncing = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  void retryPendingEvidence() {
+    if (_isSyncing || _disposed || !hasPendingEvidence) return;
+    _isSyncing = true;
+    if (!_disposed) notifyListeners();
+    unawaited(_syncImportedEvidence());
+  }
+
+  Future<PreparedEvidencePreview> prepareEvidencePreview(
+    RequisitionEvidence evidence,
+  ) => _previewService.prepare(evidence);
+
+  Future<void> disposeEvidencePreview(PreparedEvidencePreview preview) =>
+      _previewService.disposePreview(preview);
 
   Future<String?> ensureAcquisitionSession({
     required String sourcePlatform,
@@ -347,6 +461,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     _disposed = true;
     _caseLinkDebounce?.cancel();
     _changesSubscription?.cancel();
+    _uploadProgressSubscription?.cancel();
     super.dispose();
   }
 }

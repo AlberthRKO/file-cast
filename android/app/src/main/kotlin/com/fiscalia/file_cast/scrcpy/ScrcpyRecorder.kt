@@ -4,6 +4,7 @@ import android.media.MediaCodec
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import java.io.File
+import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 
 /** Writes the encoded H.264 packets already received from scrcpy into MP4. */
@@ -39,8 +40,8 @@ class ScrcpyRecorder(
                 ?: throw IllegalStateException("La configuración H.264 no contiene SPS")
             val pps = configUnits.lastOrNull { nalType(it) == 8 }
                 ?: throw IllegalStateException("La configuración H.264 no contiene PPS")
-            format.setByteBuffer("csd-0", ByteBuffer.wrap(sps))
-            format.setByteBuffer("csd-1", ByteBuffer.wrap(pps))
+            format.setByteBuffer("csd-0", ByteBuffer.wrap(stripStartCode(sps)))
+            format.setByteBuffer("csd-1", ByteBuffer.wrap(stripStartCode(pps)))
             trackIndex = mediaMuxer.addTrack(format)
             mediaMuxer.start()
             muxer = mediaMuxer
@@ -57,17 +58,19 @@ class ScrcpyRecorder(
         if (!started || (headerValue and FLAG_CONFIG) != 0L) return
         val isKeyFrame = (headerValue and FLAG_KEY_FRAME) != 0L
         if (waitingForKeyFrame && !isKeyFrame) return
+        val avccPayload = annexBToAvcc(payload)
+        if (avccPayload.isEmpty()) return
         waitingForKeyFrame = false
         val pts = headerValue and PTS_MASK
         if (firstPtsUs < 0) firstPtsUs = pts
         val normalizedPtsUs = (pts - firstPtsUs).coerceAtLeast(0)
         bufferInfo.set(
             0,
-            payload.size,
+            avccPayload.size,
             normalizedPtsUs,
             if (isKeyFrame) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0,
         )
-        muxer?.writeSampleData(trackIndex, ByteBuffer.wrap(payload), bufferInfo)
+        muxer?.writeSampleData(trackIndex, ByteBuffer.wrap(avccPayload), bufferInfo)
         lastPtsUs = normalizedPtsUs
         sampleCount++
     }
@@ -130,9 +133,35 @@ class ScrcpyRecorder(
     }
 
     private fun nalType(unit: ByteArray): Int {
+        val nal = stripStartCode(unit)
+        return if (nal.isNotEmpty()) nal[0].toInt() and 0x1F else -1
+    }
+
+    /**
+     * scrcpy sends H.264 in Annex-B form (start codes). MediaMuxer expects
+     * AVC/AVCC samples, where every NAL unit is prefixed by its 4-byte size.
+     */
+    private fun annexBToAvcc(data: ByteArray): ByteArray {
+        val units = splitAnnexB(data).ifEmpty {
+            if (data.isNotEmpty()) listOf(data) else emptyList()
+        }
+        val output = ByteArrayOutputStream(data.size + units.size * 4)
+        for (unit in units) {
+            val nal = stripStartCode(unit)
+            if (nal.isEmpty()) continue
+            output.write((nal.size ushr 24) and 0xFF)
+            output.write((nal.size ushr 16) and 0xFF)
+            output.write((nal.size ushr 8) and 0xFF)
+            output.write(nal.size and 0xFF)
+            output.write(nal)
+        }
+        return output.toByteArray()
+    }
+
+    private fun stripStartCode(unit: ByteArray): ByteArray {
         var index = 0
         while (index < unit.size && unit[index] == 0.toByte()) index++
         if (index < unit.size && unit[index] == 1.toByte()) index++
-        return if (index < unit.size) unit[index].toInt() and 0x1F else -1
+        return unit.copyOfRange(index, unit.size)
     }
 }

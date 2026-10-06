@@ -23,7 +23,7 @@ final class PickedEvidence {
 
 class EvidencePickerService {
   EvidencePickerService({ImagePicker? imagePicker})
-      : _imagePicker = imagePicker ?? ImagePicker();
+    : _imagePicker = imagePicker ?? ImagePicker();
 
   final ImagePicker _imagePicker;
 
@@ -42,13 +42,39 @@ class EvidencePickerService {
   }
 
   Future<PickedEvidence?> pickFile() async {
-    final result = await FilePicker.platform.pickFiles();
-    final file = result?.files.singleOrNull;
-    if (file == null) return null;
+    final files = await pickFiles();
+    return files?.firstOrNull;
+  }
+
+  Future<List<PickedEvidence>?> pickFiles({bool imagesOnly = false}) async {
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      type: imagesOnly ? FileType.image : FileType.any,
+    );
+    if (result == null) return null;
+
+    return result.files
+        .where((file) => file.path != null)
+        .map(_toPickedEvidence)
+        .toList(growable: false);
+  }
+
+  PickedEvidence _toPickedEvidence(PlatformFile file) {
     final extension = file.extension?.toLowerCase();
     final type = switch (extension) {
       'jpg' || 'jpeg' || 'png' || 'webp' => RequisitionEvidenceType.image,
-      'mp4' || 'mov' || 'mkv' => RequisitionEvidenceType.video,
+      'mp4' ||
+      'mov' ||
+      'mkv' ||
+      'avi' ||
+      'webm' ||
+      '3gp' ||
+      'm4v' ||
+      'ts' ||
+      'mts' ||
+      'm2ts' ||
+      'flv' ||
+      'wmv' => RequisitionEvidenceType.video,
       'mp3' ||
       'wav' ||
       'aac' ||
@@ -57,8 +83,7 @@ class EvidencePickerService {
       'oga' ||
       'opus' ||
       'flac' ||
-      'amr' =>
-        RequisitionEvidenceType.audio,
+      'amr' => RequisitionEvidenceType.audio,
       'pdf' ||
       'doc' ||
       'docx' ||
@@ -68,8 +93,7 @@ class EvidencePickerService {
       'csv' ||
       'json' ||
       'xml' ||
-      'log' =>
-        RequisitionEvidenceType.document,
+      'log' => RequisitionEvidenceType.document,
       _ => RequisitionEvidenceType.other,
     };
     return PickedEvidence(
@@ -89,19 +113,27 @@ class EvidencePickerService {
   }
 
   String _mimeTypeFor(String? extension) => switch (extension) {
-        'jpg' || 'jpeg' => 'image/jpeg',
-        'png' => 'image/png',
-        'webp' => 'image/webp',
-        'mp4' => 'video/mp4',
-        'mov' => 'video/quicktime',
-        'mkv' => 'video/x-matroska',
-        'mp3' => 'audio/mpeg',
-        'wav' => 'audio/wav',
-        'm4a' => 'audio/mp4',
-        'pdf' => 'application/pdf',
-        'doc' => 'application/msword',
-        'docx' =>
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        _ => 'application/octet-stream',
-      };
+    'jpg' || 'jpeg' => 'image/jpeg',
+    'png' => 'image/png',
+    'webp' => 'image/webp',
+    'mp4' => 'video/mp4',
+    'mov' => 'video/quicktime',
+    'mkv' => 'video/x-matroska',
+    'avi' => 'video/x-msvideo',
+    'webm' => 'video/webm',
+    '3gp' => 'video/3gpp',
+    'm4v' => 'video/x-m4v',
+    'ts' => 'video/mp2t',
+    'mts' || 'm2ts' => 'video/mp2t',
+    'flv' => 'video/x-flv',
+    'wmv' => 'video/x-ms-wmv',
+    'mp3' => 'audio/mpeg',
+    'wav' => 'audio/wav',
+    'm4a' => 'audio/mp4',
+    'pdf' => 'application/pdf',
+    'doc' => 'application/msword',
+    'docx' =>
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    _ => 'application/octet-stream',
+  };
 }

@@ -5,6 +5,7 @@ Actualización de arquitectura UI: 31 de agosto de 2026
 Limpieza de infraestructura Flutter: 31 de agosto de 2026
 Actualización de adquisición Android: 4 de septiembre de 2026
 Actualización de transferencia Android: 8 de septiembre de 2026
+Actualización de previews de video y ciclo de vida del mirror: 6 de octubre de 2026
 Plan de adquisición USB iPhone: 10 de septiembre de 2026
 Actualización de cifrado local y outbox FCE: 29 de septiembre de 2026
 Alcance revisado: Flutter/Dart, Android nativo Kotlin, configuración iOS, documentación, historial Git reciente, mockups adjuntos y validadores locales.
@@ -33,15 +34,15 @@ La recomendación es construir primero un MVP Android de extremo a extremo y man
 | Login | Formulario MVVM conectado a `file-cast-back /api/v1/auth/*`, tokens seguros, restauración y refresh | Implementado en la rama `feat/implemetacion-login`; falta validación del propietario |
 | Listado de requisas | Feature MVVM adaptativa con lista/grid/tabla, filtros y carga progresiva | Conectado a `GET /api/v1/requisitions`; cache offline y resolución de conflictos pendientes |
 | Crear requisa | Ruta `/requisitions/new` con modo CUD/persona, busquedas, fecha/hora, ubicacion visual y navegacion a conexion | Parcial; registro simulado, mapa/GPS nativo y persistencia offline reales pendientes |
-| Detalle de requisa | Cabecera fija adaptativa caso/persona, sujetos, participantes, ubicación, vínculo CUD, sesiones, evidencias y acciones | Implementado contra `GET /api/v1/requisitions/:id`; búsqueda/vínculo mediante `POST /api/v1/requisitions/:id/case-links`, creación de sesiones y sellado conectados; galería remota y sincronización probatoria aún pendientes |
-| Archivos/evidencias por requisa | Resumen por categoría/peso, selector de imágenes, videos, audios y documentos, cifrado local, outbox y disparo de sincronización | Parcial; estados visibles de reintento, galería remota y validación probatoria end-to-end pendientes |
+| Detalle de requisa | Cabecera fija adaptativa caso/persona, sujetos, participantes, ubicación, vínculo CUD, sesiones, evidencias y acciones | Implementado contra `GET /api/v1/requisitions/:id`; búsqueda/vínculo mediante `POST /api/v1/requisitions/:id/case-links`, creación de sesiones y sellado conectados; cabecera colapsable, estados de sincronización y preview local/remoto disponibles |
+| Archivos/evidencias por requisa | Resumen por categoría/peso, selector múltiple de imágenes, videos, audios y documentos, cifrado local, outbox, sincronización y preview | Implementado como vertical local: selección múltiple con preview antes de confirmar, sesión creada al aceptar, importación cifrada, carga en segundo plano con progreso por lote, reintento visible, miniaturas y preview de imágenes, videos, audio, PDF y texto/DOCX; pendiente validación probatoria end-to-end y preview de cifrados desde otro dispositivo |
 | Offline y sincronización | SQLite SQLCipher, outbox de evidencias FCE y reintento al recuperar conectividad | Implementación local; sincronización real depende de sesión/autenticación API |
 | USB host Android | Detección, permisos, attach/detach | Implementado como prototipo |
 | ADB por USB | Handshake RSA, streams multiplexados, shell y push | Implementado como prototipo |
 | Espejo Android | scrcpy server 2.7, H.264, `MediaCodec` y `Texture` | Demostrado en código |
 | Control Android | Touch, arrastre, mouse/trackpad y teclas por canal scrcpy 2.7 | Implementado y validado en hardware por el propietario; algunos fabricantes requieren un ajuste de seguridad adicional |
 | Foto de la pantalla | `exec:screencap -p`, PNG privado, validación de firma y SHA-256 | Implementado como vertical local |
-| Grabación | GOP H.264 acotado, `MediaMuxer`, contador, MP4 privado y SHA-256 | Implementado; corrección de finalización pendiente de revalidación física |
+| Grabación | GOP H.264 acotado, conversión Annex-B a AVC/AVCC, `MediaMuxer`, contador, MP4 privado y SHA-256 | Implementado en código; requiere revalidación física del MP4 generado |
 | Transferencia desde objetivo | Browser de almacenamiento compartido con ADB Sync `LIST`/`STAT`/`RECV`, preview temporal de imágenes/videos/audios/PDF/DOCX/texto, selección múltiple, progreso, cancelación, temporal privado y SHA-256 | Implementación local inicial; falta validación física, preview ofimático legado, persistencia probatoria y deduplicación |
 | Integración iOS | `AppDelegate` estándar, sin canal/plugin de adquisición; plan USB/AFC documentado | No implementado; PoC diferida hasta cerrar Android |
 | Cifrado de evidencias | FCE AES-256-GCM por bloques, hashes plano/ciphertext y clave envuelta en bóveda segura | Implementado en código y documentado; recuperación institucional pendiente |
@@ -102,7 +103,7 @@ La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto,
 1. **Pull requiere validación física.** La primera vertical `LIST`/`STAT`/`RECV` ya escribe por streaming en almacenamiento privado, calcula SHA-256 y registra el resultado contra requisa/sesión. Falta probar fragmentación, archivos grandes, cancelación, desconexión y fabricantes de la matriz.
 2. **Lectura exacta corregida.** `_readExact()` conserva excedentes por stream para no perder el inicio del video cuando comparte un chunk con los metadatos. Falta cubrirlo con pruebas de protocolo.
 3. **Backpressure parcial.** La cola de control está acotada y compacta movimientos, y el pre-roll de grabación se limita a 24 MiB. Las colas generales de datos ADB todavía requieren límites y métricas para sesiones extensas.
-4. **Ciclo de vida sensible.** La sesión se reutiliza al volver desde mirror y el cleanup nativo es centralizado, pero debe validarse ante cierre de proceso, cable retirado, background y grabación activa.
+4. **Ciclo de vida sensible.** Al abandonar mirror se libera la textura, el decoder, la grabación activa y la conexión nativa; al regresar se fuerza una sesión limpia. Todavía debe validarse ante cierre de proceso, cable retirado, background y grabación activa.
 5. **Confirmación de control limitada.** `sendTouch()` propaga errores del canal y la UI los presenta, pero scrcpy no confirma individualmente que Android haya inyectado cada gesto; un fabricante todavía puede rechazarlo por sus ajustes de seguridad.
 6. **Coordenadas y rotación unificadas, pendientes de matriz.** La textura usa su rectángulo renderizado, MediaCodec publica el tamaño/crop vigente y `wm size` quedó solo como diagnóstico. Deben repetirse las pruebas con letterboxing, recorte, rotación y varias resoluciones.
 7. **Autenticación ADB sin endurecimiento.** La clave privada se persiste en `SharedPreferences`; para una herramienta sensible debe protegerse con Android Keystore y validarse contra vectores/pruebas AOSP. La generación de `n0inv` y la firma deben ser revisadas con pruebas de protocolo, no solo con un modelo de teléfono.

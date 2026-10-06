@@ -14,10 +14,10 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
     required RequisitionDetailRepository detailRepository,
     required RemoteDocumentPreviewService documentPreviewService,
     EvidenceSyncService? syncService,
-  })  : _platformService = platformService,
-        _detailRepository = detailRepository,
-        _documentPreviewService = documentPreviewService,
-        _syncService = syncService;
+  }) : _platformService = platformService,
+       _detailRepository = detailRepository,
+       _documentPreviewService = documentPreviewService,
+       _syncService = syncService;
 
   final AndroidAcquisitionPlatformService _platformService;
   final RequisitionDetailRepository _detailRepository;
@@ -47,44 +47,40 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
     required AcquisitionDevice device,
     required String requisitionId,
     required String sessionId,
-  }) =>
-      _platformService.connectAndStart(
-        device: device,
-        requisitionId: requisitionId,
-        sessionId: sessionId,
-      );
+  }) => _platformService.connectAndStart(
+    device: device,
+    requisitionId: requisitionId,
+    sessionId: sessionId,
+  );
 
   @override
   Future<AcquisitionMirrorSession?> activeSession({
     required String requisitionId,
     required String sessionId,
-  }) =>
-      _platformService.activeSession(
-        requisitionId: requisitionId,
-        sessionId: sessionId,
-      );
+  }) => _platformService.activeSession(
+    requisitionId: requisitionId,
+    sessionId: sessionId,
+  );
 
   @override
   Future<AcquisitionConnectionSession> connectForTransfer({
     required AcquisitionDevice device,
     required String requisitionId,
     required String sessionId,
-  }) =>
-      _platformService.connectForTransfer(
-        device: device,
-        requisitionId: requisitionId,
-        sessionId: sessionId,
-      );
+  }) => _platformService.connectForTransfer(
+    device: device,
+    requisitionId: requisitionId,
+    sessionId: sessionId,
+  );
 
   @override
   Future<AcquisitionConnectionSession?> activeConnection({
     required String requisitionId,
     required String sessionId,
-  }) =>
-      _platformService.activeConnection(
-        requisitionId: requisitionId,
-        sessionId: sessionId,
-      );
+  }) => _platformService.activeConnection(
+    requisitionId: requisitionId,
+    sessionId: sessionId,
+  );
 
   @override
   Future<RequisitionDetail> getRequisitionDetail(String requisitionId) =>
@@ -191,11 +187,10 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
   Future<void> discardRemoteFilePreview({
     required String requisitionId,
     required String sessionId,
-  }) =>
-      _platformService.discardRemoteFilePreview(
-        requisitionId: requisitionId,
-        sessionId: sessionId,
-      );
+  }) => _platformService.discardRemoteFilePreview(
+    requisitionId: requisitionId,
+    sessionId: sessionId,
+  );
 
   @override
   Future<FileTransferResult> transferRemoteFiles({
@@ -252,7 +247,20 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
     }.contains(extension)) {
       return RequisitionEvidenceType.image;
     }
-    if (const {'mp4', 'mkv', 'mov', 'avi', 'webm', '3gp'}.contains(extension)) {
+    if (const {
+      'mp4',
+      'mkv',
+      'mov',
+      'avi',
+      'webm',
+      '3gp',
+      'm4v',
+      'ts',
+      'mts',
+      'm2ts',
+      'flv',
+      'wmv',
+    }.contains(extension)) {
       return RequisitionEvidenceType.video;
     }
     if (const {
@@ -290,13 +298,24 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
   String _mimeTypeFor(RequisitionEvidenceType type, String name) {
     final extension = name.toLowerCase().split('.').last;
     return switch (type) {
-      RequisitionEvidenceType.image => extension == 'png'
-          ? 'image/png'
-          : extension == 'webp'
-              ? 'image/webp'
-              : 'image/jpeg',
-      RequisitionEvidenceType.video =>
-        extension == 'mov' ? 'video/quicktime' : 'video/mp4',
+      RequisitionEvidenceType.image =>
+        extension == 'png'
+            ? 'image/png'
+            : extension == 'webp'
+            ? 'image/webp'
+            : 'image/jpeg',
+      RequisitionEvidenceType.video => switch (extension) {
+        'mov' => 'video/quicktime',
+        'mkv' => 'video/x-matroska',
+        'avi' => 'video/x-msvideo',
+        'webm' => 'video/webm',
+        '3gp' => 'video/3gpp',
+        'm4v' => 'video/x-m4v',
+        'ts' || 'mts' || 'm2ts' => 'video/mp2t',
+        'flv' => 'video/x-flv',
+        'wmv' => 'video/x-ms-wmv',
+        _ => 'video/mp4',
+      },
       RequisitionEvidenceType.audio => 'audio/mpeg',
       RequisitionEvidenceType.document =>
         extension == 'pdf' ? 'application/pdf' : 'application/octet-stream',

@@ -4,9 +4,12 @@ import 'package:file_cast/core/theme/colors.dart';
 import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
+import 'package:file_cast/domain/models/evidence_upload_progress.dart';
 import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
+import 'package:file_cast/domain/services/evidence_decryption_service.dart';
+import 'package:file_cast/domain/services/evidence_preview_service.dart';
 import 'package:file_cast/ui/core/adaptive/constrained_content.dart';
 import 'package:file_cast/ui/core/feedback/app_feedback.dart';
 import 'package:file_cast/ui/core/navigation/app_route.dart';
@@ -14,8 +17,11 @@ import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:file_cast/ui/core/widgets/app_action_button.dart';
 import 'package:file_cast/ui/core/widgets/app_form_input_icon.dart';
 import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
+import 'package:file_cast/ui/core/widgets/evidence_thumbnail.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
 import 'package:file_cast/ui/features/requisitions/detail/view_models/requisition_detail_view_model.dart';
+import 'package:file_cast/ui/features/requisitions/detail/widgets/evidence_preview_sheet.dart';
+import 'package:file_cast/ui/features/requisitions/detail/widgets/import_evidence_preview_dialog.dart';
 import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_location_viewer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -42,6 +48,7 @@ class RequisitionDetailRoute extends StatelessWidget {
       repository: context.read<RequisitionDetailRepository>(),
       requisitionRepository: context.read<RequisitionRepository>(),
       creationRepository: context.read<RequisitionCreationRepository>(),
+      previewService: context.read<EvidencePreviewService>(),
       requisitionId: requisitionId,
       currentActorId: context
           .read<AuthSessionController>()
@@ -105,6 +112,7 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
   @override
   Widget build(BuildContext context) {
     final categories = viewModel.evidenceCategories;
+    final decryptionService = context.read<EvidenceDecryptionService>();
     return Scaffold(
       appBar: AppBar(
         title: const Text('Detalle de requisa'),
@@ -179,7 +187,12 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
                   ],
                   for (final category in categories) ...[
                     const SizedBox(height: AppSpace.m),
-                    _EvidenceSection(summary: category),
+                    _EvidenceSection(
+                      summary: category,
+                      decryptionService: decryptionService,
+                      onOpenEvidence: (evidence) =>
+                          _showEvidencePreview(context, evidence),
+                    ),
                   ],
                 ],
               ),
@@ -196,7 +209,7 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
         enableDrag: false,
         maxWidth: AppSize.formMaxWidth,
         builder: (sheetContext) => _AcquisitionActionSheet(
-          isImporting: viewModel.isImporting,
+          isImporting: viewModel.isImporting || viewModel.isSelectingEvidence,
           onCapture: () => _closeThen(
             context,
             sheetContext,
@@ -216,16 +229,42 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
       );
 
   Future<void> _importFiles(BuildContext context) async {
-    final imported = await viewModel.importEvidence(imagesOnly: false);
+    final selected = await viewModel.selectEvidence(imagesOnly: false);
     if (!context.mounted) return;
     if (viewModel.errorMessage != null) {
       await showAppErrorBottomSheet(context, viewModel.errorMessage!);
-    } else if (imported) {
-      await showAppSuccessBottomSheet(
-        context,
-        'La evidencia fue incorporada a la requisa.',
-      );
+      return;
     }
+    if (selected.isEmpty) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => ImportEvidencePreviewDialog(
+        evidence: selected,
+        onCancel: () {
+          viewModel.clearSelectedEvidence();
+          Navigator.of(dialogContext).pop(false);
+        },
+        onConfirm: () => Navigator.of(dialogContext).pop(true),
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'La carga comenzó. Puedes seguir usando la aplicación.',
+        ),
+      ),
+    );
+    unawaited(_confirmImportInBackground(context));
+  }
+
+  Future<void> _confirmImportInBackground(BuildContext context) async {
+    final imported = await viewModel.confirmSelectedEvidence();
+    if (!context.mounted || imported || viewModel.errorMessage == null) return;
+    await showAppErrorBottomSheet(context, viewModel.errorMessage!);
   }
 
   Future<void> _openAcquisition(
@@ -319,6 +358,35 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
       ),
     );
   }
+
+  Future<void> _showEvidencePreview(
+    BuildContext context,
+    RequisitionEvidence evidence,
+  ) => showDialog<void>(
+    context: context,
+    barrierDismissible: true,
+    builder: (dialogContext) {
+      final windowSize = MediaQuery.sizeOf(dialogContext);
+      final availableWidth = windowSize.width - (AppSpace.m * 2);
+      final availableHeight = windowSize.height - (AppSpace.m * 2);
+      final dialogWidth = availableWidth > 920 ? 920.0 : availableWidth;
+      final dialogHeight = availableHeight > 820 ? 820.0 : availableHeight;
+      return Dialog(
+        insetPadding: const EdgeInsets.all(AppSpace.m),
+        backgroundColor: Colors.transparent,
+        elevation: 12,
+        child: SizedBox(
+          width: dialogWidth,
+          height: dialogHeight,
+          child: EvidencePreviewSheet(
+            evidence: evidence,
+            prepare: () => viewModel.prepareEvidencePreview(evidence),
+            disposePreview: viewModel.disposeEvidencePreview,
+          ),
+        ),
+      );
+    },
+  );
 
   Future<void> _showCaseLink(BuildContext context) async {
     final linked = await showAppModalBottomSheet<EcosystemCaseSummary>(
@@ -578,6 +646,11 @@ class _RequisitionSummaryCard extends StatelessWidget {
           evidenceLabel: detail.requisition.isSynchronized
               ? 'Evidencias sincronizadas'
               : 'Evidencias pendientes',
+          uploadProgress: viewModel.uploadProgress,
+          isImporting: viewModel.isImporting,
+          isSyncing: viewModel.isSyncing,
+          pendingCount: viewModel.pendingEvidenceCount,
+          onRetry: viewModel.retryPendingEvidence,
         ),
       ],
     );
@@ -666,12 +739,22 @@ class _SummaryFooter extends StatelessWidget {
     required this.onLinkCase,
     required this.sessionsLabel,
     required this.evidenceLabel,
+    required this.uploadProgress,
+    required this.isImporting,
+    required this.isSyncing,
+    required this.pendingCount,
+    required this.onRetry,
   });
 
   final bool canLinkCase;
   final VoidCallback onLinkCase;
   final String sessionsLabel;
   final String evidenceLabel;
+  final EvidenceUploadProgress? uploadProgress;
+  final bool isImporting;
+  final bool isSyncing;
+  final int pendingCount;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -690,9 +773,13 @@ class _SummaryFooter extends StatelessWidget {
       ],
     );
 
-    if (!canLinkCase) {
-      return metrics;
-    }
+    final uploadIndicator = _UploadProgressIndicator(
+      progress: uploadProgress,
+      isImporting: isImporting,
+      isSyncing: isSyncing,
+      pendingCount: pendingCount,
+      onRetry: onRetry,
+    );
 
     final linkButton = AppActionButton(
       label: 'Vincular a un caso',
@@ -712,32 +799,177 @@ class _SummaryFooter extends StatelessWidget {
       ),
     );
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 720;
-        if (!wide) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              metrics,
-              const SizedBox(height: AppSpace.s),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: linkButton,
+    final footer = !canLinkCase
+        ? metrics
+        : LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 720;
+              if (!wide) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    metrics,
+                    const SizedBox(height: AppSpace.s),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: linkButton,
+                    ),
+                  ],
+                );
+              }
+
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Flexible(child: metrics),
+                  const SizedBox(width: AppSpace.m),
+                  SizedBox(width: 240, child: linkButton),
+                ],
+              );
+            },
+          );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (isImporting ||
+            isSyncing ||
+            uploadProgress?.isActive == true ||
+            pendingCount > 0) ...[
+          uploadIndicator,
+          const SizedBox(height: AppSpace.s),
+        ],
+        footer,
+      ],
+    );
+  }
+}
+
+class _UploadProgressIndicator extends StatelessWidget {
+  const _UploadProgressIndicator({
+    required this.progress,
+    required this.isImporting,
+    required this.isSyncing,
+    required this.pendingCount,
+    required this.onRetry,
+  });
+
+  final EvidenceUploadProgress? progress;
+  final bool isImporting;
+  final bool isSyncing;
+  final int pendingCount;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final active = isImporting || isSyncing || progress?.isActive == true;
+    final hasError = !active && pendingCount > 0;
+    final completed = progress?.processed ?? 0;
+    final total = progress?.total ?? pendingCount;
+    final title = isImporting
+        ? 'Preparando archivos para subir'
+        : active && total > 0
+        ? 'Subiendo $completed de $total archivos'
+        : active
+        ? 'Subiendo evidencias'
+        : hasError
+        ? '$pendingCount ${pendingCount == 1 ? 'archivo pendiente' : 'archivos pendientes'}'
+        : 'Evidencias sincronizadas';
+    final subtitle =
+        progress?.currentFileName ??
+        (isImporting
+            ? 'Se están cifrando localmente.'
+            : hasError
+            ? 'La carga se reintentará cuando haya conexión.'
+            : 'La carga continúa en segundo plano.');
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.primary.withValues(alpha: .07),
+        borderRadius: BorderRadius.circular(AppRadius.s),
+        border: Border.all(color: scheme.primary.withValues(alpha: .14)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpace.s,
+          vertical: AppSpace.xs,
+        ),
+        child: Row(
+          children: [
+            SizedBox.square(
+              dimension: AppSize.iconM,
+              child: active
+                  ? CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: scheme.primary,
+                    )
+                  : SvgPicture.asset(
+                      hasError
+                          ? 'assets/images/icons/sync.svg'
+                          : 'assets/images/icons/check.svg',
+                      colorFilter: ColorFilter.mode(
+                        scheme.primary,
+                        BlendMode.srcIn,
+                      ),
+                    ),
+            ),
+            const SizedBox(width: AppSpace.s),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: scheme.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  if (active && progress?.fraction != null) ...[
+                    const SizedBox(height: AppSpace.xs),
+                    LinearProgressIndicator(
+                      value: progress!.fraction,
+                      minHeight: 3,
+                      borderRadius: BorderRadius.circular(AppRadius.pill),
+                    ),
+                  ] else if (isImporting || active) ...[
+                    const SizedBox(height: AppSpace.xs),
+                    const LinearProgressIndicator(minHeight: 3),
+                  ],
+                ],
+              ),
+            ),
+            if (hasError) ...[
+              const SizedBox(width: AppSpace.xs),
+              IconButton(
+                onPressed: onRetry,
+                tooltip: 'Reintentar carga',
+                icon: SvgPicture.asset(
+                  'assets/images/icons/sync.svg',
+                  width: AppSize.iconS,
+                  height: AppSize.iconS,
+                  colorFilter: ColorFilter.mode(
+                    scheme.primary,
+                    BlendMode.srcIn,
+                  ),
+                ),
               ),
             ],
-          );
-        }
-
-        return Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Flexible(child: metrics),
-            const SizedBox(width: AppSpace.m),
-            SizedBox(width: 240, child: linkButton),
           ],
-        );
-      },
+        ),
+      ),
     );
   }
 }
@@ -1493,9 +1725,15 @@ class _FolderSummaryCard extends StatelessWidget {
 }
 
 class _EvidenceSection extends StatelessWidget {
-  const _EvidenceSection({required this.summary});
+  const _EvidenceSection({
+    required this.summary,
+    required this.decryptionService,
+    required this.onOpenEvidence,
+  });
 
   final EvidenceCategorySummary summary;
+  final EvidenceDecryptionService decryptionService;
+  final ValueChanged<RequisitionEvidence> onOpenEvidence;
 
   @override
   Widget build(BuildContext context) {
@@ -1539,8 +1777,11 @@ class _EvidenceSection extends StatelessWidget {
                   mainAxisSpacing: AppSpace.s,
                   mainAxisExtent: 68,
                 ),
-                itemBuilder: (context, index) =>
-                    _EvidencePreview(evidence: visible[index]),
+                itemBuilder: (context, index) => _EvidencePreview(
+                  evidence: visible[index],
+                  decryptionService: decryptionService,
+                  onOpen: () => onOpenEvidence(visible[index]),
+                ),
               );
             },
           ),
@@ -1556,13 +1797,21 @@ class _EvidenceSection extends StatelessWidget {
       title: _categoryTitle(summary.category),
       subtitle: '${summary.items.length} elementos · ${summary.totalSizeLabel}',
       evidence: summary.items,
+      decryptionService: decryptionService,
+      onOpenEvidence: onOpenEvidence,
     ),
   );
 }
 
 class _EvidencePreview extends StatelessWidget {
-  const _EvidencePreview({required this.evidence});
+  const _EvidencePreview({
+    required this.evidence,
+    required this.decryptionService,
+    required this.onOpen,
+  });
   final RequisitionEvidence evidence;
+  final EvidenceDecryptionService decryptionService;
+  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -1575,54 +1824,102 @@ class _EvidencePreview extends StatelessWidget {
       RequisitionEvidenceType.document => 'file.svg',
       RequisitionEvidenceType.other => 'paper.svg',
     };
-    return Container(
-      padding: const EdgeInsets.all(AppSpace.s),
-      decoration: BoxDecoration(
-        color: theme.cardColor,
+    final imageFallback = SvgPicture.asset(
+      'assets/images/icons/$iconAsset',
+      colorFilter: ColorFilter.mode(scheme.primary, BlendMode.srcIn),
+    );
+    return Material(
+      color: theme.cardColor,
+      borderRadius: BorderRadius.circular(AppRadius.m),
+      elevation: 0,
+      shadowColor: Colors.transparent,
+      child: InkWell(
+        onTap: onOpen,
         borderRadius: BorderRadius.circular(AppRadius.m),
-        boxShadow: _detailCardShadow,
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: AppSize.minTouchTarget,
-            height: AppSize.minTouchTarget,
-            padding: const EdgeInsets.all(AppSpace.m - AppSpace.s),
-            decoration: BoxDecoration(
-              color: scheme.primary.withValues(alpha: .14),
-              borderRadius: BorderRadius.circular(AppRadius.s),
-            ),
-            child: SvgPicture.asset(
-              'assets/images/icons/$iconAsset',
-              colorFilter: ColorFilter.mode(scheme.primary, BlendMode.srcIn),
-            ),
-          ),
-          const SizedBox(width: AppSpace.s),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  evidence.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w600,
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpace.s),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(AppRadius.s),
+                child: Container(
+                  width: AppSize.minTouchTarget,
+                  height: AppSize.minTouchTarget,
+                  padding: const EdgeInsets.all(AppSpace.m - AppSpace.s),
+                  decoration: BoxDecoration(
+                    color: scheme.primary.withValues(alpha: .14),
+                    borderRadius: BorderRadius.circular(AppRadius.s),
+                  ),
+                  child: evidence.type == RequisitionEvidenceType.image
+                      ? evidence.localPath != null
+                            ? EvidenceThumbnail(
+                                localPath: evidence.localPath,
+                                evidenceId: evidence.id,
+                                wrappedKey: evidence.wrappedKey,
+                                plaintextSha256: evidence.plaintextSha256,
+                                plaintextByteLength:
+                                    evidence.plaintextByteLength,
+                                decryptionService: decryptionService,
+                                fallback: imageFallback,
+                              )
+                            : evidence.contentUrl != null && !evidence.encrypted
+                            ? Image.network(
+                                evidence.contentUrl!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, _, _) => imageFallback,
+                              )
+                            : imageFallback
+                      : SvgPicture.asset(
+                          'assets/images/icons/$iconAsset',
+                          colorFilter: ColorFilter.mode(
+                            scheme.primary,
+                            BlendMode.srcIn,
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(width: AppSpace.s),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      evidence.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpace.xs),
+                    Text(
+                      '${evidence.sizeLabel} · ${_evidenceStatusLabel(evidence)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: onOpen,
+                tooltip: 'Ver evidencia',
+                icon: SvgPicture.asset(
+                  'assets/images/icons/eye.svg',
+                  width: AppSize.iconS,
+                  height: AppSize.iconS,
+                  colorFilter: ColorFilter.mode(
+                    scheme.primary,
+                    BlendMode.srcIn,
                   ),
                 ),
-                const SizedBox(height: AppSpace.xs),
-                Text(
-                  evidence.sizeLabel,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-          Icon(Icons.more_horiz_rounded, color: scheme.onSurfaceVariant),
-        ],
+        ),
       ),
     );
   }
@@ -1633,6 +1930,14 @@ String _categoryTitle(EvidenceCategory category) => switch (category) {
   EvidenceCategory.videos => 'Videos',
   EvidenceCategory.files => 'Archivos',
 };
+
+String _evidenceStatusLabel(RequisitionEvidence evidence) =>
+    switch (evidence.uploadStatus?.toUpperCase()) {
+      'AVAILABLE' => 'Sincronizada',
+      'PENDING_UPLOAD' => 'Pendiente',
+      'UPLOADING' => 'Cargando',
+      _ => 'Local',
+    };
 
 class _EmptyEvidence extends StatelessWidget {
   const _EmptyEvidence({required this.message});
@@ -1656,10 +1961,14 @@ class _AllEvidenceSheet extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.evidence,
+    required this.decryptionService,
+    required this.onOpenEvidence,
   });
   final String title;
   final String subtitle;
   final List<RequisitionEvidence> evidence;
+  final EvidenceDecryptionService decryptionService;
+  final ValueChanged<RequisitionEvidence> onOpenEvidence;
 
   @override
   Widget build(BuildContext context) {
@@ -1703,8 +2012,16 @@ class _AllEvidenceSheet extends StatelessWidget {
                           mainAxisSpacing: AppSpace.s,
                           mainAxisExtent: 68,
                         ),
-                        itemBuilder: (context, index) =>
-                            _EvidencePreview(evidence: evidence[index]),
+                        itemBuilder: (context, index) => _EvidencePreview(
+                          evidence: evidence[index],
+                          decryptionService: decryptionService,
+                          onOpen: () {
+                            Navigator.of(context).pop();
+                            WidgetsBinding.instance.addPostFrameCallback(
+                              (_) => onOpenEvidence(evidence[index]),
+                            );
+                          },
+                        ),
                       );
                     },
                   ),

@@ -5,6 +5,7 @@ import 'package:file_cast/core/errors/either.dart';
 import 'package:file_cast/core/network/http.dart';
 import 'package:file_cast/data/services/evidence_crypto_service.dart';
 import 'package:file_cast/data/services/local_evidence_database_service.dart';
+import 'package:file_cast/domain/models/evidence_upload_progress.dart';
 import 'package:http/http.dart' as http;
 
 /// Consume la outbox local cuando existe conectividad.
@@ -14,50 +15,151 @@ class EvidenceSyncService {
     required Http http,
     required LocalEvidenceDatabaseService database,
     required EvidenceCryptoService crypto,
-  })  : _http = http,
-        _database = database,
-        _crypto = crypto;
+  }) : _http = http,
+       _database = database,
+       _crypto = crypto;
 
   final Http _http;
   final LocalEvidenceDatabaseService _database;
   final EvidenceCryptoService _crypto;
   final Connectivity _connectivity = Connectivity();
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
-  bool _running = false;
+  final StreamController<String> _changesController =
+      StreamController<String>.broadcast();
+  final StreamController<EvidenceUploadProgress> _progressController =
+      StreamController<EvidenceUploadProgress>.broadcast();
+  Future<int>? _activeRun;
+
+  Stream<String> get changes => _changesController.stream;
+  Stream<EvidenceUploadProgress> get progress => _progressController.stream;
 
   void start() {
-    _connectivitySubscription ??=
-        _connectivity.onConnectivityChanged.listen((results) {
+    _connectivitySubscription ??= _connectivity.onConnectivityChanged.listen((
+      results,
+    ) {
       if (results.any((result) => result != ConnectivityResult.none)) {
-        unawaited(syncPending());
+        unawaited(_triggerSync());
       }
     });
+    unawaited(_triggerSync());
   }
 
-  Future<int> syncPending({int limit = 5}) async {
-    if (_running) return 0;
-    _running = true;
+  Future<void> _triggerSync() async {
     try {
-      final pending = await _database.pending(limit: limit);
-      var synchronized = 0;
-      for (final evidence in pending) {
-        try {
-          final remoteId = await _syncOne(evidence);
-          await _database.markUploaded(evidence.id, remoteId);
-          synchronized += 1;
-        } catch (error) {
-          await _database.markError(evidence.id, _safeMessage(error));
-        }
-      }
-      return synchronized;
-    } finally {
-      _running = false;
+      await syncPending();
+    } catch (_) {
+      // La evidencia permanece en la outbox para el siguiente intento.
     }
+  }
+
+  Future<int> syncPending({int limit = 50}) {
+    final activeRun = _activeRun;
+    if (activeRun != null) return activeRun;
+    final run = _syncPending(limit: limit);
+    _activeRun = run;
+    run.then<void>(
+      (_) {
+        if (identical(_activeRun, run)) _activeRun = null;
+      },
+      onError: (Object _, StackTrace __) {
+        if (identical(_activeRun, run)) _activeRun = null;
+      },
+    );
+    return run;
+  }
+
+  Future<int> _syncPending({required int limit}) async {
+    final pending = await _database.pending(limit: limit);
+    if (pending.isEmpty) return 0;
+
+    final totals = <String, int>{};
+    for (final evidence in pending) {
+      totals.update(
+        evidence.requisitionId,
+        (value) => value + 1,
+        ifAbsent: () => 1,
+      );
+    }
+    final completed = <String, int>{};
+    final failed = <String, int>{};
+    var synchronized = 0;
+    for (final evidence in pending) {
+      _emitProgress(
+        requisitionId: evidence.requisitionId,
+        total: totals[evidence.requisitionId]!,
+        completed: completed[evidence.requisitionId] ?? 0,
+        failed: failed[evidence.requisitionId] ?? 0,
+        stage: EvidenceUploadStage.uploading,
+        isActive: true,
+        currentFileName: evidence.originalName,
+      );
+      try {
+        final remoteId = await _syncOne(evidence);
+        await _database.markUploaded(evidence.id, remoteId);
+        completed.update(
+          evidence.requisitionId,
+          (value) => value + 1,
+          ifAbsent: () => 1,
+        );
+        synchronized += 1;
+      } catch (error) {
+        await _database.markError(evidence.id, _safeMessage(error));
+        failed.update(
+          evidence.requisitionId,
+          (value) => value + 1,
+          ifAbsent: () => 1,
+        );
+      }
+    }
+    for (final requisitionId in totals.keys) {
+      final total = totals[requisitionId]!;
+      final completedCount = completed[requisitionId] ?? 0;
+      final failedCount = failed[requisitionId] ?? 0;
+      _emitProgress(
+        requisitionId: requisitionId,
+        total: total,
+        completed: completedCount,
+        failed: failedCount,
+        stage: failedCount == total
+            ? EvidenceUploadStage.error
+            : EvidenceUploadStage.completed,
+        isActive: false,
+      );
+      if (!_changesController.isClosed) {
+        _changesController.add(requisitionId);
+      }
+    }
+    return synchronized;
   }
 
   Future<void> dispose() async {
     await _connectivitySubscription?.cancel();
     _connectivitySubscription = null;
+    await _changesController.close();
+    await _progressController.close();
+  }
+
+  void _emitProgress({
+    required String requisitionId,
+    required int total,
+    required int completed,
+    required int failed,
+    required EvidenceUploadStage stage,
+    required bool isActive,
+    String? currentFileName,
+  }) {
+    if (_progressController.isClosed) return;
+    _progressController.add(
+      EvidenceUploadProgress(
+        requisitionId: requisitionId,
+        total: total,
+        completed: completed,
+        failed: failed,
+        stage: stage,
+        isActive: isActive,
+        currentFileName: currentFileName,
+      ),
+    );
   }
 
   Future<String> _syncOne(LocalEvidenceRecord evidence) async {
@@ -96,11 +198,13 @@ class EvidenceSyncService {
       onSucces: (body) => body,
     );
     final intentBody = switch (intent) {
-      Left(leftValue: final error) =>
-        throw StateError(error.message ?? 'No se pudo registrar la evidencia.'),
+      Left(leftValue: final error) => throw StateError(
+        error.message ?? 'No se pudo registrar la evidencia.',
+      ),
       Right(rightValue: final body) => body,
-      Either() =>
-        throw StateError('Respuesta inesperada al registrar la evidencia.'),
+      Either() => throw StateError(
+        'Respuesta inesperada al registrar la evidencia.',
+      ),
     };
     if (intentBody == null)
       throw StateError('La API no devolvió una intención.');
@@ -123,14 +227,20 @@ class EvidenceSyncService {
       onSuccess: (body) => body,
     );
     final uploadBody = switch (upload) {
-      Left(leftValue: final error) =>
-        throw StateError(error.message ?? 'No se pudo subir la evidencia.'),
+      Left(leftValue: final error) => throw StateError(
+        error.message ?? 'No se pudo subir la evidencia.',
+      ),
       Right(rightValue: final body) => body,
-      Either() =>
-        throw StateError('Respuesta inesperada al subir la evidencia.'),
+      Either() => throw StateError(
+        'Respuesta inesperada al subir la evidencia.',
+      ),
     };
-    final remoteId =
-        _findString(uploadBody, const ['msFileId', 'fileId', 'id', '_id']);
+    final remoteId = _findString(uploadBody, const [
+      'msFileId',
+      'fileId',
+      'id',
+      '_id',
+    ]);
     if (remoteId == null) throw StateError('La API no devolvió el msFileId.');
     return remoteId;
   }

@@ -7,7 +7,7 @@ import 'package:file_cast/domain/services/evidence_decryption_service.dart';
 import 'package:file_cast/ui/core/navigation/route_args/mirror_route_args.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/view_models/mirror_view_model.dart';
-import 'package:file_cast/ui/features/acquisition/mirror/widgets/evidence_thumbnail.dart';
+import 'package:file_cast/ui/core/widgets/evidence_thumbnail.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';

@@ -6,13 +6,13 @@ import 'package:file_cast/domain/models/acquisition.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:file_cast/ui/core/widgets/app_card_surface.dart';
+import 'package:file_cast/ui/core/widgets/video_preview_player.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_pdfview/flutter_pdfview.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:video_player/video_player.dart';
 
 class RemoteFilePreviewSheet extends StatefulWidget {
   const RemoteFilePreviewSheet({
@@ -74,7 +74,9 @@ class _RemoteFilePreviewSheetState extends State<RemoteFilePreviewSheet> {
       windowSize.width - (AppSpace.m * 2),
       840.0,
     );
-    final desiredHeight = (contentWidth / aspectRatio) + 112;
+    // El reproductor ahora incluye thumb, tiempos y controles fuera del
+    // video; reservar ese espacio evita que el scrubber quede comprimido.
+    final desiredHeight = (contentWidth / aspectRatio) + 180;
     final minimum = windowSize.height < 480 ? .72 : .32;
     return (desiredHeight / windowSize.height).clamp(minimum, .9).toDouble();
   }
@@ -236,8 +238,8 @@ class _PreviewContent extends StatelessWidget {
       );
     }
     if (file.kind == RemoteFileKind.video) {
-      return _VideoPreview(
-        localPath: preview.localPath,
+      return VideoPreviewPlayer(
+        path: preview.localPath,
         onAspectRatio: onAspectRatio,
       );
     }
@@ -445,96 +447,6 @@ class _PdfPreviewState extends State<_PdfPreview> {
       },
     );
   }
-}
-
-class _VideoPreview extends StatefulWidget {
-  const _VideoPreview({
-    required this.localPath,
-    required this.onAspectRatio,
-  });
-
-  final String localPath;
-  final ValueChanged<double> onAspectRatio;
-
-  @override
-  State<_VideoPreview> createState() => _VideoPreviewState();
-}
-
-class _VideoPreviewState extends State<_VideoPreview> {
-  late final VideoPlayerController _controller;
-  late final Future<void> _initialization;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = VideoPlayerController.file(File(widget.localPath));
-    _initialization = _initialize();
-  }
-
-  Future<void> _initialize() async {
-    await _controller.initialize();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) widget.onAspectRatio(_controller.value.aspectRatio);
-    });
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => FutureBuilder<void>(
-    future: _initialization,
-    builder: (context, snapshot) {
-      if (snapshot.connectionState != ConnectionState.done) {
-        return const Center(child: CircularProgressIndicator());
-      }
-      if (snapshot.hasError || !_controller.value.isInitialized) {
-        return const _PreviewFailure(
-          message: 'El códec o contenedor de este video no es compatible.',
-        );
-      }
-      return Stack(
-        alignment: Alignment.center,
-        children: [
-          Center(
-            child: AspectRatio(
-              aspectRatio: _controller.value.aspectRatio,
-              child: VideoPlayer(_controller),
-            ),
-          ),
-          IconButton.filled(
-            iconSize: 36,
-            onPressed: () async {
-              if (_controller.value.isPlaying) {
-                await _controller.pause();
-              } else {
-                await _controller.play();
-              }
-              if (mounted) setState(() {});
-            },
-            icon: Icon(
-              _controller.value.isPlaying
-                  ? Icons.pause_rounded
-                  : Icons.play_arrow_rounded,
-            ),
-          ),
-          Positioned(
-            left: AppSpace.m,
-            right: AppSpace.m,
-            bottom: AppSpace.s,
-            child: VideoProgressIndicator(
-              _controller,
-              allowScrubbing: true,
-              padding: const EdgeInsets.symmetric(vertical: AppSpace.s),
-            ),
-          ),
-        ],
-      );
-    },
-  );
 }
 
 class _AudioPreview extends StatefulWidget {

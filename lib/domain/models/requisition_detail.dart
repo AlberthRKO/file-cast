@@ -88,6 +88,33 @@ final class ImportedEvidenceDraft {
   final String? wrappedKey;
   final int? keyVersion;
   final bool preserveSource;
+
+  ImportedEvidenceDraft copyWith({
+    String? sessionId,
+    bool? preserveSource,
+  }) {
+    return ImportedEvidenceDraft(
+      name: name,
+      type: type,
+      sizeLabel: sizeLabel,
+      byteLength: byteLength,
+      localPath: localPath,
+      sha256: sha256,
+      sourcePath: sourcePath,
+      sessionId: sessionId ?? this.sessionId,
+      mimeType: mimeType,
+      acquisitionMethod: acquisitionMethod,
+      encrypted: encrypted,
+      encryptionAlgorithm: encryptionAlgorithm,
+      encryptionVersion: encryptionVersion,
+      plaintextByteLength: plaintextByteLength,
+      plaintextSha256: plaintextSha256,
+      aadHash: aadHash,
+      wrappedKey: wrappedKey,
+      keyVersion: keyVersion,
+      preserveSource: preserveSource ?? this.preserveSource,
+    );
+  }
 }
 
 final class RequisitionEvidence {

@@ -11,6 +11,7 @@ import 'package:file_cast/data/services/requisition_creation_service.dart';
 import 'package:file_cast/data/services/android_acquisition_platform_service.dart';
 import 'package:file_cast/data/services/evidence_picker_service.dart';
 import 'package:file_cast/data/services/evidence_crypto_service.dart';
+import 'package:file_cast/data/services/evidence_preview_service.dart';
 import 'package:file_cast/data/services/evidence_sync_service.dart';
 import 'package:file_cast/data/services/auth_session_service.dart';
 import 'package:file_cast/data/services/local_evidence_database_service.dart';
@@ -24,6 +25,7 @@ import 'package:file_cast/domain/repositories/requisition_creation_repository.da
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
 import 'package:file_cast/domain/services/evidence_decryption_service.dart';
+import 'package:file_cast/domain/services/evidence_preview_service.dart';
 import 'package:file_cast/ui/core/navigation/app_router.dart';
 import 'package:file_cast/ui/core/theme/theme_controller.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
@@ -97,6 +99,19 @@ class DependencyInjection {
       ),
       Provider<RemoteDocumentPreviewService>(
         create: (_) => const RemoteDocumentPreviewService(),
+      ),
+      ProxyProvider3<
+        Http,
+        EvidenceCryptoService,
+        RemoteDocumentPreviewService,
+        EvidencePreviewService
+      >(
+        update: (_, http, crypto, documentPreview, previous) =>
+            RemoteEvidencePreviewService(
+              http: http,
+              crypto: crypto,
+              documentPreview: documentPreview,
+            ),
       ),
       Provider<LocationService>(create: (_) => const LocationService()),
       ProxyProvider3<
