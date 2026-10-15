@@ -45,6 +45,9 @@ class InMemoryRequisitionRepository implements RequisitionRepository {
               label: 'Lugar de prueba',
             ),
       },
+      documentEvidenceCounts: {
+        for (final item in pageItems) item.id: item.id.hashCode.abs() % 4,
+      },
     );
   }
 

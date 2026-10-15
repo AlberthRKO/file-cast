@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:file_cast/core/theme/colors.dart';
+import 'package:file_cast/domain/models/evidence_offline_sync.dart';
 import 'package:file_cast/domain/models/evidence_upload_progress.dart';
 import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/models/requisition_creation.dart';
@@ -77,7 +78,24 @@ class _RequisitionDetailConnector extends StatelessWidget {
         viewModel.detail == null) {
       return Scaffold(
         body: Center(
-          child: Text(viewModel.errorMessage ?? 'Requisa no disponible.'),
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpace.l),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  viewModel.errorMessage ?? 'Requisa no disponible.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: AppSpace.m),
+                FilledButton.icon(
+                  onPressed: viewModel.load,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Reintentar'),
+                ),
+              ],
+            ),
+          ),
         ),
       );
     }
@@ -120,6 +138,13 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
         elevation: 0,
         scrolledUnderElevation: 0,
         actions: [
+          IconButton(
+            tooltip: 'Actualizar detalle',
+            onPressed: viewModel.isRefreshing
+                ? null
+                : () => unawaited(viewModel.refresh()),
+            icon: const Icon(Icons.refresh),
+          ),
           IconButton(
             tooltip: _showInfo
                 ? 'Ocultar información de la requisa'
@@ -169,32 +194,36 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
                 AppSpace.m,
                 0,
               ),
-              child: ListView(
-                padding: EdgeInsets.only(
-                  bottom:
-                      AppSpace.xxl * 2 +
-                      MediaQuery.viewPaddingOf(context).bottom,
+              child: RefreshIndicator(
+                onRefresh: viewModel.refresh,
+                child: ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: EdgeInsets.only(
+                    bottom:
+                        AppSpace.xxl * 2 +
+                        MediaQuery.viewPaddingOf(context).bottom,
+                  ),
+                  children: [
+                    _EvidenceTotals(categories: categories),
+                    if (viewModel.canFinalize) ...[
+                      const SizedBox(height: AppSpace.m),
+                      _FinalizeCard(
+                        isFinalizing: viewModel.isFinalizing,
+                        canSeal: viewModel.canSeal,
+                        onPressed: () => _finalize(context),
+                      ),
+                    ],
+                    for (final category in categories) ...[
+                      const SizedBox(height: AppSpace.m),
+                      _EvidenceSection(
+                        summary: category,
+                        decryptionService: decryptionService,
+                        onOpenEvidence: (evidence) =>
+                            _showEvidencePreview(context, evidence),
+                      ),
+                    ],
+                  ],
                 ),
-                children: [
-                  _EvidenceTotals(categories: categories),
-                  if (viewModel.canFinalize) ...[
-                    const SizedBox(height: AppSpace.m),
-                    _FinalizeCard(
-                      isFinalizing: viewModel.isFinalizing,
-                      canSeal: viewModel.canSeal,
-                      onPressed: () => _finalize(context),
-                    ),
-                  ],
-                  for (final category in categories) ...[
-                    const SizedBox(height: AppSpace.m),
-                    _EvidenceSection(
-                      summary: category,
-                      decryptionService: decryptionService,
-                      onOpenEvidence: (evidence) =>
-                          _showEvidencePreview(context, evidence),
-                    ),
-                  ],
-                ],
               ),
             ),
           ),
@@ -646,10 +675,15 @@ class _RequisitionSummaryCard extends StatelessWidget {
               ? 'Evidencias sincronizadas'
               : 'Evidencias pendientes',
           uploadProgress: viewModel.uploadProgress,
+          offlineSyncProgress: viewModel.offlineSyncProgress,
           isImporting: viewModel.isImporting,
           isSyncing: viewModel.isSyncing,
+          isOfflineSyncing: viewModel.isOfflineSyncing,
+          offlineAvailableCount: viewModel.offlineEvidenceAvailableCount,
+          offlineTotalCount: viewModel.offlineEvidenceTotalCount,
           pendingCount: viewModel.pendingEvidenceCount,
           onRetry: viewModel.retryPendingEvidence,
+          onSyncOffline: viewModel.syncEvidenceForOffline,
         ),
       ],
     );
@@ -739,10 +773,15 @@ class _SummaryFooter extends StatelessWidget {
     required this.sessionsLabel,
     required this.evidenceLabel,
     required this.uploadProgress,
+    required this.offlineSyncProgress,
     required this.isImporting,
     required this.isSyncing,
+    required this.isOfflineSyncing,
+    required this.offlineAvailableCount,
+    required this.offlineTotalCount,
     required this.pendingCount,
     required this.onRetry,
+    required this.onSyncOffline,
   });
 
   final bool canLinkCase;
@@ -750,10 +789,15 @@ class _SummaryFooter extends StatelessWidget {
   final String sessionsLabel;
   final String evidenceLabel;
   final EvidenceUploadProgress? uploadProgress;
+  final EvidenceOfflineSyncProgress? offlineSyncProgress;
   final bool isImporting;
   final bool isSyncing;
+  final bool isOfflineSyncing;
+  final int offlineAvailableCount;
+  final int offlineTotalCount;
   final int pendingCount;
   final VoidCallback onRetry;
+  final VoidCallback onSyncOffline;
 
   @override
   Widget build(BuildContext context) {
@@ -778,6 +822,14 @@ class _SummaryFooter extends StatelessWidget {
       isSyncing: isSyncing,
       pendingCount: pendingCount,
       onRetry: onRetry,
+    );
+
+    final offlineAction = _OfflineSyncAction(
+      progress: offlineSyncProgress,
+      isSyncing: isOfflineSyncing,
+      availableCount: offlineAvailableCount,
+      totalCount: offlineTotalCount,
+      onPressed: onSyncOffline,
     );
 
     final linkButton = AppActionButton(
@@ -838,8 +890,166 @@ class _SummaryFooter extends StatelessWidget {
           uploadIndicator,
           const SizedBox(height: AppSpace.s),
         ],
+        if (offlineTotalCount > 0) ...[
+          offlineAction,
+          const SizedBox(height: AppSpace.s),
+        ],
         footer,
       ],
+    );
+  }
+}
+
+class _OfflineSyncAction extends StatelessWidget {
+  const _OfflineSyncAction({
+    required this.progress,
+    required this.isSyncing,
+    required this.availableCount,
+    required this.totalCount,
+    required this.onPressed,
+  });
+
+  final EvidenceOfflineSyncProgress? progress;
+  final bool isSyncing;
+  final int availableCount;
+  final int totalCount;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final allAvailable = totalCount > 0 && availableCount >= totalCount;
+    if (allAvailable && !isSyncing) {
+      return _OfflineAvailableStatus(
+        availableCount: availableCount,
+        totalCount: totalCount,
+      );
+    }
+    final processed = progress?.processed ?? 0;
+    final hasFailed = (progress?.failed ?? 0) > 0;
+    final title = isSyncing
+        ? progress?.total == null || progress!.total == 0
+              ? 'Preparando evidencias offline'
+              : 'Sincronizando $processed de ${progress!.total}'
+        : allAvailable
+        ? 'Evidencias disponibles offline'
+        : hasFailed
+        ? 'Reintentar sincronización offline'
+        : 'Sincronizar para uso offline';
+    final subtitle = isSyncing
+        ? progress?.currentFileName ??
+              'Guardando copias cifradas en el dispositivo.'
+        : progress?.errorMessage ??
+              '$availableCount de $totalCount evidencias guardadas localmente.';
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final button = AppActionButton(
+          label: allAvailable && !isSyncing
+              ? 'Todo disponible offline'
+              : 'Sincronizar evidencias',
+          onPressed: allAvailable && !isSyncing ? null : onPressed,
+          foregroundColor: theme.colorScheme.primary,
+          backgroundColor: theme.colorScheme.primary.withValues(alpha: .10),
+          leadingAsset: 'assets/images/icons/sync.svg',
+          isLoading: isSyncing,
+          maxWidth: 280,
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpace.m,
+            vertical: AppSpace.s,
+          ),
+        );
+        final summaryContent = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+            Text(
+              subtitle,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            if (isSyncing && progress?.fraction != null) ...[
+              const SizedBox(height: AppSpace.xs),
+              LinearProgressIndicator(
+                value: progress!.fraction,
+                minHeight: 3,
+                borderRadius: BorderRadius.circular(AppRadius.pill),
+              ),
+            ],
+          ],
+        );
+        if (constraints.maxWidth < 560) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              summaryContent,
+              const SizedBox(height: AppSpace.s),
+              Align(alignment: Alignment.centerLeft, child: button),
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: summaryContent),
+            const SizedBox(width: AppSpace.m),
+            button,
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _OfflineAvailableStatus extends StatelessWidget {
+  const _OfflineAvailableStatus({
+    required this.availableCount,
+    required this.totalCount,
+  });
+
+  final int availableCount;
+  final int totalCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = theme.colorScheme.primary;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .1),
+        borderRadius: BorderRadius.circular(AppRadius.m),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpace.m,
+          vertical: AppSpace.s,
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.check_circle_outline, color: color),
+            const SizedBox(width: AppSpace.s),
+            Expanded(
+              child: Text(
+                '$availableCount de $totalCount evidencias disponibles offline',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: color,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -864,7 +1074,13 @@ class _UploadProgressIndicator extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final active = isImporting || isSyncing || (progress?.isActive ?? false);
-    final hasError = !active && pendingCount > 0;
+    final hasPending = pendingCount > 0;
+    final hasError =
+        !active &&
+        hasPending &&
+        (progress?.stage == EvidenceUploadStage.error ||
+            progress?.hasFailures == true ||
+            progress?.errorMessage?.trim().isNotEmpty == true);
     final completed = progress?.processed ?? 0;
     final total = progress?.total ?? pendingCount;
     final title = isImporting
@@ -875,6 +1091,8 @@ class _UploadProgressIndicator extends StatelessWidget {
         ? 'Subiendo evidencias'
         : hasError
         ? '$pendingCount ${pendingCount == 1 ? 'archivo pendiente' : 'archivos pendientes'}'
+        : hasPending
+        ? 'Sincronización pendiente'
         : 'Evidencias sincronizadas';
     final subtitle =
         progress?.errorMessage ??
@@ -883,7 +1101,9 @@ class _UploadProgressIndicator extends StatelessWidget {
             ? 'Se están cifrando localmente.'
             : hasError
             ? 'La carga se reintentará cuando haya conexión.'
-            : 'La carga continúa en segundo plano.');
+            : hasPending
+            ? 'La carga continúa en segundo plano.'
+            : 'No hay evidencias pendientes de sincronización.');
 
     return DecoratedBox(
       decoration: BoxDecoration(

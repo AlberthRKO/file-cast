@@ -99,7 +99,9 @@ backend provisiona las envolturas desde la copia institucional y la app del
 dueño también puede reparar evidencias antiguas mientras conserve la bóveda
 local. Por eso la pérdida, robo, cambio o desinstalación del teléfono no
 elimina el acceso: al registrar el nuevo dispositivo se reenvuelven todas las
-DEK disponibles y cada preview descarga el FCE remoto y descifra localmente.
+DEK disponibles. Mientras no exista una copia local, el preview descarga el
+FCE remoto y lo descifra localmente; la acción de sincronización offline puede
+preparar después todas las copias persistentes de la requisa.
 
 La recuperación requiere configurar `ENV_ENCRYPTION_RECOVERY_PRIVATE_KEY` en
 un secreto/KMS del backend. Sin esa copia institucional, una evidencia creada
@@ -121,6 +123,36 @@ nueva selección, se agenda automáticamente otro ciclo al terminar el actual.
 Las envolturas X25519 llevan una clave de idempotencia derivada de su contenido:
 una repetición exacta se reproduce y una nueva envoltura aleatoria puede
 actualizar de forma segura el registro sin provocar un conflicto artificial.
+
+## Preparar evidencias para uso offline
+
+El detalle de la requisa incluye la acción **Sincronizar para uso offline**.
+Está dirigida a cada dispositivo participante y no es una nueva subida. Para
+cada evidencia FCE que ya esté `AVAILABLE`, la acción:
+
+1. obtiene del backend la envoltura de la DEK correspondiente al dispositivo;
+2. descarga una sola vez el FCE mediante
+   `GET /api/v1/requisitions/{id}/evidences/{evidenceId}/content`;
+3. valida tamaño y SHA-256 del ciphertext;
+4. vuelve a envolver la DEK con la bóveda local del dispositivo;
+5. valida el FCE completo y el hash/tamaño del contenido plano, sin conservar
+   el plano como caché permanente;
+6. mueve el archivo a `evidence_files/{evidenceId}.fce` y registra sus metadatos
+   en `evidencias_locales` con estado `SINCRONIZADA`.
+
+Las evidencias que ya tienen una copia FCE íntegra se omiten. La operación
+elimina cualquier registro de outbox de esa evidencia porque la subida ya
+terminó en el servidor: los archivos recuperados no vuelven a `PENDIENTE` ni
+se duplican en la cola de subida. Después de esta preparación, las miniaturas
+y previews usan la ruta local y solo una nueva reinstalación o limpieza del
+almacenamiento vuelve a requerir el puente remoto.
+
+El progreso es por requisa y se muestra como archivos guardados localmente,
+omitidos o con error. Si falla una evidencia, las demás pueden continuar y el
+botón permite reintentar únicamente las copias que todavía no sean utilizables.
+Cada participante debe ejecutar la acción en su propio dispositivo; el backend
+provee las claves y el ciphertext, pero no puede escribir archivos dentro del
+almacenamiento privado de otro teléfono.
 
 ## Prueba local
 

@@ -5,8 +5,10 @@ import 'dart:math';
 import 'package:file_cast/data/services/evidence_crypto_service.dart';
 import 'package:file_cast/data/services/evidence_picker_service.dart';
 import 'package:file_cast/data/services/evidence_key_exchange_service.dart';
+import 'package:file_cast/data/services/evidence_offline_sync_service.dart';
 import 'package:file_cast/data/services/evidence_sync_service.dart';
 import 'package:file_cast/data/services/local_evidence_database_service.dart';
+import 'package:file_cast/domain/models/evidence_offline_sync.dart';
 import 'package:file_cast/data/services/requisition_detail_service.dart';
 import 'package:file_cast/domain/models/evidence_upload_progress.dart';
 import 'package:file_cast/domain/models/requisition.dart';
@@ -21,12 +23,14 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     LocalEvidenceDatabaseService? database,
     EvidenceSyncService? syncService,
     EvidenceKeyExchangeService? keyExchange,
+    EvidenceOfflineSyncService? offlineSyncService,
   }) : _detailService = detailService,
        _pickerService = pickerService ?? EvidencePickerService(),
        _cryptoService = cryptoService,
        _database = database,
        _syncService = syncService,
-       _keyExchange = keyExchange {
+       _keyExchange = keyExchange,
+       _offlineSyncService = offlineSyncService {
     _syncChangesSubscription = syncService?.changes.listen(
       _onEvidenceSyncChanged,
     );
@@ -37,12 +41,14 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
 
   final RequisitionDetailService _detailService;
   final Map<String, List<RequisitionEvidence>> _imported = {};
+  final Map<String, List<LocalEvidenceRecord>> _cachedLocalEvidence = {};
   final Map<String, RequisitionDetail> _cachedRemoteDetails = {};
   final EvidencePickerService _pickerService;
   final EvidenceCryptoService? _cryptoService;
   final LocalEvidenceDatabaseService? _database;
   final EvidenceSyncService? _syncService;
   final EvidenceKeyExchangeService? _keyExchange;
+  final EvidenceOfflineSyncService? _offlineSyncService;
   late final StreamSubscription<String>? _syncChangesSubscription;
   final StreamController<String> _changesController =
       StreamController<String>.broadcast();
@@ -75,8 +81,33 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       _progressController.stream;
 
   @override
+  Stream<EvidenceOfflineSyncProgress> get offlineSyncProgress =>
+      _offlineSyncService?.progress ?? const Stream.empty();
+
+  @override
   Future<int> syncPendingEvidence() =>
       _syncService?.syncPending() ?? Future<int>.value(0);
+
+  @override
+  Future<EvidenceOfflineSyncResult> syncEvidenceForOffline({
+    required String requisitionId,
+    required List<RequisitionEvidence> evidence,
+  }) async {
+    final service = _offlineSyncService;
+    if (service == null) {
+      return const EvidenceOfflineSyncResult(
+        total: 0,
+        completed: 0,
+        skipped: 0,
+        failed: 0,
+      );
+    }
+    final result = await service.syncRequisition(
+      requisitionId: requisitionId,
+      evidence: evidence,
+    );
+    return result;
+  }
 
   @override
   Future<List<ImportedEvidenceDraft>?> pickEvidence({
@@ -118,7 +149,14 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       if (cached == null) rethrow;
       remote = cached;
     }
-    return _mergeRemoteDetail(remote, requisitionId);
+    try {
+      return await _mergeRemoteDetail(remote, requisitionId);
+    } on Object {
+      // El detalle remoto sigue siendo válido aunque una lectura local antigua
+      // esté bloqueada o tenga una fila incompatible. La siguiente carga puede
+      // volver a reconstruir la copia offline sin ocultar la requisa.
+      return remote;
+    }
   }
 
   Future<void> _sharePersistedKeys(
@@ -130,19 +168,24 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     final database = _database;
     if (keyExchange == null || crypto == null || database == null) return;
     if (!keyExchange.canShareKeys(requisitionId)) return;
-    final local = await database.forRequisition(requisitionId);
+    final local = await _localEvidenceSafely(requisitionId);
     if (local.isEmpty) return;
     final remoteById = {
       for (final evidence in remote.evidence)
         if (evidence.encrypted && evidence.id.isNotEmpty) evidence.id: evidence,
     };
-    if (remoteById.isEmpty) return;
+    final pendingKeyShares = local
+        .where((localEvidence) {
+          final remoteEvidence = remoteById[localEvidence.id];
+          return remoteEvidence?.uploadStatus?.toUpperCase() == 'AVAILABLE' &&
+              localEvidence.state.toUpperCase() != 'SINCRONIZADA';
+        })
+        .toList(growable: false);
+    if (pendingKeyShares.isEmpty) return;
     try {
       final recipients = await keyExchange.recipients(requisitionId);
       final recoveryKey = await keyExchange.recoveryKey(requisitionId);
-      for (final localEvidence in local) {
-        final remoteEvidence = remoteById[localEvidence.id];
-        if (remoteEvidence?.uploadStatus != 'AVAILABLE') continue;
+      for (final localEvidence in pendingKeyShares) {
         if (recoveryKey != null) {
           final recoveryWrappedKey = await crypto.wrapLocalDataKeyForRecovery(
             wrappedKey: localEvidence.wrappedKey,
@@ -180,9 +223,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     RequisitionDetail remote,
     String requisitionId,
   ) async {
-    final persisted =
-        await _database?.forRequisition(requisitionId) ??
-        const <LocalEvidenceRecord>[];
+    final persisted = await _localEvidenceSafely(requisitionId);
     final imported = _imported[requisitionId] ?? const <RequisitionEvidence>[];
     final serverIds = remote.evidence.map((item) => item.id).toSet();
     final persistedById = {
@@ -246,6 +287,26 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       createdAt: remote.createdAt,
       updatedAt: remote.updatedAt,
     );
+  }
+
+  Future<List<LocalEvidenceRecord>> _localEvidenceSafely(
+    String requisitionId,
+  ) async {
+    final database = _database;
+    if (database == null) return const <LocalEvidenceRecord>[];
+    try {
+      final local = await database.withSyncLock(
+        () => database.forRequisition(requisitionId),
+      );
+      _cachedLocalEvidence[requisitionId] = local;
+      return local;
+    } on Object {
+      // Una lectura puede coincidir con el isolate de WorkManager. Conserva
+      // el último snapshot válido para no reemplazar visualmente 4 copias
+      // locales por solo la evidencia nueva que está en memoria.
+      return _cachedLocalEvidence[requisitionId] ??
+          const <LocalEvidenceRecord>[];
+    }
   }
 
   @override
@@ -380,6 +441,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       (items) => [...items, ...imported],
       ifAbsent: () => imported,
     );
+    await _syncService?.scheduleBackgroundSync();
     final cachedRemote = _cachedRemoteDetails[requisitionId];
     if (cachedRemote == null) return getDetail(requisitionId);
     return _mergeRemoteDetail(cachedRemote, requisitionId);
@@ -519,6 +581,9 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     RequisitionEvidence? imported,
   ) {
     if (persisted != null) {
+      final persistedPath = File(persisted.encryptedPath).existsSync()
+          ? persisted.encryptedPath
+          : null;
       return RequisitionEvidence(
         id: remote.id,
         requisitionId: remote.requisitionId,
@@ -527,7 +592,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
         createdAt: remote.createdAt,
         sizeLabel: remote.sizeLabel,
         byteLength: remote.byteLength,
-        localPath: persisted.encryptedPath,
+        localPath: persistedPath,
         sha256: remote.sha256 ?? persisted.ciphertextSha256,
         sourcePath: persisted.sourcePath ?? remote.sourcePath,
         sessionId: remote.sessionId ?? persisted.sessionId,

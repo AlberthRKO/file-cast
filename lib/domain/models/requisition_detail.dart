@@ -120,12 +120,12 @@ final class ImportedEvidenceDraft {
 final class RequisitionEvidence {
   const RequisitionEvidence({
     required this.id,
-    this.requisitionId,
     required this.name,
     required this.type,
     required this.createdAt,
     required this.sizeLabel,
     required this.byteLength,
+    this.requisitionId,
     this.localPath,
     this.sha256,
     this.sourcePath,

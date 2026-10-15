@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 class RequisitionTable extends StatelessWidget {
   const RequisitionTable({
     required this.items,
+    required this.documentEvidenceCountFor,
     required this.onPressed,
     required this.scrollController,
     required this.hasMore,
@@ -23,6 +24,7 @@ class RequisitionTable extends StatelessWidget {
   });
 
   final List<Requisition> items;
+  final int Function(String requisitionId) documentEvidenceCountFor;
   final ValueChanged<Requisition> onPressed;
   final ScrollController scrollController;
   final bool hasMore;
@@ -107,6 +109,7 @@ class RequisitionTable extends StatelessWidget {
                   final item = items[index];
                   return _RequisitionTableRow(
                     requisition: item,
+                    documentEvidenceCount: documentEvidenceCountFor(item.id),
                     onPressed: () => onPressed(item),
                     canFinalize: canFinalize,
                     location: locationFor(item),
@@ -166,6 +169,7 @@ class _LoadingMoreRow extends StatelessWidget {
 class _RequisitionTableRow extends StatelessWidget {
   const _RequisitionTableRow({
     required this.requisition,
+    required this.documentEvidenceCount,
     required this.onPressed,
     required this.canFinalize,
     required this.location,
@@ -174,6 +178,7 @@ class _RequisitionTableRow extends StatelessWidget {
   });
 
   final Requisition requisition;
+  final int documentEvidenceCount;
   final VoidCallback onPressed;
   final bool canFinalize;
   final RequisitionLocation? location;
@@ -243,6 +248,10 @@ class _RequisitionTableRow extends StatelessWidget {
                   _EvidenceCount(
                     icon: Icons.videocam_outlined,
                     count: requisition.videoEvidenceCount,
+                  ),
+                  _EvidenceCount(
+                    icon: Icons.description_outlined,
+                    count: documentEvidenceCount,
                   ),
                 ],
               ),

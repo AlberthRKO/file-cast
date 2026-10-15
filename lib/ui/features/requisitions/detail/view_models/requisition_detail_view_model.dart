@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
+import 'package:file_cast/domain/models/evidence_offline_sync.dart';
 import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/domain/models/evidence_upload_progress.dart';
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
@@ -58,6 +59,9 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   bool _isImporting = false;
   bool _isSelectingEvidence = false;
   bool _isSyncing = false;
+  bool _isRefreshing = false;
+  bool _isOfflineSyncing = false;
+  bool _waitingForOfflineReload = false;
   bool _isCreatingSession = false;
   bool _isFinalizing = false;
   bool _isLinkingCase = false;
@@ -69,14 +73,20 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   String? _caseLinkError;
   StreamSubscription<String>? _changesSubscription;
   StreamSubscription<EvidenceUploadProgress>? _uploadProgressSubscription;
+  StreamSubscription<EvidenceOfflineSyncProgress>?
+  _offlineSyncProgressSubscription;
   List<ImportedEvidenceDraft> _selectedEvidence = const [];
   EvidenceUploadProgress? _uploadProgress;
+  EvidenceOfflineSyncProgress? _offlineSyncProgress;
   bool _disposed = false;
   bool get isImporting => _isImporting;
   bool get isSelectingEvidence => _isSelectingEvidence;
   bool get isSyncing => _isSyncing;
+  bool get isRefreshing => _isRefreshing;
   List<ImportedEvidenceDraft> get selectedEvidence => _selectedEvidence;
   EvidenceUploadProgress? get uploadProgress => _uploadProgress;
+  EvidenceOfflineSyncProgress? get offlineSyncProgress => _offlineSyncProgress;
+  bool get isOfflineSyncing => _isOfflineSyncing;
   bool get isFinalizing => _isFinalizing;
   bool get canFinalize {
     final status = _detail?.requisition.status;
@@ -104,6 +114,29 @@ class RequisitionDetailViewModel extends ChangeNotifier {
       0;
 
   bool get hasPendingEvidence => pendingEvidenceCount > 0;
+
+  int get offlineEvidenceTotalCount =>
+      _detail?.evidence
+          .where(
+            (item) =>
+                item.encrypted &&
+                item.uploadStatus?.toUpperCase() == 'AVAILABLE' &&
+                item.contentUrl?.isNotEmpty == true,
+          )
+          .length ??
+      0;
+
+  int get offlineEvidenceAvailableCount =>
+      _detail?.evidence
+          .where(
+            (item) =>
+                item.encrypted &&
+                item.uploadStatus?.toUpperCase() == 'AVAILABLE' &&
+                item.contentUrl?.isNotEmpty == true &&
+                item.localPath?.isNotEmpty == true,
+          )
+          .length ??
+      0;
 
   String get caseLinkQuery => _caseLinkQuery;
   List<EcosystemCaseSummary> get caseLinkResults => _caseLinkResults;
@@ -170,6 +203,18 @@ class RequisitionDetailViewModel extends ChangeNotifier {
       }
       notifyListeners();
     });
+    _offlineSyncProgressSubscription ??= _repository.offlineSyncProgress.listen(
+      (progress) {
+        if (progress.requisitionId != requisitionId || _disposed) return;
+        _offlineSyncProgress = progress;
+        if (progress.isActive) {
+          _isOfflineSyncing = true;
+        } else if (!_waitingForOfflineReload) {
+          _isOfflineSyncing = false;
+        }
+        notifyListeners();
+      },
+    );
     _phase = RequisitionDetailPhase.loading;
     _errorMessage = null;
     if (!_disposed) notifyListeners();
@@ -190,6 +235,30 @@ class RequisitionDetailViewModel extends ChangeNotifier {
       if (!_disposed) notifyListeners();
     } catch (_) {
       // The existing detail remains visible until a deliberate retry.
+    }
+  }
+
+  Future<void> refresh() async {
+    if (_disposed || _isRefreshing) return;
+    if (_detail == null) {
+      await load();
+      return;
+    }
+
+    _isRefreshing = true;
+    _errorMessage = null;
+    if (!_disposed) notifyListeners();
+    try {
+      _detail = await _repository.getDetail(requisitionId);
+      _phase = RequisitionDetailPhase.content;
+    } catch (error) {
+      _errorMessage = _messageFromError(
+        error,
+        fallback: 'No se pudo actualizar el detalle de la requisa.',
+      );
+    } finally {
+      _isRefreshing = false;
+      if (!_disposed) notifyListeners();
     }
   }
 
@@ -277,6 +346,10 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   Future<void> _syncImportedEvidence() async {
     try {
       await _repository.syncPendingEvidence();
+      // El worker de WorkManager puede haber tomado la outbox antes que el
+      // isolate principal. El detalle remoto es la fuente de verdad y debe
+      // reflejar el estado AVAILABLE al terminar cualquier sincronización.
+      await _reloadSilently();
     } catch (error) {
       _errorMessage = _messageFromError(
         error,
@@ -295,9 +368,92 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     unawaited(_syncImportedEvidence());
   }
 
+  void syncEvidenceForOffline() {
+    if (_isOfflineSyncing || _disposed) return;
+    final evidence = _detail?.evidence;
+    if (evidence == null || evidence.isEmpty) return;
+    _isOfflineSyncing = true;
+    _waitingForOfflineReload = true;
+    _offlineSyncProgress = null;
+    _errorMessage = null;
+    notifyListeners();
+    unawaited(_syncEvidenceForOffline(evidence));
+  }
+
+  Future<void> _syncEvidenceForOffline(
+    List<RequisitionEvidence> evidence,
+  ) async {
+    try {
+      final result = await _repository.syncEvidenceForOffline(
+        requisitionId: requisitionId,
+        evidence: evidence,
+      );
+      if (result.hasFailures) {
+        _errorMessage = result.errors.isEmpty
+            ? 'Algunas evidencias no pudieron quedar disponibles offline.'
+            : result.errors.first;
+      }
+      await _reloadSilently();
+    } catch (error) {
+      _errorMessage = _messageFromError(
+        error,
+        fallback: 'No se pudieron sincronizar las evidencias para uso offline.',
+      );
+    } finally {
+      _waitingForOfflineReload = false;
+      _isOfflineSyncing = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
   Future<PreparedEvidencePreview> prepareEvidencePreview(
     RequisitionEvidence evidence,
-  ) => _previewService.prepare(evidence);
+  ) async {
+    var evidenceForPreview = evidence;
+    if (_needsOfflineRecovery(evidence)) {
+      _isOfflineSyncing = true;
+      _waitingForOfflineReload = true;
+      _offlineSyncProgress = null;
+      if (!_disposed) notifyListeners();
+      try {
+        final result = await _repository.syncEvidenceForOffline(
+          requisitionId: requisitionId,
+          evidence: [evidence],
+        );
+        if (result.hasFailures) {
+          _errorMessage = result.errors.isEmpty
+              ? 'La evidencia se verá en modo temporal y no quedó guardada offline.'
+              : result.errors.first;
+        }
+        await _reloadSilently();
+      } catch (error) {
+        _errorMessage = _messageFromError(
+          error,
+          fallback:
+              'La evidencia se verá en modo temporal y no quedó guardada offline.',
+        );
+      } finally {
+        _waitingForOfflineReload = false;
+        _isOfflineSyncing = false;
+        if (!_disposed) notifyListeners();
+      }
+
+      for (final item in _detail?.evidence ?? const <RequisitionEvidence>[]) {
+        if (item.id == evidence.id) {
+          evidenceForPreview = item;
+          break;
+        }
+      }
+    }
+    return _previewService.prepare(evidenceForPreview);
+  }
+
+  bool _needsOfflineRecovery(RequisitionEvidence evidence) {
+    return evidence.encrypted &&
+        evidence.uploadStatus?.toUpperCase() == 'AVAILABLE' &&
+        evidence.contentUrl?.isNotEmpty == true &&
+        (evidence.localPath == null || evidence.localPath!.isEmpty);
+  }
 
   Future<void> disposeEvidencePreview(PreparedEvidencePreview preview) =>
       _previewService.disposePreview(preview);
@@ -462,6 +618,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     _caseLinkDebounce?.cancel();
     _changesSubscription?.cancel();
     _uploadProgressSubscription?.cancel();
+    _offlineSyncProgressSubscription?.cancel();
     super.dispose();
   }
 }

@@ -68,6 +68,21 @@ class EvidenceCryptoService implements EvidenceDecryptionService {
     return _base64Url(publicKey.bytes);
   }
 
+  String aadHashForEvidence(String evidenceId) {
+    return _sha256(utf8.encode('$_aadPrefix/$evidenceId'));
+  }
+
+  /// Convierte la envoltura entregada al dispositivo en una envoltura local
+  /// protegida por la bóveda de este teléfono. La DEK solo vive en memoria
+  /// durante esta operación.
+  Future<String> rewrapDeviceKeyForLocalVault({
+    required String wrappedKey,
+    required String evidenceId,
+  }) async {
+    final dataKey = await _unwrapDeviceDataKey(wrappedKey, evidenceId);
+    return _wrapDataKey(await dataKey.extractBytes());
+  }
+
   Future<EncryptedEvidenceLocal> encryptEvidence({
     required String evidenceId,
     required String inputPath,

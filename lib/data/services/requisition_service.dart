@@ -149,11 +149,19 @@ class RequisitionService {
     final data = response['data'];
     final pagination = _asMap(response['pagination']);
     final locations = <String, RequisitionLocation>{};
+    final documentEvidenceCounts = <String, int>{};
     final items = <Requisition>[];
     if (data is List) {
       for (final rawItem in data.whereType<Map<String, dynamic>>()) {
         final item = _toDomain(rawItem);
         items.add(item);
+        if (item.id.isNotEmpty) {
+          final evidenceCounts = _asMap(rawItem['evidenceCounts']);
+          documentEvidenceCounts[item.id] = _asInt(
+            evidenceCounts['documents'],
+            fallback: _asInt(evidenceCounts['other']),
+          );
+        }
         final location = _locationFrom(rawItem);
         if (location != null && location.isValid) {
           locations[item.id] = location;
@@ -166,6 +174,9 @@ class RequisitionService {
       page: _asInt(pagination['page'], fallback: 1),
       pageCount: _asInt(pagination['pageCount']),
       locations: Map<String, RequisitionLocation>.unmodifiable(locations),
+      documentEvidenceCounts: Map<String, int>.unmodifiable(
+        documentEvidenceCounts,
+      ),
     );
   }
 

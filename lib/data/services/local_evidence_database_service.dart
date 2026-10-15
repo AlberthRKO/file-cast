@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:file_cast/core/storage/secure_storage_service.dart';
@@ -8,7 +9,7 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 /// Nunca guarda el contenido plano; solo la ruta FCE y sus metadatos.
 class LocalEvidenceDatabaseService {
   LocalEvidenceDatabaseService({required SecureStorageService storage})
-      : _storage = storage;
+    : _storage = storage;
 
   static const _databaseKeyName = 'file_cast_evidence_database_key_v1';
   static const _databaseName = 'file_cast_evidence_v1.db';
@@ -18,14 +19,20 @@ class LocalEvidenceDatabaseService {
 
   Future<Database> get database async {
     final current = _database;
-    if (current != null && current.isOpen) return current;
+    try {
+      if (current != null && current.isOpen) return current;
+    } on Object {
+      // El engine de WorkManager puede haber cerrado el handle nativo. Se
+      // descarta la referencia para abrirlo de nuevo en la siguiente línea.
+    }
+    _database = null;
 
     final key = await _databaseKey();
     final path = '${await getDatabasesPath()}/$_databaseName';
     final opened = await openDatabase(
       path,
       password: key,
-      version: 2,
+      version: 3,
       onCreate: (db, _) async {
         await db.execute('''
           CREATE TABLE evidencias_locales (
@@ -72,6 +79,13 @@ class LocalEvidenceDatabaseService {
           'CREATE INDEX outbox_evidencias_estado_idx '
           'ON outbox_evidencias(estado, actualizado_at)',
         );
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS sync_locks (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            owner TEXT NOT NULL,
+            expires_at INTEGER NOT NULL
+          )
+        ''');
       },
       onUpgrade: (db, oldVersion, _) async {
         if (oldVersion < 2) {
@@ -80,6 +94,15 @@ class LocalEvidenceDatabaseService {
             "TEXT NOT NULL DEFAULT 'IMPORTED_FILE'",
           );
         }
+        if (oldVersion < 3) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS sync_locks (
+              id INTEGER PRIMARY KEY CHECK (id = 1),
+              owner TEXT NOT NULL,
+              expires_at INTEGER NOT NULL
+            )
+          ''');
+        }
       },
     );
     _database = opened;
@@ -87,6 +110,39 @@ class LocalEvidenceDatabaseService {
   }
 
   Future<void> saveEvidence(LocalEvidenceRecord evidence) async {
+    await withSyncLock(() async {
+      final db = await database;
+      final now = DateTime.now().toUtc().toIso8601String();
+      await db.transaction((txn) async {
+        await txn.insert(
+          'evidencias_locales',
+          {
+            ...evidence.toMap(),
+            'actualizado_at': now,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+        await txn.insert(
+          'outbox_evidencias',
+          {
+            'operation_id': evidence.clientOperationId,
+            'evidencia_id': evidence.id,
+            'estado': 'PENDIENTE',
+            'intentos': 0,
+            'actualizado_at': now,
+          },
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      });
+    });
+  }
+
+  /// Persiste una evidencia que ya existe en el backend.
+  ///
+  /// No crea una operación pendiente de subida: el contenido remoto ya fue
+  /// confirmado por file-cast-back y solo se está reconstruyendo la copia FCE
+  /// local para uso offline.
+  Future<void> saveRecoveredEvidence(LocalEvidenceRecord evidence) async {
     final db = await database;
     final now = DateTime.now().toUtc().toIso8601String();
     await db.transaction((txn) async {
@@ -94,22 +150,99 @@ class LocalEvidenceDatabaseService {
         'evidencias_locales',
         {
           ...evidence.toMap(),
+          'estado': 'SINCRONIZADA',
           'actualizado_at': now,
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
-      await txn.insert(
+
+      // Si existiera una operación anterior para la misma evidencia, el
+      // estado remoto AVAILABLE es la fuente de verdad y no debe volver a
+      // entrar al ciclo de subida.
+      await txn.delete(
         'outbox_evidencias',
-        {
-          'operation_id': evidence.clientOperationId,
-          'evidencia_id': evidence.id,
-          'estado': 'PENDIENTE',
-          'intentos': 0,
-          'actualizado_at': now,
-        },
-        conflictAlgorithm: ConflictAlgorithm.ignore,
+        where: 'evidencia_id = ?',
+        whereArgs: [evidence.id],
       );
     });
+  }
+
+  Future<String> persistentEncryptedPath(String evidenceId) async {
+    final root = Directory('${await getDatabasesPath()}/evidence_files');
+    await root.create(recursive: true);
+    return '${root.path}/$evidenceId.fce';
+  }
+
+  /// Serializa las sincronizaciones entre el isolate principal y el isolate
+  /// de WorkManager. Cada isolate crea su propia instancia del servicio, por
+  /// lo que un booleano en memoria no evita que ambos consuman la misma
+  /// evidencia pendiente.
+  Future<T> withSyncLock<T>(Future<T> Function() operation) async {
+    final db = await database;
+    final owner =
+        '${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 32)}';
+    final leaseDuration = const Duration(hours: 1);
+    var acquired = false;
+
+    while (!acquired) {
+      try {
+        acquired = await db.transaction<bool>((txn) async {
+          final now = DateTime.now().millisecondsSinceEpoch;
+          final expiresAt = now + leaseDuration.inMilliseconds;
+          final renewed = await txn.rawUpdate(
+            'UPDATE sync_locks SET owner = ?, expires_at = ? '
+            'WHERE id = 1 AND expires_at <= ?',
+            [owner, expiresAt, now],
+          );
+          if (renewed == 1) return true;
+
+          try {
+            await txn.insert('sync_locks', {
+              'id': 1,
+              'owner': owner,
+              'expires_at': expiresAt,
+            });
+            return true;
+          } on Object {
+            return false;
+          }
+        });
+      } on Object catch (error) {
+        final message = error.toString().toLowerCase();
+        if (message.contains('database_close') ||
+            message.contains('database is closed')) {
+          _database = null;
+        } else if (!message.contains('locked') && !message.contains('busy')) {
+          rethrow;
+        }
+      }
+
+      if (!acquired) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+    }
+
+    try {
+      return await operation();
+    } finally {
+      try {
+        await db.transaction((txn) async {
+          await txn.delete(
+            'sync_locks',
+            where: 'id = 1 AND owner = ?',
+            whereArgs: [owner],
+          );
+        });
+      } on Object catch (error) {
+        final message = error.toString().toLowerCase();
+        if (message.contains('database_close') ||
+            message.contains('database is closed')) {
+          _database = null;
+        } else {
+          rethrow;
+        }
+      }
+    }
   }
 
   Future<List<LocalEvidenceRecord>> pending({int limit = 10}) async {
@@ -168,14 +301,16 @@ class LocalEvidenceDatabaseService {
 
   Future<void> markError(String evidenceId, String message) async {
     final db = await database;
-    final safeMessage =
-        message.length > 512 ? message.substring(0, 512) : message;
+    final safeMessage = message.length > 512
+        ? message.substring(0, 512)
+        : message;
     await db.rawUpdate(
       '''
       UPDATE outbox_evidencias
       SET estado = 'ERROR', intentos = intentos + 1,
           ultimo_error = ?, actualizado_at = ?
       WHERE evidencia_id = ?
+        AND estado <> 'SINCRONIZADA'
       ''',
       [safeMessage, DateTime.now().toUtc().toIso8601String(), evidenceId],
     );
@@ -247,30 +382,30 @@ final class LocalEvidenceRecord {
   final String? msFileId;
 
   Map<String, Object?> toMap() => {
-        'id': id,
-        'requisa_id': requisitionId,
-        'sesion_id': sessionId,
-        'nombre_original': originalName,
-        'mime_type': mimeType,
-        'tipo': type,
-        'metodo_adquisicion': acquisitionMethod,
-        'ruta_cifrada': encryptedPath,
-        'tamano_plano': plaintextByteLength,
-        'tamano_cifrado': ciphertextByteLength,
-        'hash_plano': plaintextSha256,
-        'hash_cifrado': ciphertextSha256,
-        'algoritmo_cifrado': encryptionAlgorithm,
-        'version_cifrado': encryptionVersion,
-        'hash_aad': aadHash,
-        'clave_envuelta': wrappedKey,
-        'version_clave': keyVersion,
-        'estado': state,
-        'ms_archivo_id': msFileId,
-        'ruta_origen': sourcePath,
-        'client_operation_id': clientOperationId,
-        'creado_at': createdAt.toUtc().toIso8601String(),
-        'actualizado_at': createdAt.toUtc().toIso8601String(),
-      };
+    'id': id,
+    'requisa_id': requisitionId,
+    'sesion_id': sessionId,
+    'nombre_original': originalName,
+    'mime_type': mimeType,
+    'tipo': type,
+    'metodo_adquisicion': acquisitionMethod,
+    'ruta_cifrada': encryptedPath,
+    'tamano_plano': plaintextByteLength,
+    'tamano_cifrado': ciphertextByteLength,
+    'hash_plano': plaintextSha256,
+    'hash_cifrado': ciphertextSha256,
+    'algoritmo_cifrado': encryptionAlgorithm,
+    'version_cifrado': encryptionVersion,
+    'hash_aad': aadHash,
+    'clave_envuelta': wrappedKey,
+    'version_clave': keyVersion,
+    'estado': state,
+    'ms_archivo_id': msFileId,
+    'ruta_origen': sourcePath,
+    'client_operation_id': clientOperationId,
+    'creado_at': createdAt.toUtc().toIso8601String(),
+    'actualizado_at': createdAt.toUtc().toIso8601String(),
+  };
 
   factory LocalEvidenceRecord.fromMap(Map<String, Object?> map) {
     return LocalEvidenceRecord(

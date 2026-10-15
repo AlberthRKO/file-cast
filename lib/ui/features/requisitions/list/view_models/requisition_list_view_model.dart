@@ -26,11 +26,14 @@ class RequisitionListViewModel extends ChangeNotifier {
   String? _loadMoreError;
   String? _finalizingId;
   final Map<String, RequisitionLocation> _locations = {};
+  final Map<String, int> _documentEvidenceCounts = {};
 
   RequisitionListState get state => _state;
   List<Requisition> get visibleItems => _state.filteredItems;
   RequisitionLocation? locationFor(String requisitionId) =>
       _locations[requisitionId];
+  int documentEvidenceCountFor(String requisitionId) =>
+      _documentEvidenceCounts[requisitionId] ?? 0;
   bool get hasMore => _hasMore;
   bool get isLoadingMore => _isLoadingMore;
   String? get loadMoreError => _loadMoreError;
@@ -105,6 +108,10 @@ class RequisitionListViewModel extends ChangeNotifier {
       final incomingIds = page.items.map((item) => item.id).toSet();
       _locations.removeWhere((id, _) => incomingIds.contains(id));
       _locations.addAll(page.locations);
+      _documentEvidenceCounts.removeWhere(
+        (id, _) => incomingIds.contains(id),
+      );
+      _documentEvidenceCounts.addAll(page.documentEvidenceCounts);
       _nextPage = page.page + 1;
       _hasMore = page.page < page.pageCount;
       final filtered = _filterByDate(merged);
@@ -184,6 +191,10 @@ class RequisitionListViewModel extends ChangeNotifier {
       final incomingIds = page.items.map((item) => item.id).toSet();
       _locations.removeWhere((id, _) => incomingIds.contains(id));
       _locations.addAll(page.locations);
+      _documentEvidenceCounts.removeWhere(
+        (id, _) => incomingIds.contains(id),
+      );
+      _documentEvidenceCounts.addAll(page.documentEvidenceCounts);
       _nextPage = page.page + 1;
       _hasMore = page.page < page.pageCount;
       _state = _state.copyWith(

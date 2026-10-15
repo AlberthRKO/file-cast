@@ -458,8 +458,8 @@ Salida: una evidencia fixture se registra, recupera y verifica offline.
 - implementar AuthRepository/API/tokens/guards;
 - listado con cursor, filtros y cache;
 - crear/editar detalle;
-- detalle remoto implementado y documentado en `docs/modules/requisitions_detail.md`, incluyendo lectura de evidencias/sesiones, creación de sesión y finalización; continúan pendientes la sincronización completa, galería interactiva y cadena de custodia;
-- estados y finalización inicial (la lectura y el sellado del detalle ya consumen la API; quedan pendientes sincronización y recuperación completa);
+- detalle remoto implementado y documentado en `docs/modules/requisitions_detail.md`, incluyendo lectura de evidencias/sesiones, creación de sesión y finalización; la recuperación FCE para uso offline y la galería interactiva ya tienen flujo conectado; continúa pendiente la cadena de custodia;
+- estados y finalización inicial (la lectura, el sellado, la subida y la recuperación offline del detalle consumen la API; queda pendiente la validación probatoria completa);
 - reemplazar mocks del home.
 
 Salida: flujo login -> lista -> crear -> detalle, online/offline, probado.

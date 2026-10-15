@@ -1,6 +1,7 @@
 import 'package:file_cast/core/adb/adb_client.dart';
 import 'package:file_cast/core/config/config.dart';
 import 'package:file_cast/core/network/http.dart';
+import 'package:file_cast/core/notifications/local_notification_service.dart';
 import 'package:file_cast/core/storage/secure_storage_service.dart';
 import 'package:file_cast/data/repositories/remote_auth_repository.dart';
 import 'package:file_cast/data/repositories/acquisition_repository_impl.dart';
@@ -11,7 +12,9 @@ import 'package:file_cast/data/services/requisition_creation_service.dart';
 import 'package:file_cast/data/services/android_acquisition_platform_service.dart';
 import 'package:file_cast/data/services/evidence_picker_service.dart';
 import 'package:file_cast/data/services/evidence_crypto_service.dart';
+import 'package:file_cast/data/services/evidence_background_sync_service.dart';
 import 'package:file_cast/data/services/evidence_key_exchange_service.dart';
+import 'package:file_cast/data/services/evidence_offline_sync_service.dart';
 import 'package:file_cast/data/services/evidence_preview_service.dart';
 import 'package:file_cast/data/services/evidence_sync_service.dart';
 import 'package:file_cast/data/services/auth_session_service.dart';
@@ -52,6 +55,12 @@ class DependencyInjection {
       ProxyProvider<SecureStorageService, LocalEvidenceDatabaseService>(
         update: (_, storage, previous) =>
             LocalEvidenceDatabaseService(storage: storage),
+      ),
+      Provider<LocalNotificationService>(
+        create: (_) => LocalNotificationService(),
+      ),
+      Provider<EvidenceBackgroundSyncService>(
+        create: (_) => EvidenceBackgroundSyncService(baseUrl: Config.baseUrl),
       ),
       ProxyProvider<EvidenceCryptoService, EvidenceDecryptionService>(
         update: (_, crypto, previous) => crypto,
@@ -107,64 +116,100 @@ class DependencyInjection {
       Provider<RemoteDocumentPreviewService>(
         create: (_) => const RemoteDocumentPreviewService(),
       ),
-      ProxyProvider4<
-        Http,
-        EvidenceCryptoService,
-        RemoteDocumentPreviewService,
-        EvidenceKeyExchangeService,
-        EvidencePreviewService
-      >(
+      ProxyProvider4<Http, EvidenceCryptoService, RemoteDocumentPreviewService,
+          EvidenceKeyExchangeService, EvidencePreviewService>(
         update: (_, http, crypto, documentPreview, keyExchange, previous) =>
             RemoteEvidencePreviewService(
-              http: http,
-              crypto: crypto,
-              keyExchange: keyExchange,
-              documentPreview: documentPreview,
-            ),
+          http: http,
+          crypto: crypto,
+          keyExchange: keyExchange,
+          documentPreview: documentPreview,
+        ),
       ),
       Provider<LocationService>(create: (_) => const LocationService()),
-      ProxyProvider4<
-        Http,
-        LocalEvidenceDatabaseService,
-        EvidenceCryptoService,
-        EvidenceKeyExchangeService,
-        EvidenceSyncService
-      >(
-        update: (_, http, database, crypto, keyExchange, previous) =>
-            EvidenceSyncService(
+      ProxyProvider6<
+          Http,
+          LocalEvidenceDatabaseService,
+          EvidenceCryptoService,
+          EvidenceKeyExchangeService,
+          LocalNotificationService,
+          EvidenceBackgroundSyncService,
+          EvidenceSyncService>(
+        update: (
+          _,
+          http,
+          database,
+          crypto,
+          keyExchange,
+          notifications,
+          backgroundScheduler,
+          previous,
+        ) =>
+            previous ??
+            (EvidenceSyncService(
               http: http,
               database: database,
               crypto: crypto,
               keyExchange: keyExchange,
-            )..start(),
+              notifications: notifications,
+              backgroundScheduler: backgroundScheduler,
+            )..start()),
       ),
       ProxyProvider6<
-        RequisitionDetailService,
-        EvidencePickerService,
-        EvidenceCryptoService,
-        LocalEvidenceDatabaseService,
-        EvidenceSyncService,
-        EvidenceKeyExchangeService,
-        RequisitionDetailRepository
-      >(
-        update:
-            (
-              _,
-              detailService,
-              picker,
-              crypto,
-              database,
-              syncService,
-              keyExchange,
-              previous,
-            ) => RemoteRequisitionDetailRepository(
-              detailService: detailService,
-              pickerService: picker,
-              cryptoService: crypto,
+          Http,
+          LocalEvidenceDatabaseService,
+          EvidenceCryptoService,
+          EvidenceKeyExchangeService,
+          LocalNotificationService,
+          EvidenceBackgroundSyncService,
+          EvidenceOfflineSyncService>(
+        update: (
+          _,
+          http,
+          database,
+          crypto,
+          keyExchange,
+          notifications,
+          backgroundScheduler,
+          previous,
+        ) =>
+            previous ??
+            EvidenceOfflineSyncService(
+              http: http,
               database: database,
-              syncService: syncService,
+              crypto: crypto,
               keyExchange: keyExchange,
+              notifications: notifications,
+              backgroundScheduler: backgroundScheduler,
             ),
+      ),
+      ProxyProvider6<
+          RequisitionDetailService,
+          EvidencePickerService,
+          EvidenceCryptoService,
+          LocalEvidenceDatabaseService,
+          EvidenceSyncService,
+          EvidenceKeyExchangeService,
+          RequisitionDetailRepository>(
+        update: (
+          context,
+          detailService,
+          picker,
+          crypto,
+          database,
+          syncService,
+          keyExchange,
+          previous,
+        ) =>
+            RemoteRequisitionDetailRepository(
+          detailService: detailService,
+          pickerService: picker,
+          cryptoService: crypto,
+          database: database,
+          syncService: syncService,
+          keyExchange: keyExchange,
+          offlineSyncService: context.read<EvidenceOfflineSyncService>(),
+        ),
       ),
       ProxyProvider<Http, RequisitionCreationService>(
         update: (_, http, previous) => RequisitionCreationService(http: http),
@@ -182,28 +227,26 @@ class DependencyInjection {
             AndroidAcquisitionPlatformService(adbClient: adbClient),
       ),
       ProxyProvider4<
-        AndroidAcquisitionPlatformService,
-        RequisitionDetailRepository,
-        RemoteDocumentPreviewService,
-        EvidenceSyncService,
-        AcquisitionRepository
-      >(
-        update:
-            (
-              _,
-              platformService,
-              detailRepository,
-              documentPreviewService,
-              syncService,
-              previousRepository,
-            ) =>
-                previousRepository ??
-                AcquisitionRepositoryImpl(
-                  platformService: platformService,
-                  detailRepository: detailRepository,
-                  documentPreviewService: documentPreviewService,
-                  syncService: syncService,
-                ),
+          AndroidAcquisitionPlatformService,
+          RequisitionDetailRepository,
+          RemoteDocumentPreviewService,
+          EvidenceSyncService,
+          AcquisitionRepository>(
+        update: (
+          _,
+          platformService,
+          detailRepository,
+          documentPreviewService,
+          syncService,
+          previousRepository,
+        ) =>
+            previousRepository ??
+            AcquisitionRepositoryImpl(
+              platformService: platformService,
+              detailRepository: detailRepository,
+              documentPreviewService: documentPreviewService,
+              syncService: syncService,
+            ),
       ),
       ProxyProvider<AuthSessionController, GoRouter>(
         update: (_, sessionController, previousRouter) =>

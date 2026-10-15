@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:file_cast/core/errors/either.dart';
 import 'package:file_cast/core/network/http.dart';
+import 'package:file_cast/core/notifications/local_notification_service.dart';
+import 'package:file_cast/data/services/evidence_background_sync_service.dart';
 import 'package:file_cast/data/services/evidence_crypto_service.dart';
 import 'package:file_cast/data/services/evidence_key_exchange_service.dart';
 import 'package:file_cast/data/services/local_evidence_database_service.dart';
@@ -17,15 +19,21 @@ class EvidenceSyncService {
     required LocalEvidenceDatabaseService database,
     required EvidenceCryptoService crypto,
     required EvidenceKeyExchangeService keyExchange,
+    LocalNotificationService? notifications,
+    EvidenceBackgroundSyncService? backgroundScheduler,
   }) : _http = http,
        _database = database,
        _crypto = crypto,
-       _keyExchange = keyExchange;
+       _keyExchange = keyExchange,
+       _notifications = notifications,
+       _backgroundScheduler = backgroundScheduler;
 
   final Http _http;
   final LocalEvidenceDatabaseService _database;
   final EvidenceCryptoService _crypto;
   final EvidenceKeyExchangeService _keyExchange;
+  final LocalNotificationService? _notifications;
+  final EvidenceBackgroundSyncService? _backgroundScheduler;
   final Connectivity _connectivity = Connectivity();
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   final StreamController<String> _changesController =
@@ -46,7 +54,24 @@ class EvidenceSyncService {
         unawaited(_triggerSync());
       }
     });
-    unawaited(_triggerSync());
+    unawaited(_scheduleAndTriggerInitialSync());
+  }
+
+  Future<void> _scheduleAndTriggerInitialSync() async {
+    await _triggerSync();
+    await scheduleBackgroundSync();
+  }
+
+  /// Registra el trabajo persistente después de crear una evidencia. El
+  /// registro es idempotente y `keep` evita duplicar workers para la outbox.
+  Future<void> scheduleBackgroundSync() async {
+    try {
+      if ((await _database.pending(limit: 1)).isEmpty) return;
+      await _backgroundScheduler?.scheduleUpload();
+    } on Object {
+      // La outbox y el listener de conectividad siguen siendo el fallback
+      // cuando el scheduler no está disponible en el dispositivo.
+    }
   }
 
   Future<void> _triggerSync() async {
@@ -66,7 +91,9 @@ class EvidenceSyncService {
       _runAgainWhenIdle = true;
       return activeRun;
     }
-    final run = _syncPending(limit: limit);
+    final run = _database.withSyncLock(
+      () => _syncAllPending(limit: limit),
+    );
     _activeRun = run;
     run.then<void>(
       (_) {
@@ -74,15 +101,28 @@ class EvidenceSyncService {
           _activeRun = null;
           _startQueuedRunIfNeeded();
         }
+        unawaited(_scheduleIfPending());
       },
       onError: (Object _, StackTrace __) {
         if (identical(_activeRun, run)) {
           _activeRun = null;
           _startQueuedRunIfNeeded();
         }
+        unawaited(_scheduleIfPending());
       },
     );
     return run;
+  }
+
+  Future<void> _scheduleIfPending() async {
+    try {
+      if ((await _database.pending(limit: 1)).isNotEmpty) {
+        await scheduleBackgroundSync();
+      }
+    } on Object {
+      // La sincronización de primer plano ya terminó; la outbox y el listener
+      // de conectividad siguen siendo la fuente de reintento.
+    }
   }
 
   void _startQueuedRunIfNeeded() {
@@ -91,8 +131,21 @@ class EvidenceSyncService {
     unawaited(_triggerSync());
   }
 
-  Future<int> _syncPending({required int limit}) async {
-    final pending = await _database.pending(limit: limit);
+  Future<int> _syncAllPending({required int limit}) async {
+    var synchronized = 0;
+    final attempted = <String>{};
+    while (true) {
+      final pending = (await _database.pending(limit: limit))
+          .where((evidence) => !attempted.contains(evidence.id))
+          .toList(growable: false);
+      if (pending.isEmpty) return synchronized;
+      attempted.addAll(pending.map((evidence) => evidence.id));
+      final processed = await _syncPending(pending: pending);
+      synchronized += processed;
+    }
+  }
+
+  Future<int> _syncPending({required List<LocalEvidenceRecord> pending}) async {
     if (pending.isEmpty) return 0;
 
     final totals = <String, int>{};
@@ -176,19 +229,34 @@ class EvidenceSyncService {
     String? currentFileName,
     String? errorMessage,
   }) {
-    if (_progressController.isClosed) return;
-    _progressController.add(
-      EvidenceUploadProgress(
-        requisitionId: requisitionId,
-        total: total,
-        completed: completed,
-        failed: failed,
-        stage: stage,
-        isActive: isActive,
-        currentFileName: currentFileName,
-        errorMessage: errorMessage,
-      ),
-    );
+    if (!_progressController.isClosed) {
+      _progressController.add(
+        EvidenceUploadProgress(
+          requisitionId: requisitionId,
+          total: total,
+          completed: completed,
+          failed: failed,
+          stage: stage,
+          isActive: isActive,
+          currentFileName: currentFileName,
+          errorMessage: errorMessage,
+        ),
+      );
+    }
+    final notifications = _notifications;
+    if (notifications != null) {
+      unawaited(
+        notifications
+            .showUploadProgress(
+              requisitionId: requisitionId,
+              total: total,
+              processed: completed + failed,
+              active: isActive,
+              hasFailures: failed > 0,
+            )
+            .catchError((_) {}),
+      );
+    }
   }
 
   Future<String> _syncOne(LocalEvidenceRecord evidence) async {
@@ -358,7 +426,7 @@ class EvidenceSyncService {
   }
 
   String _safeMessage(Object error) {
-    final message = error.toString();
+    final message = error.toString().replaceFirst('Bad state: ', '').trim();
     return message.length > 512 ? message.substring(0, 512) : message;
   }
 }

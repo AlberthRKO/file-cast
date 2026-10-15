@@ -10,6 +10,7 @@ import 'package:intl/intl.dart';
 class RequisitionCard extends StatelessWidget {
   const RequisitionCard({
     required this.requisition,
+    required this.documentEvidenceCount,
     required this.onPressed,
     required this.canFinalize,
     this.location,
@@ -19,6 +20,7 @@ class RequisitionCard extends StatelessWidget {
   });
 
   final Requisition requisition;
+  final int documentEvidenceCount;
   final VoidCallback onPressed;
   final bool canFinalize;
   final RequisitionLocation? location;
@@ -136,6 +138,14 @@ class RequisitionCard extends StatelessWidget {
                       label: 'Videos',
                     ),
                   ),
+                  const SizedBox(width: AppSpace.s),
+                  Flexible(
+                    child: _EvidencePill(
+                      icon: Icons.description_outlined,
+                      count: documentEvidenceCount,
+                      label: 'Documentos',
+                    ),
+                  ),
                   const Spacer(),
                   RequisitionDetailsButton(onTap: onPressed),
                 ],
@@ -150,12 +160,14 @@ class RequisitionCard extends StatelessWidget {
 
 class _EvidencePill extends StatelessWidget {
   const _EvidencePill({
-    required this.assetName,
+    this.assetName,
+    this.icon,
     required this.count,
     required this.label,
   });
 
-  final String assetName;
+  final String? assetName;
+  final IconData? icon;
   final int count;
   final String label;
 
@@ -176,11 +188,14 @@ class _EvidencePill extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SvgPicture.asset(
-            '$assetImgIcon$assetName',
-            width: AppSize.iconS,
-            colorFilter: ColorFilter.mode(primary, BlendMode.srcIn),
-          ),
+          if (assetName != null)
+            SvgPicture.asset(
+              '$assetImgIcon${assetName!}',
+              width: AppSize.iconS,
+              colorFilter: ColorFilter.mode(primary, BlendMode.srcIn),
+            )
+          else
+            Icon(icon, size: AppSize.iconS, color: primary),
           const SizedBox(width: AppSpace.xs),
           Flexible(
             child: Text(

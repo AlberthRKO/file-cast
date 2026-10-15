@@ -242,6 +242,7 @@ class _RequisitionListViewState extends State<RequisitionListView> {
         scrollController: _scrollController,
         hasMore: _viewModel.hasMore,
         canFinalize: widget.canFinalize,
+        documentEvidenceCountFor: _viewModel.documentEvidenceCountFor,
         onPressed: _openDetails,
         onViewLocation: _showLocation,
         locationFor: _viewModel.locationFor,
@@ -492,6 +493,7 @@ class _ContentResults extends StatelessWidget {
     required this.scrollController,
     required this.hasMore,
     required this.canFinalize,
+    required this.documentEvidenceCountFor,
     required this.onPressed,
     required this.onViewLocation,
     required this.locationFor,
@@ -507,6 +509,7 @@ class _ContentResults extends StatelessWidget {
   final ScrollController scrollController;
   final bool hasMore;
   final bool canFinalize;
+  final int Function(String requisitionId) documentEvidenceCountFor;
   final ValueChanged<Requisition> onPressed;
   final ValueChanged<Requisition> onViewLocation;
   final RequisitionLocation? Function(String requisitionId) locationFor;
@@ -521,6 +524,7 @@ class _ContentResults extends StatelessWidget {
     if ((window.isExpanded || window.isLarge) && !window.hasCompactHeight) {
       return RequisitionTable(
         items: items,
+        documentEvidenceCountFor: documentEvidenceCountFor,
         onPressed: onPressed,
         scrollController: scrollController,
         hasMore: hasMore,
@@ -562,6 +566,9 @@ class _ContentResults extends StatelessWidget {
                   delegate: SliverChildBuilderDelegate(
                     (context, index) => RequisitionCard(
                       requisition: items[index],
+                      documentEvidenceCount: documentEvidenceCountFor(
+                        items[index].id,
+                      ),
                       onPressed: () => onPressed(items[index]),
                       canFinalize: canFinalize,
                       location: locationFor(items[index].id),
@@ -603,6 +610,7 @@ class _ContentResults extends StatelessWidget {
                     final item = items[itemIndex];
                     return RequisitionCard(
                       requisition: item,
+                      documentEvidenceCount: documentEvidenceCountFor(item.id),
                       onPressed: () => onPressed(item),
                       canFinalize: canFinalize,
                       location: locationFor(item.id),
