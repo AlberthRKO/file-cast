@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:file_cast/core/errors/either.dart';
@@ -40,6 +41,7 @@ class EvidenceSyncService {
       StreamController<String>.broadcast();
   final StreamController<EvidenceUploadProgress> _progressController =
       StreamController<EvidenceUploadProgress>.broadcast();
+  final Random _random = Random.secure();
   Future<int>? _activeRun;
   bool _runAgainWhenIdle = false;
 
@@ -297,7 +299,7 @@ class EvidenceSyncService {
     final intent = await _http.request<dynamic>(
       '/api/v1/requisitions/${evidence.requisitionId}/evidence-intents',
       method: HttpMethod.post,
-      headers: {'Idempotency-Key': evidence.clientOperationId},
+      headers: {'Idempotency-Key': _intentIdempotencyKey(evidence.id)},
       body: {
         'id': evidence.id,
         'sessionId': evidence.sessionId,
@@ -402,6 +404,16 @@ class EvidenceSyncService {
       );
     }
     return remoteId;
+  }
+
+  /// Las envolturas X25519 se generan con aleatoriedad. Si se reutiliza la
+  /// misma clave de idempotencia después de un fallo de upload, el body de la
+  /// intención cambia y el backend correctamente lo rechaza como conflicto.
+  /// La evidencia se mantiene idempotente por su id y hash en el backend, por
+  /// lo que cada intento de registrar una intención usa una clave nueva.
+  String _intentIdempotencyKey(String evidenceId) {
+    final suffix = _random.nextInt(0x7fffffff).toRadixString(36);
+    return 'evidence-intent-$evidenceId-${DateTime.now().microsecondsSinceEpoch}-$suffix';
   }
 
   String? _findString(Object? value, List<String> keys) {
