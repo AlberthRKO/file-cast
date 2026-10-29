@@ -15,6 +15,8 @@ enum RequisitionDetailPhase { loading, content, error }
 
 enum CaseLinkSearchPhase { initial, loading, content, empty, error }
 
+enum ParticipantSearchPhase { initial, loading, content, empty, error }
+
 enum EvidenceCategory { images, videos, files }
 
 final class EvidenceCategorySummary {
@@ -65,12 +67,20 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   bool _isCreatingSession = false;
   bool _isFinalizing = false;
   bool _isLinkingCase = false;
+  bool _isAddingParticipant = false;
   Timer? _caseLinkDebounce;
   int _caseLinkSearchToken = 0;
   String _caseLinkQuery = '';
   List<EcosystemCaseSummary> _caseLinkResults = const [];
   CaseLinkSearchPhase _caseLinkSearchPhase = CaseLinkSearchPhase.initial;
   String? _caseLinkError;
+  int _participantSearchToken = 0;
+  String _participantQuery = '';
+  RequisitionParticipantUser? _participantCandidate;
+  ParticipantSearchPhase _participantSearchPhase =
+      ParticipantSearchPhase.initial;
+  String? _participantError;
+  final Map<String, RequisitionParticipantUser> _knownParticipants = {};
   StreamSubscription<String>? _changesSubscription;
   StreamSubscription<EvidenceUploadProgress>? _uploadProgressSubscription;
   StreamSubscription<EvidenceOfflineSyncProgress>?
@@ -143,6 +153,26 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   CaseLinkSearchPhase get caseLinkSearchPhase => _caseLinkSearchPhase;
   String? get caseLinkError => _caseLinkError;
   bool get isLinkingCase => _isLinkingCase;
+  bool get isAddingParticipant => _isAddingParticipant;
+  String get participantQuery => _participantQuery;
+  RequisitionParticipantUser? get participantCandidate => _participantCandidate;
+  ParticipantSearchPhase get participantSearchPhase => _participantSearchPhase;
+  String? get participantError => _participantError;
+  bool get canManageParticipants {
+    final status = _detail?.requisition.status;
+    if (currentActorId == null ||
+        (status != RequisitionStatus.draft &&
+            status != RequisitionStatus.inProgress)) {
+      return false;
+    }
+    return _detail?.participants.any(
+          (participant) =>
+              participant.actorId == currentActorId &&
+              participant.role.toUpperCase() == 'OWNER',
+        ) ??
+        false;
+  }
+
   bool get canLinkCase =>
       _detail?.requisition.cud == null &&
       (_detail?.requisition.status == RequisitionStatus.draft ||
@@ -153,7 +183,15 @@ class RequisitionDetailViewModel extends ChangeNotifier {
         currentActorName?.trim().isNotEmpty == true) {
       return currentActorName!.trim();
     }
-    return 'Participante asignado';
+    return _knownParticipants[participant.actorId]?.fullName ??
+        'Participante asignado';
+  }
+
+  bool isParticipantAlreadyAdded(RequisitionParticipantUser user) {
+    return _detail?.participants.any(
+          (participant) => participant.actorId == user.id.toString(),
+        ) ??
+        false;
   }
 
   List<EvidenceCategorySummary> get evidenceCategories {
@@ -597,6 +635,84 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     }
   }
 
+  void updateParticipantQuery(String value) {
+    _participantQuery = value;
+    _participantCandidate = null;
+    _participantSearchPhase = ParticipantSearchPhase.initial;
+    _participantError = null;
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> searchParticipantUser() async {
+    final query = _participantQuery.trim();
+    if (query.length < 3 || _disposed) return;
+    final token = ++_participantSearchToken;
+    _participantCandidate = null;
+    _participantSearchPhase = ParticipantSearchPhase.loading;
+    _participantError = null;
+    if (!_disposed) notifyListeners();
+    try {
+      final user = await _requisitionRepository.searchParticipantUserByCi(
+        query,
+      );
+      if (token != _participantSearchToken || _disposed) return;
+      _participantCandidate = user;
+      _knownParticipants[user.id.toString()] = user;
+      _participantSearchPhase = ParticipantSearchPhase.content;
+    } catch (error) {
+      if (token != _participantSearchToken || _disposed) return;
+      _participantSearchPhase = ParticipantSearchPhase.error;
+      _participantError = _messageFromError(
+        error,
+        fallback: 'No se encontró un usuario con ese CI.',
+      );
+    }
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<String?> addParticipant({
+    required RequisitionParticipantRole role,
+  }) async {
+    final candidate = _participantCandidate;
+    if (_disposed) return 'El detalle de la requisa ya no está disponible.';
+    if (_isAddingParticipant) return 'Ya hay un participante en proceso.';
+    if (!canManageParticipants) {
+      return 'Solo el propietario puede agregar participantes.';
+    }
+    if (candidate == null) {
+      return 'Busca un usuario por CI antes de agregarlo.';
+    }
+    if (isParticipantAlreadyAdded(candidate)) {
+      return 'Este usuario ya tiene acceso a la requisa.';
+    }
+
+    _isAddingParticipant = true;
+    _participantError = null;
+    if (!_disposed) notifyListeners();
+    try {
+      await _requisitionRepository.addParticipant(
+        requisitionId: requisitionId,
+        ci: candidate.ci,
+        role: role,
+      );
+      await _reloadSilently();
+      _participantQuery = '';
+      _participantCandidate = null;
+      _participantSearchPhase = ParticipantSearchPhase.initial;
+      return null;
+    } catch (error) {
+      final message = _messageFromError(
+        error,
+        fallback: 'No se pudo agregar el participante.',
+      );
+      _participantError = message;
+      return message;
+    } finally {
+      _isAddingParticipant = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
   String _messageFromError(Object error, {required String fallback}) {
     final message = error.toString().replaceFirst('Bad state: ', '').trim();
     return message.isEmpty ? fallback : message;
@@ -619,6 +735,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     _changesSubscription?.cancel();
     _uploadProgressSubscription?.cancel();
     _offlineSyncProgressSubscription?.cancel();
+    _knownParticipants.clear();
     super.dispose();
   }
 }

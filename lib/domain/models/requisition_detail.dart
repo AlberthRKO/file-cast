@@ -26,6 +26,47 @@ final class RequisitionParticipantSummary {
   final String role;
 }
 
+enum RequisitionParticipantRole { editor, viewer }
+
+extension RequisitionParticipantRoleApi on RequisitionParticipantRole {
+  String get apiValue => switch (this) {
+    RequisitionParticipantRole.editor => 'EDITOR',
+    RequisitionParticipantRole.viewer => 'VIEWER',
+  };
+
+  String get label => switch (this) {
+    RequisitionParticipantRole.editor => 'Editor',
+    RequisitionParticipantRole.viewer => 'Lector',
+  };
+}
+
+/// Usuario institucional devuelto por ms-auth para vincularlo a una requisa.
+final class RequisitionParticipantUser {
+  const RequisitionParticipantUser({
+    required this.id,
+    required this.username,
+    required this.fullName,
+    required this.personId,
+    required this.ci,
+    required this.firstName,
+    required this.lastName,
+    required this.secondLastName,
+    required this.personProfileId,
+    this.employeeId,
+  });
+
+  final int id;
+  final String username;
+  final String fullName;
+  final int personId;
+  final String ci;
+  final String firstName;
+  final String lastName;
+  final String secondLastName;
+  final int personProfileId;
+  final int? employeeId;
+}
+
 final class RequisitionAcquisitionSession {
   const RequisitionAcquisitionSession({
     required this.id,

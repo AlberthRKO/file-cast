@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:file_cast/domain/models/requisition.dart';
+import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
 
 class InMemoryRequisitionRepository implements RequisitionRepository {
@@ -64,6 +65,24 @@ class InMemoryRequisitionRepository implements RequisitionRepository {
     required String transport,
   }) async {
     return '00000000-0000-4000-8000-${requisitionId.hashCode.abs().toString().padLeft(12, '0').substring(0, 12)}';
+  }
+
+  @override
+  Future<RequisitionParticipantUser> searchParticipantUserByCi(String ci) {
+    throw UnsupportedError(
+      'La búsqueda de participantes requiere el repositorio remoto.',
+    );
+  }
+
+  @override
+  Future<void> addParticipant({
+    required String requisitionId,
+    required String ci,
+    required RequisitionParticipantRole role,
+  }) {
+    throw UnsupportedError(
+      'El alta de participantes requiere el repositorio remoto.',
+    );
   }
 
   @override

@@ -1,5 +1,6 @@
 import 'package:file_cast/data/services/requisition_service.dart';
 import 'package:file_cast/domain/models/requisition.dart';
+import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
 
 class RemoteRequisitionRepository implements RequisitionRepository {
@@ -33,6 +34,24 @@ class RemoteRequisitionRepository implements RequisitionRepository {
       requisitionId: requisitionId,
       sourcePlatform: sourcePlatform,
       transport: transport,
+    );
+  }
+
+  @override
+  Future<RequisitionParticipantUser> searchParticipantUserByCi(String ci) {
+    return _service.searchParticipantUserByCi(ci);
+  }
+
+  @override
+  Future<void> addParticipant({
+    required String requisitionId,
+    required String ci,
+    required RequisitionParticipantRole role,
+  }) {
+    return _service.addParticipant(
+      requisitionId: requisitionId,
+      ci: ci,
+      role: role,
     );
   }
 

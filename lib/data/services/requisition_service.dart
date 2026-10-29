@@ -2,7 +2,9 @@ import 'dart:math';
 
 import 'package:file_cast/core/errors/either.dart';
 import 'package:file_cast/core/network/http.dart';
+import 'package:file_cast/data/models/requisition_participant_dto.dart';
 import 'package:file_cast/domain/models/requisition.dart';
+import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
 
 class RequisitionService {
@@ -95,6 +97,62 @@ class RequisitionService {
         return;
       case Either():
         throw StateError('Respuesta inesperada al vincular el CUD.');
+    }
+  }
+
+  Future<RequisitionParticipantUser> searchParticipantUserByCi(
+    String ci,
+  ) async {
+    final normalizedCi = ci.trim();
+    final result = await _http.request<RequisitionParticipantUser>(
+      '/api/v1/file-cast/auth-interno/usuario/ci/${Uri.encodeComponent(normalizedCi)}',
+      onSucces: (body) {
+        final envelope = _asMap(body);
+        final response = _asMap(envelope['response']);
+        final data = _asMap(response['data']).isNotEmpty
+            ? _asMap(response['data'])
+            : response;
+        return RequisitionParticipantUserDto.fromJson(data).toDomain();
+      },
+    );
+
+    return switch (result) {
+      Left(leftValue: final error) => throw StateError(
+        error.message ?? 'No se pudo buscar el usuario por CI.',
+      ),
+      Right(rightValue: final user) => user,
+      Either() => throw StateError(
+        'Respuesta inesperada al buscar el usuario por CI.',
+      ),
+    };
+  }
+
+  Future<void> addParticipant({
+    required String requisitionId,
+    required String ci,
+    required RequisitionParticipantRole role,
+  }) async {
+    final result = await _http.request<void>(
+      '/api/v1/requisitions/$requisitionId/accesses',
+      method: HttpMethod.post,
+      headers: {
+        'Idempotency-Key': _idempotencyKey('add-participant', requisitionId),
+      },
+      body: {'ci': ci.trim(), 'role': role.apiValue},
+      onSucces: (_) {},
+    );
+
+    switch (result) {
+      case Left(leftValue: final error):
+        throw StateError(
+          error.message ?? 'No se pudo agregar el participante.',
+        );
+      case Right():
+        return;
+      case Either():
+        throw StateError(
+          'Respuesta inesperada al agregar el participante.',
+        );
     }
   }
 

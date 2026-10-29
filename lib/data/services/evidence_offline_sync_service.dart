@@ -68,7 +68,7 @@ class EvidenceOfflineSyncService {
           unawaited(_scheduleBackgroundSync(requisitionId));
         }
       },
-      onError: (Object _, StackTrace __) {
+      onError: (Object _, StackTrace _) {
         if (identical(_activeRuns[requisitionId], run)) {
           _activeRuns.remove(requisitionId);
         }
@@ -98,7 +98,7 @@ class EvidenceOfflineSyncService {
           (item) =>
               item.encrypted &&
               item.uploadStatus?.toUpperCase() == 'AVAILABLE' &&
-              item.contentUrl?.isNotEmpty == true,
+              (item.contentUrl?.isNotEmpty ?? false),
         )
         .toList(growable: false);
     final local = await _database.forRequisition(requisitionId);
@@ -207,7 +207,6 @@ class EvidenceOfflineSyncService {
     final result = await _http.request<List<int>>(
       url,
       isFileV2: true,
-      timeOut: const Duration(seconds: 60),
       onSucces: (body) => body is List<int>
           ? body
           : throw StateError('La respuesta de la evidencia no es un archivo.'),
@@ -292,7 +291,6 @@ class EvidenceOfflineSyncService {
           clientOperationId: 'offline-${evidence.id}',
           createdAt: evidence.createdAt,
           sourcePath: evidence.sourcePath,
-          msFileId: null,
         ),
       );
     } catch (_) {

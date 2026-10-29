@@ -24,6 +24,8 @@ import 'package:file_cast/ui/features/requisitions/detail/view_models/requisitio
 import 'package:file_cast/ui/features/requisitions/detail/widgets/evidence_preview_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/detail/widgets/import_evidence_preview_dialog.dart';
 import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_location_viewer.dart';
+import 'package:file_cast/ui/features/requisitions/widgets/requisition_person_selection_card.dart';
+import 'package:file_cast/ui/features/requisitions/widgets/requisition_section_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
@@ -138,6 +140,20 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
         elevation: 0,
         scrolledUnderElevation: 0,
         actions: [
+          if (viewModel.canManageParticipants)
+            IconButton(
+              tooltip: 'Agregar participante',
+              onPressed: () => _showParticipantForm(context),
+              icon: SvgPicture.asset(
+                'assets/images/icons/user_plus.svg',
+                width: AppSize.iconL,
+                height: AppSize.iconL,
+                colorFilter: ColorFilter.mode(
+                  Theme.of(context).colorScheme.primary,
+                  BlendMode.srcIn,
+                ),
+              ),
+            ),
           IconButton(
             tooltip: 'Actualizar detalle',
             onPressed: viewModel.isRefreshing
@@ -373,6 +389,20 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
               .toList(growable: false),
         ),
       );
+
+  Future<void> _showParticipantForm(BuildContext context) async {
+    final added = await showAppModalBottomSheet<bool>(
+      context: context,
+      enableDrag: false,
+      maxWidth: AppSize.formMaxWidth,
+      builder: (_) => _ParticipantSheet(viewModel: viewModel),
+    );
+    if (!context.mounted || added != true) return;
+    await showAppSuccessBottomSheet(
+      context,
+      'El participante fue agregado a la requisa.',
+    );
+  }
 
   Future<void> _showLocation(BuildContext context) {
     final location = detail.location;
@@ -1591,6 +1621,365 @@ class _PeopleSheet extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _ParticipantSheet extends StatefulWidget {
+  const _ParticipantSheet({required this.viewModel});
+
+  final RequisitionDetailViewModel viewModel;
+
+  @override
+  State<_ParticipantSheet> createState() => _ParticipantSheetState();
+}
+
+class _ParticipantSheetState extends State<_ParticipantSheet> {
+  late final TextEditingController _controller;
+  late final FocusNode _focusNode;
+  RequisitionParticipantRole _role = RequisitionParticipantRole.viewer;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(
+      text: widget.viewModel.participantQuery,
+    );
+    _focusNode = FocusNode(debugLabel: 'detail-participant-search');
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: widget.viewModel,
+      builder: (context, _) {
+        final viewModel = widget.viewModel;
+        final theme = Theme.of(context);
+        final candidate = viewModel.participantCandidate;
+        final canSearch =
+            viewModel.canManageParticipants &&
+            viewModel.participantQuery.trim().length >= 3 &&
+            viewModel.participantSearchPhase != ParticipantSearchPhase.loading;
+        final alreadyAdded =
+            candidate != null && viewModel.isParticipantAlreadyAdded(candidate);
+        return Material(
+          color: theme.cardColor,
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(AppRadius.l),
+          ),
+          child: AnimatedPadding(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.viewInsetsOf(context).bottom,
+            ),
+            child: SafeArea(
+              top: false,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: AppSize.formMaxWidth,
+                  maxHeight: MediaQuery.sizeOf(context).height * .9,
+                ),
+                child: SingleChildScrollView(
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: EdgeInsets.fromLTRB(
+                    AppSpace.m,
+                    AppSpace.s,
+                    AppSpace.m,
+                    AppSpace.m + MediaQuery.viewPaddingOf(context).bottom,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: AppSize.minTouchTarget,
+                            height: AppSize.minTouchTarget,
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primary.withValues(
+                                alpha: 0.12,
+                              ),
+                              borderRadius: BorderRadius.circular(AppRadius.m),
+                            ),
+                            child: SvgPicture.asset(
+                              'assets/images/icons/cardEmployee.svg',
+                              width: AppSize.iconL,
+                              height: AppSize.iconL,
+                              colorFilter: ColorFilter.mode(
+                                theme.colorScheme.primary,
+                                BlendMode.srcIn,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: AppSpace.s),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Agregar participante',
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: AppSpace.xs),
+                                Text(
+                                  'Busca una cuenta institucional y define su acceso.',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.textTheme.bodySmall?.color
+                                        ?.withValues(alpha: 0.65),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Cerrar',
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: AppSpace.m),
+                      RequisitionSectionCard(
+                        icon: Icons.person_search_rounded,
+                        title: 'Usuario institucional',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'CARNET DE IDENTIDAD',
+                                  style: theme.textTheme.labelMedium?.copyWith(
+                                    color: theme.colorScheme.primary,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.8,
+                                  ),
+                                ),
+                                Text(
+                                  ' *',
+                                  style: TextStyle(
+                                    color: theme.colorScheme.error,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: AppSpace.s),
+                            LayoutBuilder(
+                              builder: (context, constraints) {
+                                final compact = constraints.maxWidth < 420;
+                                final field = Expanded(
+                                  child: TextField(
+                                    controller: _controller,
+                                    focusNode: _focusNode,
+                                    keyboardType: TextInputType.text,
+                                    textInputAction: TextInputAction.search,
+                                    enabled: !viewModel.isAddingParticipant,
+                                    onChanged: viewModel.updateParticipantQuery,
+                                    onSubmitted: (_) {
+                                      if (canSearch) {
+                                        unawaited(
+                                          viewModel.searchParticipantUser(),
+                                        );
+                                      }
+                                    },
+                                    style: theme.textTheme.bodyLarge,
+                                    decoration: InputDecoration(
+                                      labelText: 'Buscar por CI',
+                                      labelStyle: theme.textTheme.bodyLarge
+                                          ?.copyWith(
+                                            color: theme.colorScheme.primary
+                                                .withValues(alpha: .5),
+                                            height: 1,
+                                          ),
+                                      prefixIcon: const AppFormInputIcon(
+                                        asset:
+                                            'assets/images/icons/cardEmployee.svg',
+                                      ),
+                                      errorText:
+                                          viewModel.participantSearchPhase ==
+                                              ParticipantSearchPhase.error
+                                          ? viewModel.participantError
+                                          : null,
+                                    ),
+                                  ),
+                                );
+                                final button = compact
+                                    ? IconButton.filledTonal(
+                                        tooltip: 'Buscar usuario',
+                                        onPressed: canSearch
+                                            ? () => unawaited(
+                                                viewModel
+                                                    .searchParticipantUser(),
+                                              )
+                                            : null,
+                                        icon: const Icon(Icons.search_rounded),
+                                      )
+                                    : FilledButton.icon(
+                                        onPressed: canSearch
+                                            ? () => unawaited(
+                                                viewModel
+                                                    .searchParticipantUser(),
+                                              )
+                                            : null,
+                                        icon: const Icon(Icons.search_rounded),
+                                        label: const Text('Buscar'),
+                                      );
+                                return Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    field,
+                                    const SizedBox(width: AppSpace.s),
+                                    button,
+                                  ],
+                                );
+                              },
+                            ),
+                            if (viewModel.participantSearchPhase ==
+                                ParticipantSearchPhase.loading)
+                              const Padding(
+                                padding: EdgeInsets.only(top: AppSpace.s),
+                                child: LinearProgressIndicator(),
+                              ),
+                            if (candidate != null) ...[
+                              const SizedBox(height: AppSpace.m),
+                              RequisitionPersonSelectionCard(
+                                name: candidate.fullName.isNotEmpty
+                                    ? candidate.fullName
+                                    : candidate.username,
+                                ci: candidate.ci,
+                                username: candidate.username,
+                                onRemove: () {
+                                  _controller.clear();
+                                  viewModel.updateParticipantQuery('');
+                                },
+                                footer: alreadyAdded
+                                    ? Text(
+                                        'Este usuario ya tiene acceso a la requisa.',
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                              color: theme.colorScheme.error,
+                                            ),
+                                      )
+                                    : Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          DropdownButtonFormField<
+                                            RequisitionParticipantRole
+                                          >(
+                                            value: _role,
+                                            style: theme.textTheme.bodyLarge,
+                                            dropdownColor: theme.cardColor,
+                                            iconEnabledColor:
+                                                theme.colorScheme.primary,
+                                            decoration: const InputDecoration(
+                                              labelText: 'Nivel de acceso',
+                                            ),
+                                            items: RequisitionParticipantRole
+                                                .values
+                                                .map(
+                                                  (role) => DropdownMenuItem(
+                                                    value: role,
+                                                    child: Text(role.label),
+                                                  ),
+                                                )
+                                                .toList(growable: false),
+                                            onChanged:
+                                                viewModel.isAddingParticipant
+                                                ? null
+                                                : (value) {
+                                                    if (value != null) {
+                                                      setState(
+                                                        () => _role = value,
+                                                      );
+                                                    }
+                                                  },
+                                          ),
+                                          const SizedBox(height: AppSpace.m),
+                                          SizedBox(
+                                            width: double.infinity,
+                                            child: FilledButton.icon(
+                                              onPressed:
+                                                  viewModel.isAddingParticipant
+                                                  ? null
+                                                  : () => unawaited(
+                                                      _addParticipant(),
+                                                    ),
+                                              icon:
+                                                  viewModel.isAddingParticipant
+                                                  ? const SizedBox.square(
+                                                      dimension: AppSize.iconS,
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                            strokeWidth: 2,
+                                                          ),
+                                                    )
+                                                  : const Icon(
+                                                      Icons
+                                                          .person_add_alt_1_rounded,
+                                                    ),
+                                              label: Text(
+                                                viewModel.isAddingParticipant
+                                                    ? 'Agregando...'
+                                                    : 'Agregar ${_role.label.toLowerCase()}',
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                              ),
+                            ],
+                            if (viewModel.participantError != null &&
+                                viewModel.participantSearchPhase !=
+                                    ParticipantSearchPhase.error)
+                              Padding(
+                                padding: const EdgeInsets.only(top: AppSpace.s),
+                                child: Text(
+                                  viewModel.participantError!,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.error,
+                                  ),
+                                ),
+                              ),
+                            const SizedBox(height: AppSpace.s),
+                            Text(
+                              'Ingresa el CI y presiona Buscar. Puedes reemplazar el usuario con la X antes de agregarlo.',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.textTheme.bodySmall?.color
+                                    ?.withValues(
+                                      alpha: 0.65,
+                                    ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _addParticipant() async {
+    final error = await widget.viewModel.addParticipant(role: _role);
+    if (!mounted) return;
+    if (error == null) Navigator.of(context).pop(true);
   }
 }
 

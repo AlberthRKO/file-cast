@@ -1,4 +1,5 @@
 import 'package:file_cast/domain/models/requisition.dart';
+import 'package:file_cast/domain/models/requisition_detail.dart';
 
 typedef RequisitionPage = ({
   List<Requisition> items,
@@ -20,6 +21,14 @@ abstract interface class RequisitionRepository {
     required String requisitionId,
     required String sourcePlatform,
     required String transport,
+  });
+
+  Future<RequisitionParticipantUser> searchParticipantUserByCi(String ci);
+
+  Future<void> addParticipant({
+    required String requisitionId,
+    required String ci,
+    required RequisitionParticipantRole role,
   });
 
   Future<void> linkCase({
