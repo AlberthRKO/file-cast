@@ -16,6 +16,7 @@ class LocalEvidenceDatabaseService {
 
   final SecureStorageService _storage;
   Database? _database;
+  Future<Database>? _openingDatabase;
 
   Future<Database> get database async {
     final current = _database;
@@ -27,74 +28,77 @@ class LocalEvidenceDatabaseService {
     }
     _database = null;
 
+    final opening = _openingDatabase;
+    if (opening != null) return opening;
+
+    final operation = _openDatabase();
+    _openingDatabase = operation;
+    try {
+      final opened = await operation;
+      _database = opened;
+      return opened;
+    } finally {
+      if (identical(_openingDatabase, operation)) {
+        _openingDatabase = null;
+      }
+    }
+  }
+
+  Future<Database> _openDatabase() async {
     final key = await _databaseKey();
     final path = '${await getDatabasesPath()}/$_databaseName';
-    final opened = await openDatabase(
-      path,
-      password: key,
-      version: 3,
-      onCreate: (db, _) async {
-        await db.execute('''
-          CREATE TABLE evidencias_locales (
-            id TEXT PRIMARY KEY,
-            requisa_id TEXT NOT NULL,
-            sesion_id TEXT NOT NULL,
-            nombre_original TEXT NOT NULL,
-            mime_type TEXT NOT NULL,
-            tipo TEXT NOT NULL,
-            metodo_adquisicion TEXT NOT NULL,
-            ruta_cifrada TEXT NOT NULL,
-            tamano_plano INTEGER NOT NULL,
-            tamano_cifrado INTEGER NOT NULL,
-            hash_plano TEXT NOT NULL,
-            hash_cifrado TEXT NOT NULL,
-            algoritmo_cifrado TEXT NOT NULL,
-            version_cifrado INTEGER NOT NULL,
-            hash_aad TEXT NOT NULL,
-            clave_envuelta TEXT NOT NULL,
-            version_clave INTEGER NOT NULL,
-            estado TEXT NOT NULL,
-            ms_archivo_id TEXT,
-            ruta_origen TEXT,
-            client_operation_id TEXT NOT NULL,
-            creado_at TEXT NOT NULL,
-            actualizado_at TEXT NOT NULL
-          )
-        ''');
-        await db.execute('''
-          CREATE TABLE outbox_evidencias (
-            operation_id TEXT PRIMARY KEY,
-            evidencia_id TEXT NOT NULL UNIQUE,
-            estado TEXT NOT NULL,
-            intentos INTEGER NOT NULL DEFAULT 0,
-            ultimo_error TEXT,
-            actualizado_at TEXT NOT NULL
-          )
-        ''');
-        await db.execute(
-          'CREATE INDEX evidencias_locales_requisa_idx '
-          'ON evidencias_locales(requisa_id, creado_at)',
-        );
-        await db.execute(
-          'CREATE INDEX outbox_evidencias_estado_idx '
-          'ON outbox_evidencias(estado, actualizado_at)',
-        );
-        await db.execute('''
-          CREATE TABLE IF NOT EXISTS sync_locks (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            owner TEXT NOT NULL,
-            expires_at INTEGER NOT NULL
-          )
-        ''');
-      },
-      onUpgrade: (db, oldVersion, _) async {
-        if (oldVersion < 2) {
+    try {
+      return await openDatabase(
+        path,
+        password: key,
+        version: 4,
+        onCreate: (db, _) async {
+          await db.execute('''
+            CREATE TABLE evidencias_locales (
+              id TEXT PRIMARY KEY,
+              requisa_id TEXT NOT NULL,
+              sesion_id TEXT NOT NULL,
+              nombre_original TEXT NOT NULL,
+              mime_type TEXT NOT NULL,
+              tipo TEXT NOT NULL,
+              metodo_adquisicion TEXT NOT NULL,
+              ruta_cifrada TEXT NOT NULL,
+              tamano_plano INTEGER NOT NULL,
+              tamano_cifrado INTEGER NOT NULL,
+              hash_plano TEXT NOT NULL,
+              hash_cifrado TEXT NOT NULL,
+              algoritmo_cifrado TEXT NOT NULL,
+              version_cifrado INTEGER NOT NULL,
+              hash_aad TEXT NOT NULL,
+              clave_envuelta TEXT NOT NULL,
+              version_clave INTEGER NOT NULL,
+              estado TEXT NOT NULL,
+              ms_archivo_id TEXT,
+              ruta_origen TEXT,
+              client_operation_id TEXT NOT NULL,
+              creado_at TEXT NOT NULL,
+              actualizado_at TEXT NOT NULL
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE outbox_evidencias (
+              operation_id TEXT PRIMARY KEY,
+              evidencia_id TEXT NOT NULL UNIQUE,
+              estado TEXT NOT NULL,
+              intentos INTEGER NOT NULL DEFAULT 0,
+              ultimo_error TEXT,
+              reintento_automatico INTEGER NOT NULL DEFAULT 1,
+              actualizado_at TEXT NOT NULL
+            )
+          ''');
           await db.execute(
-            "ALTER TABLE evidencias_locales ADD COLUMN metodo_adquisicion "
-            "TEXT NOT NULL DEFAULT 'IMPORTED_FILE'",
+            'CREATE INDEX evidencias_locales_requisa_idx '
+            'ON evidencias_locales(requisa_id, creado_at)',
           );
-        }
-        if (oldVersion < 3) {
+          await db.execute(
+            'CREATE INDEX outbox_evidencias_estado_idx '
+            'ON outbox_evidencias(estado, actualizado_at)',
+          );
           await db.execute('''
             CREATE TABLE IF NOT EXISTS sync_locks (
               id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -102,11 +106,55 @@ class LocalEvidenceDatabaseService {
               expires_at INTEGER NOT NULL
             )
           ''');
-        }
-      },
-    );
-    _database = opened;
-    return opened;
+        },
+        onUpgrade: (db, oldVersion, _) async {
+          if (oldVersion < 2) {
+            await db.execute(
+              "ALTER TABLE evidencias_locales ADD COLUMN metodo_adquisicion "
+              "TEXT NOT NULL DEFAULT 'IMPORTED_FILE'",
+            );
+          }
+          if (oldVersion < 3) {
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS sync_locks (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                owner TEXT NOT NULL,
+                expires_at INTEGER NOT NULL
+              )
+            ''');
+          }
+          if (oldVersion < 4) {
+            await db.execute(
+              'ALTER TABLE outbox_evidencias ADD COLUMN '
+              'reintento_automatico INTEGER NOT NULL DEFAULT 1',
+            );
+          }
+        },
+      );
+    } on Object catch (error, stackTrace) {
+      throw LocalEvidenceDatabaseException(
+        message: _databaseErrorMessage(error),
+        cause: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  String _databaseErrorMessage(Object error) {
+    final raw = error.toString();
+    if (raw.contains('SqfliteSqlCipherOpenDatabaseOptions') ||
+        raw.contains('SqfliteOpenDatabaseOptions')) {
+      return 'La base local cifrada no pudo abrirse por una incompatibilidad '
+          'del motor SQLite. Actualiza la aplicación y vuelve a intentar; '
+          'la evidencia remota no se eliminó.';
+    }
+    final normalized = raw.toLowerCase();
+    if (normalized.contains('database_close') ||
+        normalized.contains('database is closed')) {
+      return 'La base local se cerró durante la sincronización. Vuelve a '
+          'intentarlo; la evidencia no se marcó como sincronizada.';
+    }
+    return raw.replaceFirst('Bad state: ', '').trim();
   }
 
   Future<void> saveEvidence(LocalEvidenceRecord evidence) async {
@@ -129,6 +177,7 @@ class LocalEvidenceDatabaseService {
             'evidencia_id': evidence.id,
             'estado': 'PENDIENTE',
             'intentos': 0,
+            'reintento_automatico': 1,
             'actualizado_at': now,
           },
           conflictAlgorithm: ConflictAlgorithm.ignore,
@@ -245,7 +294,10 @@ class LocalEvidenceDatabaseService {
     }
   }
 
-  Future<List<LocalEvidenceRecord>> pending({int limit = 10}) async {
+  Future<List<LocalEvidenceRecord>> pending({
+    int limit = 10,
+    bool automaticOnly = false,
+  }) async {
     final db = await database;
     final rows = await db.rawQuery(
       '''
@@ -254,6 +306,7 @@ class LocalEvidenceDatabaseService {
       INNER JOIN outbox_evidencias o ON o.evidencia_id = e.id
       WHERE o.estado IN ('PENDIENTE', 'ERROR')
         AND e.sesion_id <> ''
+        ${automaticOnly ? 'AND o.reintento_automatico = 1' : ''}
       ORDER BY e.creado_at ASC
       LIMIT ?
       ''',
@@ -299,7 +352,11 @@ class LocalEvidenceDatabaseService {
     });
   }
 
-  Future<void> markError(String evidenceId, String message) async {
+  Future<void> markError(
+    String evidenceId,
+    String message, {
+    bool retryable = true,
+  }) async {
     final db = await database;
     final safeMessage = message.length > 512
         ? message.substring(0, 512)
@@ -308,11 +365,16 @@ class LocalEvidenceDatabaseService {
       '''
       UPDATE outbox_evidencias
       SET estado = 'ERROR', intentos = intentos + 1,
-          ultimo_error = ?, actualizado_at = ?
+          ultimo_error = ?, reintento_automatico = ?, actualizado_at = ?
       WHERE evidencia_id = ?
         AND estado <> 'SINCRONIZADA'
       ''',
-      [safeMessage, DateTime.now().toUtc().toIso8601String(), evidenceId],
+      [
+        safeMessage,
+        retryable ? 1 : 0,
+        DateTime.now().toUtc().toIso8601String(),
+        evidenceId,
+      ],
     );
   }
 
@@ -330,6 +392,21 @@ class LocalEvidenceDatabaseService {
     await _storage.write(_databaseKeyName, key);
     return key;
   }
+}
+
+final class LocalEvidenceDatabaseException implements Exception {
+  const LocalEvidenceDatabaseException({
+    required this.message,
+    this.cause,
+    this.stackTrace,
+  });
+
+  final String message;
+  final Object? cause;
+  final StackTrace? stackTrace;
+
+  @override
+  String toString() => message;
 }
 
 final class LocalEvidenceRecord {

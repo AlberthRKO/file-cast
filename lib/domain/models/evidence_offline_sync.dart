@@ -11,6 +11,7 @@ final class EvidenceOfflineSyncProgress {
     required this.isActive,
     this.currentFileName,
     this.errorMessage,
+    this.errors = const [],
   });
 
   final String requisitionId;
@@ -22,6 +23,7 @@ final class EvidenceOfflineSyncProgress {
   final bool isActive;
   final String? currentFileName;
   final String? errorMessage;
+  final List<String> errors;
 
   int get processed => completed + skipped + failed;
 

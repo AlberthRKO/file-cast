@@ -706,6 +706,8 @@ class _RequisitionSummaryCard extends StatelessWidget {
               : 'Evidencias pendientes',
           uploadProgress: viewModel.uploadProgress,
           offlineSyncProgress: viewModel.offlineSyncProgress,
+          offlineSyncError: viewModel.offlineSyncError,
+          offlineSyncErrors: viewModel.offlineSyncErrors,
           isImporting: viewModel.isImporting,
           isSyncing: viewModel.isSyncing,
           isOfflineSyncing: viewModel.isOfflineSyncing,
@@ -804,6 +806,8 @@ class _SummaryFooter extends StatelessWidget {
     required this.evidenceLabel,
     required this.uploadProgress,
     required this.offlineSyncProgress,
+    required this.offlineSyncError,
+    required this.offlineSyncErrors,
     required this.isImporting,
     required this.isSyncing,
     required this.isOfflineSyncing,
@@ -820,6 +824,8 @@ class _SummaryFooter extends StatelessWidget {
   final String evidenceLabel;
   final EvidenceUploadProgress? uploadProgress;
   final EvidenceOfflineSyncProgress? offlineSyncProgress;
+  final String? offlineSyncError;
+  final List<String> offlineSyncErrors;
   final bool isImporting;
   final bool isSyncing;
   final bool isOfflineSyncing;
@@ -856,6 +862,8 @@ class _SummaryFooter extends StatelessWidget {
 
     final offlineAction = _OfflineSyncAction(
       progress: offlineSyncProgress,
+      errorMessage: offlineSyncError,
+      errors: offlineSyncErrors,
       isSyncing: isOfflineSyncing,
       availableCount: offlineAvailableCount,
       totalCount: offlineTotalCount,
@@ -933,6 +941,8 @@ class _SummaryFooter extends StatelessWidget {
 class _OfflineSyncAction extends StatelessWidget {
   const _OfflineSyncAction({
     required this.progress,
+    required this.errorMessage,
+    required this.errors,
     required this.isSyncing,
     required this.availableCount,
     required this.totalCount,
@@ -940,6 +950,8 @@ class _OfflineSyncAction extends StatelessWidget {
   });
 
   final EvidenceOfflineSyncProgress? progress;
+  final String? errorMessage;
+  final List<String> errors;
   final bool isSyncing;
   final int availableCount;
   final int totalCount;
@@ -956,33 +968,51 @@ class _OfflineSyncAction extends StatelessWidget {
       );
     }
     final processed = progress?.processed ?? 0;
-    final hasFailed = (progress?.failed ?? 0) > 0;
+    final syncTotal = progress?.total ?? totalCount;
+    final failedCount = progress?.failed ?? 0;
+    final displayedErrors = errors.isNotEmpty
+        ? errors
+        : errorMessage?.trim().isNotEmpty == true
+        ? [errorMessage!]
+        : const <String>[];
+    final hasFailed = failedCount > 0 || displayedErrors.isNotEmpty;
+    final hasFinished = progress != null && !isSyncing && !progress!.isActive;
+    final summary = progress != null && syncTotal > 0
+        ? '$processed de $syncTotal procesadas · '
+              '${progress!.completed} recuperadas · '
+              '${progress!.skipped} ya disponibles · '
+              '$failedCount con error'
+        : '$availableCount de $totalCount evidencias guardadas localmente'
+              '${totalCount > availableCount ? ' · ${totalCount - availableCount} pendientes' : ''}.';
     final title = isSyncing
         ? progress?.total == null || progress!.total == 0
               ? 'Preparando evidencias offline'
-              : 'Sincronizando $processed de ${progress!.total}'
+              : 'Sincronizando $processed de $syncTotal'
         : allAvailable
         ? 'Evidencias disponibles offline'
         : hasFailed
-        ? 'Reintentar sincronización offline'
+        ? 'Sincronización incompleta'
+        : hasFinished
+        ? 'Sincronización completada'
         : 'Sincronizar para uso offline';
     final subtitle = isSyncing
         ? progress?.currentFileName ??
               'Guardando copias cifradas en el dispositivo.'
-        : progress?.errorMessage ??
-              '$availableCount de $totalCount evidencias guardadas localmente.';
+        : summary;
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final button = AppActionButton(
-          label: allAvailable && !isSyncing
-              ? 'Todo disponible offline'
-              : 'Sincronizar evidencias',
           onPressed: allAvailable && !isSyncing ? null : onPressed,
           foregroundColor: theme.colorScheme.primary,
           backgroundColor: theme.colorScheme.primary.withValues(alpha: .10),
           leadingAsset: 'assets/images/icons/sync.svg',
           isLoading: isSyncing,
+          label: allAvailable && !isSyncing
+              ? 'Todo disponible offline'
+              : hasFailed
+              ? 'Reintentar sincronización'
+              : 'Sincronizar evidencias',
           maxWidth: 280,
           padding: const EdgeInsets.symmetric(
             horizontal: AppSpace.m,
@@ -1003,12 +1033,38 @@ class _OfflineSyncAction extends StatelessWidget {
             ),
             Text(
               subtitle,
-              maxLines: 2,
+              maxLines: 3,
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
+            if (!isSyncing && hasFailed) ...[
+              const SizedBox(height: AppSpace.xs),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      failedCount > 0
+                          ? '$failedCount ${failedCount == 1 ? 'evidencia no pudo recuperarse' : 'evidencias no pudieron recuperarse'}.'
+                          : 'No se pudo completar la sincronización.',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.error,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  if (displayedErrors.isNotEmpty)
+                    TextButton(
+                      onPressed: () => _showOfflineErrors(
+                        context,
+                        displayedErrors,
+                      ),
+                      child: const Text('Ver detalle'),
+                    ),
+                ],
+              ),
+            ],
             if (isSyncing && progress?.fraction != null) ...[
               const SizedBox(height: AppSpace.xs),
               LinearProgressIndicator(
@@ -1034,6 +1090,42 @@ class _OfflineSyncAction extends StatelessWidget {
             Expanded(child: summaryContent),
             const SizedBox(width: AppSpace.m),
             button,
+          ],
+        );
+      },
+    );
+  }
+
+  void _showOfflineErrors(BuildContext context, List<String> errors) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final windowSize = MediaQuery.sizeOf(dialogContext);
+        final dialogWidth = (windowSize.width - 48)
+            .clamp(280.0, 520.0)
+            .toDouble();
+        final dialogHeight = (windowSize.height - 220)
+            .clamp(160.0, 420.0)
+            .toDouble();
+        return AlertDialog(
+          title: const Text('Evidencias no recuperadas'),
+          content: SizedBox(
+            width: dialogWidth,
+            height: dialogHeight,
+            child: ListView.separated(
+              itemCount: errors.length,
+              separatorBuilder: (_, __) => const SizedBox(height: AppSpace.s),
+              itemBuilder: (_, index) => Text(
+                errors[index],
+                style: Theme.of(dialogContext).textTheme.bodySmall,
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cerrar'),
+            ),
           ],
         );
       },

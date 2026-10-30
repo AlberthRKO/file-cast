@@ -48,9 +48,16 @@ class EvidenceOfflineSyncService {
     required String requisitionId,
     required List<RequisitionEvidence> evidence,
     bool scheduleBackgroundOnFailure = true,
-  }) {
+  }) async {
     final active = _activeRuns[requisitionId];
-    if (active != null) return active;
+    if (active != null) return await active;
+
+    // Una ejecución manual toma el control de la requisa. Si el intento
+    // anterior registró un worker de WorkManager, cancelarlo evita que ambos
+    // engines descarguen y abran la misma base cifrada al mismo tiempo.
+    if (scheduleBackgroundOnFailure) {
+      await _cancelScheduledBackgroundSync(requisitionId);
+    }
 
     final run = _database.withSyncLock(
       () => _syncRequisition(
@@ -64,7 +71,7 @@ class EvidenceOfflineSyncService {
         if (identical(_activeRuns[requisitionId], run)) {
           _activeRuns.remove(requisitionId);
         }
-        if (scheduleBackgroundOnFailure && result.hasFailures) {
+        if (scheduleBackgroundOnFailure && _hasRetryableFailures(result)) {
           unawaited(_scheduleBackgroundSync(requisitionId));
         }
       },
@@ -77,7 +84,16 @@ class EvidenceOfflineSyncService {
         }
       },
     );
-    return run;
+    return await run;
+  }
+
+  Future<void> _cancelScheduledBackgroundSync(String requisitionId) async {
+    try {
+      await _backgroundScheduler?.cancelOfflineSync(requisitionId);
+    } on Object {
+      // La sincronización iniciada por la UI sigue siendo válida aunque el
+      // sistema no permita cancelar un worker anterior en ese momento.
+    }
   }
 
   Future<void> _scheduleBackgroundSync(String requisitionId) async {
@@ -87,6 +103,14 @@ class EvidenceOfflineSyncService {
       // La ejecución iniciada por la UI sigue siendo válida aunque el sistema
       // no permita registrar un worker en esta plataforma.
     }
+  }
+
+  bool _hasRetryableFailures(EvidenceOfflineSyncResult result) {
+    return result.errors.any((error) {
+      final normalized = error.toLowerCase();
+      return !normalized.contains('no encontrado en la nas tras migr') &&
+          !normalized.contains('no encontrado en la nas');
+    });
   }
 
   Future<EvidenceOfflineSyncResult> _syncRequisition({
@@ -159,6 +183,7 @@ class EvidenceOfflineSyncService {
           : EvidenceOfflineSyncStage.completed,
       isActive: false,
       errorMessage: errors.isEmpty ? null : errors.first,
+      errors: List.unmodifiable(errors),
     );
     return EvidenceOfflineSyncResult(
       total: total,
@@ -315,6 +340,7 @@ class EvidenceOfflineSyncService {
     required bool isActive,
     String? currentFileName,
     String? errorMessage,
+    List<String> errors = const [],
   }) {
     if (!_progressController.isClosed) {
       _progressController.add(
@@ -328,6 +354,7 @@ class EvidenceOfflineSyncService {
           isActive: isActive,
           currentFileName: currentFileName,
           errorMessage: errorMessage,
+          errors: errors,
         ),
       );
     }
@@ -341,6 +368,9 @@ class EvidenceOfflineSyncService {
               processed: completed + skipped + failed,
               active: isActive,
               hasFailures: failed > 0,
+              completed: completed,
+              skipped: skipped,
+              failed: failed,
             )
             .catchError((_) {}),
       );

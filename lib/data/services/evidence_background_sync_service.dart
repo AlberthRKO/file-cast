@@ -187,8 +187,8 @@ void evidenceBackgroundCallbackDispatcher() {
         keyExchange: keyExchange,
         notifications: notifications,
       );
-      await upload.syncPending();
-      return (await database.pending(limit: 1)).isEmpty;
+      await upload.syncPending(includeNonRetryable: false);
+      return (await database.pending(limit: 1, automaticOnly: true)).isEmpty;
     } on Object {
       return false;
     } finally {

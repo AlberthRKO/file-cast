@@ -95,11 +95,8 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
   }) async {
     final service = _offlineSyncService;
     if (service == null) {
-      return const EvidenceOfflineSyncResult(
-        total: 0,
-        completed: 0,
-        skipped: 0,
-        failed: 0,
+      throw StateError(
+        'El servicio de sincronización offline no está disponible.',
       );
     }
     final result = await service.syncRequisition(

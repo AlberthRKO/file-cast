@@ -68,7 +68,9 @@ class EvidenceSyncService {
   /// registro es idempotente y `keep` evita duplicar workers para la outbox.
   Future<void> scheduleBackgroundSync() async {
     try {
-      if ((await _database.pending(limit: 1)).isEmpty) return;
+      if ((await _database.pending(limit: 1, automaticOnly: true)).isEmpty) {
+        return;
+      }
       await _backgroundScheduler?.scheduleUpload();
     } on Object {
       // La outbox y el listener de conectividad siguen siendo el fallback
@@ -78,13 +80,18 @@ class EvidenceSyncService {
 
   Future<void> _triggerSync() async {
     try {
-      await syncPending();
+      // Los errores permanentes (por ejemplo HTTP 413) solo se reintentan
+      // cuando el usuario pulsa la acción explícita de reintento.
+      await syncPending(includeNonRetryable: false);
     } catch (_) {
       // La evidencia permanece en la outbox para el siguiente intento.
     }
   }
 
-  Future<int> syncPending({int limit = 50}) {
+  Future<int> syncPending({
+    int limit = 50,
+    bool includeNonRetryable = true,
+  }) {
     final activeRun = _activeRun;
     if (activeRun != null) {
       // La sincronización inicial puede estar consultando la outbox mientras
@@ -94,7 +101,10 @@ class EvidenceSyncService {
       return activeRun;
     }
     final run = _database.withSyncLock(
-      () => _syncAllPending(limit: limit),
+      () => _syncAllPending(
+        limit: limit,
+        includeNonRetryable: includeNonRetryable,
+      ),
     );
     _activeRun = run;
     run.then<void>(
@@ -118,7 +128,7 @@ class EvidenceSyncService {
 
   Future<void> _scheduleIfPending() async {
     try {
-      if ((await _database.pending(limit: 1)).isNotEmpty) {
+      if ((await _database.pending(limit: 1, automaticOnly: true)).isNotEmpty) {
         await scheduleBackgroundSync();
       }
     } on Object {
@@ -133,13 +143,20 @@ class EvidenceSyncService {
     unawaited(_triggerSync());
   }
 
-  Future<int> _syncAllPending({required int limit}) async {
+  Future<int> _syncAllPending({
+    required int limit,
+    required bool includeNonRetryable,
+  }) async {
     var synchronized = 0;
     final attempted = <String>{};
     while (true) {
-      final pending = (await _database.pending(limit: limit))
-          .where((evidence) => !attempted.contains(evidence.id))
-          .toList(growable: false);
+      final pending =
+          (await _database.pending(
+                limit: limit,
+                automaticOnly: !includeNonRetryable,
+              ))
+              .where((evidence) => !attempted.contains(evidence.id))
+              .toList(growable: false);
       if (pending.isEmpty) return synchronized;
       attempted.addAll(pending.map((evidence) => evidence.id));
       final processed = await _syncPending(pending: pending);
@@ -183,7 +200,11 @@ class EvidenceSyncService {
         synchronized += 1;
       } catch (error) {
         final message = _safeMessage(error);
-        await _database.markError(evidence.id, message);
+        await _database.markError(
+          evidence.id,
+          message,
+          retryable: _isRetryableError(message),
+        );
         errors[evidence.requisitionId] = message;
         failed.update(
           evidence.requisitionId,
@@ -440,5 +461,13 @@ class EvidenceSyncService {
   String _safeMessage(Object error) {
     final message = error.toString().replaceFirst('Bad state: ', '').trim();
     return message.length > 512 ? message.substring(0, 512) : message;
+  }
+
+  bool _isRetryableError(String message) {
+    final normalized = message.toLowerCase();
+    return !normalized.contains('http 413') &&
+        !normalized.contains('límite de carga') &&
+        !normalized.contains('tamaño máximo configurado') &&
+        !normalized.contains('supera el tamaño permitido');
   }
 }

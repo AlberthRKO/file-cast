@@ -20,12 +20,11 @@ final class LocalNotificationPayload {
   final String jobId;
 
   String toJson() => jsonEncode({
-        'type': type,
-        'operation':
-            operation.name == 'offlineSync' ? 'OFFLINE_SYNC' : 'UPLOAD',
-        'requisitionId': requisitionId,
-        'jobId': jobId,
-      });
+    'type': type,
+    'operation': operation.name == 'offlineSync' ? 'OFFLINE_SYNC' : 'UPLOAD',
+    'requisitionId': requisitionId,
+    'jobId': jobId,
+  });
 
   static LocalNotificationPayload? tryParse(String? value) {
     if (value == null || value.trim().isEmpty) return null;
@@ -70,7 +69,7 @@ final class LocalNotificationPayload {
 /// archivos, CUD ni datos personales en el texto visible de la notificación.
 class LocalNotificationService {
   LocalNotificationService({FlutterLocalNotificationsPlugin? plugin})
-      : _plugin = plugin ?? FlutterLocalNotificationsPlugin();
+    : _plugin = plugin ?? FlutterLocalNotificationsPlugin();
 
   static const channelId = 'file_cast_evidence_sync';
   static const channelName = 'Sincronización de evidencias';
@@ -119,8 +118,10 @@ class LocalNotificationService {
       },
     );
 
-    final android = _plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
+    final android = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
     await android?.createNotificationChannel(
       const AndroidNotificationChannel(
         channelId,
@@ -143,13 +144,17 @@ class LocalNotificationService {
   Future<void> _requestPermissions() async {
     _permissionsRequested = true;
     if (defaultTargetPlatform == TargetPlatform.android) {
-      final android = _plugin.resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>();
+      final android = _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
       await android?.requestNotificationsPermission();
     }
     if (defaultTargetPlatform == TargetPlatform.iOS) {
-      final darwin = _plugin.resolvePlatformSpecificImplementation<
-          IOSFlutterLocalNotificationsPlugin>();
+      final darwin = _plugin
+          .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin
+          >();
       await darwin?.requestPermissions(
         alert: true,
         badge: true,
@@ -181,6 +186,9 @@ class LocalNotificationService {
     required int processed,
     required bool active,
     required bool hasFailures,
+    int completed = 0,
+    int skipped = 0,
+    int failed = 0,
   }) {
     return _showProgress(
       operation: EvidenceJobOperation.offlineSync,
@@ -189,6 +197,9 @@ class LocalNotificationService {
       processed: processed,
       active: active,
       hasFailures: hasFailures,
+      completed: completed,
+      skipped: skipped,
+      failed: failed,
     );
   }
 
@@ -199,6 +210,9 @@ class LocalNotificationService {
     required int processed,
     required bool active,
     required bool hasFailures,
+    int completed = 0,
+    int skipped = 0,
+    int failed = 0,
   }) async {
     if (kIsWeb) return;
     await initialize(requestPermissions: false);
@@ -211,19 +225,23 @@ class LocalNotificationService {
     final title = !active && hasFailures
         ? 'Sincronización con errores'
         : operation == EvidenceJobOperation.upload
-            ? (isComplete ? 'Sincronización completada' : 'Subiendo evidencias')
-            : (isComplete
-                ? 'Evidencias listas para uso offline'
-                : 'Preparando evidencias para uso offline');
+        ? (isComplete ? 'Sincronización completada' : 'Subiendo evidencias')
+        : (isComplete
+              ? 'Evidencias listas para uso offline'
+              : 'Preparando evidencias para uso offline');
     final body = active
         ? operation == EvidenceJobOperation.upload
-            ? 'Subiendo $processed de $total archivos'
-            : 'Guardando $processed de $total archivos'
+              ? 'Subiendo $processed de $total archivos'
+              : 'Guardando $processed de $total archivos'
         : hasFailures
-            ? 'Algunas evidencias requieren reintento'
-            : operation == EvidenceJobOperation.upload
-                ? 'Todas las evidencias pendientes fueron procesadas'
-                : 'La copia cifrada está disponible en este dispositivo';
+        ? operation == EvidenceJobOperation.offlineSync && total > 0
+              ? '$processed de $total procesadas · '
+                    '$completed recuperadas · $skipped ya disponibles · '
+                    '$failed con error'
+              : 'Algunas evidencias requieren reintento'
+        : operation == EvidenceJobOperation.upload
+        ? 'Todas las evidencias pendientes fueron procesadas'
+        : 'La copia cifrada está disponible en este dispositivo';
     final details = AndroidNotificationDetails(
       channelId,
       channelName,
@@ -269,8 +287,9 @@ class LocalNotificationService {
   }) async {
     if (kIsWeb) return;
     await initialize(requestPermissions: false);
-    final prefix =
-        operation == EvidenceJobOperation.upload ? 'UPLOAD' : 'OFFLINE_SYNC';
+    final prefix = operation == EvidenceJobOperation.upload
+        ? 'UPLOAD'
+        : 'OFFLINE_SYNC';
     await _plugin.cancel(stableId('$prefix:$requisitionId'));
   }
 

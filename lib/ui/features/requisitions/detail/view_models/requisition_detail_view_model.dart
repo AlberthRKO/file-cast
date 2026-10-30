@@ -1,12 +1,12 @@
 import 'dart:async';
 
-import 'package:file_cast/domain/models/requisition.dart';
-import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/models/evidence_offline_sync.dart';
-import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/domain/models/evidence_upload_progress.dart';
-import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
+import 'package:file_cast/domain/models/requisition.dart';
+import 'package:file_cast/domain/models/requisition_creation.dart';
+import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
+import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
 import 'package:file_cast/domain/services/evidence_preview_service.dart';
 import 'package:flutter/foundation.dart';
@@ -88,6 +88,8 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   List<ImportedEvidenceDraft> _selectedEvidence = const [];
   EvidenceUploadProgress? _uploadProgress;
   EvidenceOfflineSyncProgress? _offlineSyncProgress;
+  String? _offlineSyncError;
+  List<String> _offlineSyncErrors = const [];
   bool _disposed = false;
   bool get isImporting => _isImporting;
   bool get isSelectingEvidence => _isSelectingEvidence;
@@ -96,6 +98,8 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   List<ImportedEvidenceDraft> get selectedEvidence => _selectedEvidence;
   EvidenceUploadProgress? get uploadProgress => _uploadProgress;
   EvidenceOfflineSyncProgress? get offlineSyncProgress => _offlineSyncProgress;
+  String? get offlineSyncError => _offlineSyncError;
+  List<String> get offlineSyncErrors => _offlineSyncErrors;
   bool get isOfflineSyncing => _isOfflineSyncing;
   bool get isFinalizing => _isFinalizing;
   bool get canFinalize {
@@ -131,7 +135,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
             (item) =>
                 item.encrypted &&
                 item.uploadStatus?.toUpperCase() == 'AVAILABLE' &&
-                item.contentUrl?.isNotEmpty == true,
+                (item.contentUrl?.isNotEmpty ?? false),
           )
           .length ??
       0;
@@ -142,8 +146,8 @@ class RequisitionDetailViewModel extends ChangeNotifier {
             (item) =>
                 item.encrypted &&
                 item.uploadStatus?.toUpperCase() == 'AVAILABLE' &&
-                item.contentUrl?.isNotEmpty == true &&
-                item.localPath?.isNotEmpty == true,
+                (item.contentUrl?.isNotEmpty ?? false) &&
+                (item.localPath?.isNotEmpty ?? false),
           )
           .length ??
       0;
@@ -180,7 +184,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
 
   String participantName(RequisitionParticipantSummary participant) {
     if (currentActorId == participant.actorId &&
-        currentActorName?.trim().isNotEmpty == true) {
+        (currentActorName?.trim().isNotEmpty ?? false)) {
       return currentActorName!.trim();
     }
     return _knownParticipants[participant.actorId]?.fullName ??
@@ -245,6 +249,8 @@ class RequisitionDetailViewModel extends ChangeNotifier {
       (progress) {
         if (progress.requisitionId != requisitionId || _disposed) return;
         _offlineSyncProgress = progress;
+        _offlineSyncError = progress.errorMessage;
+        _offlineSyncErrors = progress.errors;
         if (progress.isActive) {
           _isOfflineSyncing = true;
         } else if (!_waitingForOfflineReload) {
@@ -413,6 +419,8 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     _isOfflineSyncing = true;
     _waitingForOfflineReload = true;
     _offlineSyncProgress = null;
+    _offlineSyncError = null;
+    _offlineSyncErrors = const [];
     _errorMessage = null;
     notifyListeners();
     unawaited(_syncEvidenceForOffline(evidence));
@@ -427,16 +435,24 @@ class RequisitionDetailViewModel extends ChangeNotifier {
         evidence: evidence,
       );
       if (result.hasFailures) {
-        _errorMessage = result.errors.isEmpty
+        _offlineSyncErrors = result.errors;
+        _offlineSyncError = result.errors.isEmpty
             ? 'Algunas evidencias no pudieron quedar disponibles offline.'
             : result.errors.first;
+        _errorMessage = _offlineSyncError;
+      } else if (result.total == 0) {
+        _offlineSyncError =
+            'No se encontraron evidencias disponibles para sincronizar offline.';
+        _errorMessage = _offlineSyncError;
       }
       await _reloadSilently();
     } catch (error) {
-      _errorMessage = _messageFromError(
+      _offlineSyncError = _messageFromError(
         error,
         fallback: 'No se pudieron sincronizar las evidencias para uso offline.',
       );
+      _offlineSyncErrors = [_offlineSyncError!];
+      _errorMessage = _offlineSyncError;
     } finally {
       _waitingForOfflineReload = false;
       _isOfflineSyncing = false;
@@ -449,27 +465,41 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   ) async {
     var evidenceForPreview = evidence;
     if (_needsOfflineRecovery(evidence)) {
+      // EvidencePreviewSheet starts this future from initState. That happens
+      // while Flutter is building the dialog, so notifying synchronously here
+      // causes markNeedsBuild/setState during build. Yield to the event loop
+      // before changing ViewModel state; this also keeps the preview usable
+      // when the detail is rebuilt at the same time.
+      await Future<void>.delayed(Duration.zero);
+      if (_disposed) return _previewService.prepare(evidenceForPreview);
+
       _isOfflineSyncing = true;
       _waitingForOfflineReload = true;
       _offlineSyncProgress = null;
-      if (!_disposed) notifyListeners();
+      _offlineSyncError = null;
+      _offlineSyncErrors = const [];
+      notifyListeners();
       try {
         final result = await _repository.syncEvidenceForOffline(
           requisitionId: requisitionId,
           evidence: [evidence],
         );
         if (result.hasFailures) {
-          _errorMessage = result.errors.isEmpty
+          _offlineSyncErrors = result.errors;
+          _offlineSyncError = result.errors.isEmpty
               ? 'La evidencia se verá en modo temporal y no quedó guardada offline.'
               : result.errors.first;
+          _errorMessage = _offlineSyncError;
         }
         await _reloadSilently();
       } catch (error) {
-        _errorMessage = _messageFromError(
+        _offlineSyncError = _messageFromError(
           error,
           fallback:
               'La evidencia se verá en modo temporal y no quedó guardada offline.',
         );
+        _offlineSyncErrors = [_offlineSyncError!];
+        _errorMessage = _offlineSyncError;
       } finally {
         _waitingForOfflineReload = false;
         _isOfflineSyncing = false;
@@ -489,7 +519,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   bool _needsOfflineRecovery(RequisitionEvidence evidence) {
     return evidence.encrypted &&
         evidence.uploadStatus?.toUpperCase() == 'AVAILABLE' &&
-        evidence.contentUrl?.isNotEmpty == true &&
+        (evidence.contentUrl?.isNotEmpty ?? false) &&
         (evidence.localPath == null || evidence.localPath!.isEmpty);
   }
 
@@ -715,6 +745,11 @@ class RequisitionDetailViewModel extends ChangeNotifier {
 
   String _messageFromError(Object error, {required String fallback}) {
     final message = error.toString().replaceFirst('Bad state: ', '').trim();
+    if (message.contains('SqfliteSqlCipherOpenDatabaseOptions') ||
+        message.contains('SqfliteOpenDatabaseOptions')) {
+      return 'La base local cifrada no pudo abrirse. Actualiza la aplicación '
+          'y vuelve a intentar; la evidencia remota no se eliminó.';
+    }
     return message.isEmpty ? fallback : message;
   }
 

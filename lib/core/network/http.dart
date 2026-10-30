@@ -139,7 +139,7 @@ class Http {
       );
 
       if (response.statusCode == 401 && _onUnauthorized != null) {
-        final refreshed = await _onUnauthorized!();
+        final refreshed = await _onUnauthorized();
         if (refreshed) {
           final refreshedToken = await _tokenProvider?.call();
           final retryHeaders = <String, String>{...requestHeaders};
@@ -232,7 +232,7 @@ class Http {
       return ErrorModel.fromJson(body);
     }
     return ErrorModel(
-      message: responseBody is String ? responseBody : 'Error HTTP $statusCode',
+      message: _readableHttpErrorMessage(responseBody, statusCode),
       status: statusCode,
     );
   }
@@ -540,4 +540,34 @@ dynamic parserResponseBody(String responseBody) {
   } catch (_) {
     return responseBody;
   }
+}
+
+String _readableHttpErrorMessage(dynamic responseBody, int statusCode) {
+  if (statusCode == 413) {
+    return 'El archivo fue rechazado porque supera el límite de carga del '
+        'servidor o del túnel (HTTP 413). La evidencia permanece pendiente; '
+        'aumenta ese límite y vuelve a intentarlo.';
+  }
+
+  if (responseBody is String) {
+    final text = responseBody.trim();
+    if (text.isEmpty) return 'Error HTTP $statusCode';
+
+    // Algunos proxies devuelven HTML aunque la API trabaje con JSON. No se
+    // debe mostrar ese documento completo en la interfaz.
+    if (RegExp(r'<[^>]+>').hasMatch(text)) {
+      final title = RegExp(
+        r'<title[^>]*>(.*?)</title>',
+        caseSensitive: false,
+        dotAll: true,
+      ).firstMatch(text)?.group(1)?.replaceAll(RegExp(r'\s+'), ' ').trim();
+      return title == null || title.isEmpty
+          ? 'El servidor rechazó la solicitud (HTTP $statusCode).'
+          : 'El servidor rechazó la solicitud: $title (HTTP $statusCode).';
+    }
+
+    return text.length > 512 ? text.substring(0, 512) : text;
+  }
+
+  return 'Error HTTP $statusCode';
 }
