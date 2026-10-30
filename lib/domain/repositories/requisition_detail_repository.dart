@@ -7,6 +7,10 @@ abstract interface class RequisitionDetailRepository {
   Stream<EvidenceUploadProgress> get uploadProgress;
   Stream<EvidenceOfflineSyncProgress> get offlineSyncProgress;
   Future<RequisitionDetail> getDetail(String requisitionId);
+  Future<RequisitionDetail> deletePendingEvidence({
+    required String requisitionId,
+    required RequisitionEvidence evidence,
+  });
   Future<int> syncPendingEvidence();
   Future<EvidenceOfflineSyncResult> syncEvidenceForOffline({
     required String requisitionId,

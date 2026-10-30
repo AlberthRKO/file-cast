@@ -90,6 +90,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   EvidenceOfflineSyncProgress? _offlineSyncProgress;
   String? _offlineSyncError;
   List<String> _offlineSyncErrors = const [];
+  Future<void>? _silentReloadInFlight;
   bool _disposed = false;
   bool get isImporting => _isImporting;
   bool get isSelectingEvidence => _isSelectingEvidence;
@@ -128,6 +129,18 @@ class RequisitionDetailViewModel extends ChangeNotifier {
       0;
 
   bool get hasPendingEvidence => pendingEvidenceCount > 0;
+
+  bool canDeleteEvidence(RequisitionEvidence evidence) {
+    final status = evidence.uploadStatus?.toUpperCase();
+    if (status != 'PENDING_UPLOAD') return false;
+    return evidence.isBackendRecord ||
+        evidence.localPath?.trim().isNotEmpty == true;
+  }
+
+  String? _deletingEvidenceId;
+
+  bool isDeletingEvidence(RequisitionEvidence evidence) =>
+      _deletingEvidenceId == evidence.id;
 
   int get offlineEvidenceTotalCount =>
       _detail?.evidence
@@ -272,10 +285,27 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  Future<void> _reloadSilently() async {
+  Future<void> _reloadSilently() {
+    final inFlight = _silentReloadInFlight;
+    if (inFlight != null) return inFlight;
+
+    final future = _performSilentReload();
+    _silentReloadInFlight = future;
+    unawaited(
+      future.whenComplete(() {
+        if (identical(_silentReloadInFlight, future)) {
+          _silentReloadInFlight = null;
+        }
+      }),
+    );
+    return future;
+  }
+
+  Future<void> _performSilentReload() async {
     try {
       _detail = await _repository.getDetail(requisitionId);
       _phase = RequisitionDetailPhase.content;
+      _clearUploadStateWhenNoPendingEvidence();
       if (!_disposed) notifyListeners();
     } catch (_) {
       // The existing detail remains visible until a deliberate retry.
@@ -412,6 +442,38 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     unawaited(_syncImportedEvidence());
   }
 
+  Future<String?> deletePendingEvidence(RequisitionEvidence evidence) async {
+    if (_disposed) return 'El detalle de la requisa ya no está disponible.';
+    if (!canDeleteEvidence(evidence)) {
+      return 'La evidencia ya está sincronizada o no se puede eliminar.';
+    }
+    if (_deletingEvidenceId != null) return 'Ya hay una eliminación en curso.';
+
+    _deletingEvidenceId = evidence.id;
+    _errorMessage = null;
+    if (!_disposed) notifyListeners();
+    try {
+      _detail = await _repository.deletePendingEvidence(
+        requisitionId: requisitionId,
+        evidence: evidence,
+      );
+      await _reloadSilently();
+      _clearUploadStateWhenNoPendingEvidence();
+      _phase = RequisitionDetailPhase.content;
+      return null;
+    } catch (error) {
+      final message = _messageFromError(
+        error,
+        fallback: 'No se pudo eliminar la evidencia pendiente.',
+      );
+      _errorMessage = message;
+      return message;
+    } finally {
+      _deletingEvidenceId = null;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
   void syncEvidenceForOffline() {
     if (_isOfflineSyncing || _disposed) return;
     final evidence = _detail?.evidence;
@@ -521,6 +583,12 @@ class RequisitionDetailViewModel extends ChangeNotifier {
         evidence.uploadStatus?.toUpperCase() == 'AVAILABLE' &&
         (evidence.contentUrl?.isNotEmpty ?? false) &&
         (evidence.localPath == null || evidence.localPath!.isEmpty);
+  }
+
+  void _clearUploadStateWhenNoPendingEvidence() {
+    if (pendingEvidenceCount != 0) return;
+    _isSyncing = false;
+    _uploadProgress = null;
   }
 
   Future<void> disposeEvidencePreview(PreparedEvidencePreview preview) =>

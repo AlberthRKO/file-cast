@@ -29,6 +29,33 @@ class RequisitionDetailService {
     };
   }
 
+  Future<void> deleteEvidence({
+    required String requisitionId,
+    required String evidenceId,
+  }) async {
+    final result = await _http.request<void>(
+      '/api/v1/requisitions/$requisitionId/evidences/$evidenceId',
+      method: HttpMethod.delete,
+      headers: {
+        'Idempotency-Key': 'delete-evidence-$requisitionId-$evidenceId',
+      },
+      onSucces: (_) {},
+    );
+
+    switch (result) {
+      case Left(leftValue: final error):
+        throw StateError(
+          error.message ?? 'No se pudo eliminar la evidencia del servidor.',
+        );
+      case Right():
+        return;
+      case Either():
+        throw StateError(
+          'Respuesta inesperada al eliminar la evidencia del servidor.',
+        );
+    }
+  }
+
   RequisitionDetail _parseDetail(dynamic body) {
     final envelope = _asMap(body);
     final response = _asMap(envelope['response']);
@@ -131,6 +158,7 @@ class RequisitionDetailService {
     final keyEnvelope = _asMap(data['keyEnvelope']);
     return RequisitionEvidence(
       id: _text(data['id']) ?? '',
+      isBackendRecord: true,
       requisitionId: requisitionId,
       name: _text(data['originalName']) ?? 'Evidencia',
       type: _evidenceType(data['kind']),

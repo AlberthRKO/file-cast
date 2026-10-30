@@ -43,6 +43,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
   final Map<String, List<RequisitionEvidence>> _imported = {};
   final Map<String, List<LocalEvidenceRecord>> _cachedLocalEvidence = {};
   final Map<String, RequisitionDetail> _cachedRemoteDetails = {};
+  final Map<String, Set<String>> _deletedEvidenceIds = {};
   final EvidencePickerService _pickerService;
   final EvidenceCryptoService? _cryptoService;
   final LocalEvidenceDatabaseService? _database;
@@ -87,6 +88,81 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
   @override
   Future<int> syncPendingEvidence() =>
       _syncService?.syncPending() ?? Future<int>.value(0);
+
+  @override
+  Future<RequisitionDetail> deletePendingEvidence({
+    required String requisitionId,
+    required RequisitionEvidence evidence,
+  }) async {
+    final imported = _imported[requisitionId] ?? const <RequisitionEvidence>[];
+    RequisitionEvidence? importedEvidence;
+    for (final item in imported) {
+      if (item.id == evidence.id) {
+        importedEvidence = item;
+        break;
+      }
+    }
+
+    if (evidence.uploadStatus?.toUpperCase() != 'PENDING_UPLOAD') {
+      throw StateError(
+        'La evidencia ya está sincronizada o no está pendiente de subida.',
+      );
+    }
+
+    final database = _database;
+    var deleted = false;
+    if (evidence.isBackendRecord) {
+      await _detailService.deleteEvidence(
+        requisitionId: requisitionId,
+        evidenceId: evidence.id,
+      );
+      if (database != null) {
+        await database.deletePendingEvidence(
+          requisitionId: requisitionId,
+          evidenceId: evidence.id,
+        );
+      }
+      deleted = true;
+      _deletedEvidenceIds
+          .putIfAbsent(requisitionId, () => <String>{})
+          .add(evidence.id);
+    } else if (database != null) {
+      deleted = await database.deletePendingEvidence(
+        requisitionId: requisitionId,
+        evidenceId: evidence.id,
+      );
+    }
+    if (!deleted && importedEvidence == null) {
+      throw StateError(
+        'La evidencia no está pendiente o ya fue sincronizada.',
+      );
+    }
+
+    _imported.update(
+      requisitionId,
+      (items) => items.where((item) => item.id != evidence.id).toList(),
+      ifAbsent: () => const [],
+    );
+    _cachedLocalEvidence.update(
+      requisitionId,
+      (items) => items.where((item) => item.id != evidence.id).toList(),
+      ifAbsent: () => const [],
+    );
+
+    if (evidence.isBackendRecord) {
+      final cachedRemote = _cachedRemoteDetails[requisitionId];
+      if (cachedRemote != null) {
+        _cachedRemoteDetails[requisitionId] = _withoutEvidence(
+          cachedRemote,
+          evidence.id,
+        );
+      }
+    }
+
+    final cachedRemote = _cachedRemoteDetails[requisitionId];
+    if (cachedRemote == null) return getDetail(requisitionId);
+    return _mergeRemoteDetail(cachedRemote, requisitionId);
+  }
 
   @override
   Future<EvidenceOfflineSyncResult> syncEvidenceForOffline({
@@ -139,6 +215,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     RequisitionDetail remote;
     try {
       remote = await _detailService.getDetail(requisitionId);
+      remote = _withoutDeletedEvidence(requisitionId, remote);
       _cachedRemoteDetails[requisitionId] = remote;
       await _sharePersistedKeys(requisitionId, remote);
     } catch (_) {
@@ -182,26 +259,33 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     try {
       final recipients = await keyExchange.recipients(requisitionId);
       final recoveryKey = await keyExchange.recoveryKey(requisitionId);
+      final deviceRecipients = recipients
+          .where((recipient) => recipient.publicKey.isNotEmpty)
+          .toList(growable: false);
       for (final localEvidence in pendingKeyShares) {
+        final wrappedKeys = await crypto.wrapLocalDataKeyForRecipients(
+          wrappedKey: localEvidence.wrappedKey,
+          evidenceId: localEvidence.id,
+          recipientPublicKeys: [
+            if (recoveryKey != null) recoveryKey.publicKey,
+            ...deviceRecipients.map((recipient) => recipient.publicKey),
+          ],
+        );
+        var wrappedKeyIndex = 0;
         if (recoveryKey != null) {
-          final recoveryWrappedKey = await crypto.wrapLocalDataKeyForRecovery(
-            wrappedKey: localEvidence.wrappedKey,
-            evidenceId: localEvidence.id,
-            recoveryPublicKey: recoveryKey.publicKey,
-          );
-          await keyExchange.addRecoveryEnvelope(
-            requisitionId: requisitionId,
-            evidenceId: localEvidence.id,
-            recoveryKey: recoveryKey,
-            wrappedKey: recoveryWrappedKey,
-          );
+          final recoveryWrappedKey = wrappedKeys[wrappedKeyIndex++];
+          if (recoveryWrappedKey != null) {
+            await keyExchange.addRecoveryEnvelope(
+              requisitionId: requisitionId,
+              evidenceId: localEvidence.id,
+              recoveryKey: recoveryKey,
+              wrappedKey: recoveryWrappedKey,
+            );
+          }
         }
-        for (final recipient in recipients) {
-          final wrappedKey = await crypto.wrapLocalDataKeyForDevice(
-            wrappedKey: localEvidence.wrappedKey,
-            evidenceId: localEvidence.id,
-            recipientPublicKey: recipient.publicKey,
-          );
+        for (final recipient in deviceRecipients) {
+          final wrappedKey = wrappedKeys[wrappedKeyIndex++];
+          if (wrappedKey == null) continue;
           await keyExchange.addEnvelope(
             requisitionId: requisitionId,
             evidenceId: localEvidence.id,
@@ -239,12 +323,17 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
         )
         .toList(growable: false);
     final localEvidence = <RequisitionEvidence>[
-      ...imported.where((item) => !serverIds.contains(item.id)),
+      ...imported.where(
+        (item) =>
+            !_isDeletedEvidence(requisitionId, item.id) &&
+            !serverIds.contains(item.id) &&
+            !persistedById.containsKey(item.id),
+      ),
       ...persisted
           .where(
             (item) =>
-                !serverIds.contains(item.id) &&
-                !imported.any((evidence) => evidence.id == item.id),
+                !_isDeletedEvidence(requisitionId, item.id) &&
+                !serverIds.contains(item.id),
           )
           .map(_toEvidence),
     ];
@@ -285,6 +374,59 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       updatedAt: remote.updatedAt,
     );
   }
+
+  RequisitionDetail _withoutEvidence(
+    RequisitionDetail detail,
+    String evidenceId,
+  ) {
+    final evidence = detail.evidence
+        .where((item) => item.id != evidenceId)
+        .toList(growable: false);
+    return RequisitionDetail(
+      requisition: detail.requisition.copyWith(
+        imageEvidenceCount: evidence
+            .where((item) => item.type == RequisitionEvidenceType.image)
+            .length,
+        videoEvidenceCount: evidence
+            .where((item) => item.type == RequisitionEvidenceType.video)
+            .length,
+        isSynchronized: evidence.every(
+          (item) => item.uploadStatus?.toUpperCase() == 'AVAILABLE',
+        ),
+      ),
+      division: detail.division,
+      subjects: detail.subjects,
+      subjectDetails: detail.subjectDetails,
+      participants: detail.participants,
+      sessionId: detail.sessionId,
+      evidence: evidence,
+      sessions: detail.sessions,
+      description: detail.description,
+      procedureAt: detail.procedureAt,
+      locationLabel: detail.locationLabel,
+      latitude: detail.latitude,
+      longitude: detail.longitude,
+      version: detail.version,
+      createdAt: detail.createdAt,
+      updatedAt: detail.updatedAt,
+    );
+  }
+
+  RequisitionDetail _withoutDeletedEvidence(
+    String requisitionId,
+    RequisitionDetail detail,
+  ) {
+    final deleted = _deletedEvidenceIds[requisitionId];
+    if (deleted == null || deleted.isEmpty) return detail;
+    var result = detail;
+    for (final evidenceId in deleted) {
+      result = _withoutEvidence(result, evidenceId);
+    }
+    return result;
+  }
+
+  bool _isDeletedEvidence(String requisitionId, String evidenceId) =>
+      _deletedEvidenceIds[requisitionId]?.contains(evidenceId) ?? false;
 
   Future<List<LocalEvidenceRecord>> _localEvidenceSafely(
     String requisitionId,
@@ -583,6 +725,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
           : null;
       return RequisitionEvidence(
         id: remote.id,
+        isBackendRecord: true,
         requisitionId: remote.requisitionId,
         name: remote.name,
         type: remote.type,
@@ -607,7 +750,11 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
         remoteWrappedKey: remote.remoteWrappedKey,
         remoteWrapAlgorithm: remote.remoteWrapAlgorithm,
         keyVersion: remote.keyVersion ?? persisted.keyVersion,
-        uploadStatus: remote.uploadStatus,
+        uploadStatus:
+            remote.uploadStatus ??
+            (persisted.state.toUpperCase() == 'SINCRONIZADA'
+                ? 'AVAILABLE'
+                : 'PENDING_UPLOAD'),
         contentUrl: remote.contentUrl,
         downloadUrl: remote.downloadUrl,
         contentSessionToken: remote.contentSessionToken,
@@ -616,6 +763,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     if (imported == null || imported.localPath == null) return remote;
     return RequisitionEvidence(
       id: remote.id,
+      isBackendRecord: true,
       requisitionId: remote.requisitionId,
       name: remote.name,
       type: remote.type,

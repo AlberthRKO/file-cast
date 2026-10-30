@@ -236,6 +236,10 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
                         decryptionService: decryptionService,
                         onOpenEvidence: (evidence) =>
                             _showEvidencePreview(context, evidence),
+                        canDeleteEvidence: viewModel.canDeleteEvidence,
+                        isDeletingEvidence: viewModel.isDeletingEvidence,
+                        onDeleteEvidence: (evidence) =>
+                            _deleteEvidence(context, evidence),
                       ),
                     ],
                   ],
@@ -445,6 +449,35 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
       );
     },
   );
+
+  Future<void> _deleteEvidence(
+    BuildContext context,
+    RequisitionEvidence evidence,
+  ) async {
+    final confirmed = await showAppModalBottomSheet<bool>(
+      context: context,
+      maxWidth: 520,
+      builder: (sheetContext) => _ConfirmEvidenceDeleteSheet(
+        evidence: evidence,
+        onCancel: () => Navigator.of(sheetContext).pop(false),
+        onConfirm: () => Navigator.of(sheetContext).pop(true),
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    final error = await viewModel.deletePendingEvidence(evidence);
+    if (!context.mounted) return;
+    if (error != null) {
+      await showAppErrorBottomSheet(context, error);
+      return;
+    }
+    await showAppSuccessBottomSheet(
+      context,
+      evidence.isBackendRecord
+          ? 'La evidencia pendiente fue eliminada del servidor y del dispositivo.'
+          : 'La evidencia pendiente fue eliminada del dispositivo.',
+    );
+  }
 
   Future<void> _showCaseLink(BuildContext context) async {
     final linked = await showAppModalBottomSheet<EcosystemCaseSummary>(
@@ -837,6 +870,10 @@ class _SummaryFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final allOfflineAvailable =
+        offlineTotalCount > 0 &&
+        offlineAvailableCount >= offlineTotalCount &&
+        !isOfflineSyncing;
     final metrics = Wrap(
       spacing: AppSpace.s,
       runSpacing: AppSpace.s,
@@ -849,6 +886,11 @@ class _SummaryFooter extends StatelessWidget {
           asset: 'assets/images/icons/sync.svg',
           label: evidenceLabel,
         ),
+        if (allOfflineAvailable)
+          _SummaryMetric(
+            asset: 'assets/images/icons/sync.svg',
+            label: '$offlineAvailableCount/$offlineTotalCount offline',
+          ),
       ],
     );
 
@@ -928,7 +970,7 @@ class _SummaryFooter extends StatelessWidget {
           uploadIndicator,
           const SizedBox(height: AppSpace.s),
         ],
-        if (offlineTotalCount > 0) ...[
+        if (offlineTotalCount > 0 && !allOfflineAvailable) ...[
           offlineAction,
           const SizedBox(height: AppSpace.s),
         ],
@@ -962,17 +1004,14 @@ class _OfflineSyncAction extends StatelessWidget {
     final theme = Theme.of(context);
     final allAvailable = totalCount > 0 && availableCount >= totalCount;
     if (allAvailable && !isSyncing) {
-      return _OfflineAvailableStatus(
-        availableCount: availableCount,
-        totalCount: totalCount,
-      );
+      return const SizedBox.shrink();
     }
     final processed = progress?.processed ?? 0;
     final syncTotal = progress?.total ?? totalCount;
     final failedCount = progress?.failed ?? 0;
     final displayedErrors = errors.isNotEmpty
         ? errors
-        : errorMessage?.trim().isNotEmpty == true
+        : errorMessage?.trim().isNotEmpty ?? false
         ? [errorMessage!]
         : const <String>[];
     final hasFailed = failedCount > 0 || displayedErrors.isNotEmpty;
@@ -1101,12 +1140,8 @@ class _OfflineSyncAction extends StatelessWidget {
       context: context,
       builder: (dialogContext) {
         final windowSize = MediaQuery.sizeOf(dialogContext);
-        final dialogWidth = (windowSize.width - 48)
-            .clamp(280.0, 520.0)
-            .toDouble();
-        final dialogHeight = (windowSize.height - 220)
-            .clamp(160.0, 420.0)
-            .toDouble();
+        final dialogWidth = (windowSize.width - 48).clamp(280.0, 520.0);
+        final dialogHeight = (windowSize.height - 220).clamp(160.0, 420.0);
         return AlertDialog(
           title: const Text('Evidencias no recuperadas'),
           content: SizedBox(
@@ -1114,7 +1149,7 @@ class _OfflineSyncAction extends StatelessWidget {
             height: dialogHeight,
             child: ListView.separated(
               itemCount: errors.length,
-              separatorBuilder: (_, __) => const SizedBox(height: AppSpace.s),
+              separatorBuilder: (_, _) => const SizedBox(height: AppSpace.s),
               itemBuilder: (_, index) => Text(
                 errors[index],
                 style: Theme.of(dialogContext).textTheme.bodySmall,
@@ -1129,49 +1164,6 @@ class _OfflineSyncAction extends StatelessWidget {
           ],
         );
       },
-    );
-  }
-}
-
-class _OfflineAvailableStatus extends StatelessWidget {
-  const _OfflineAvailableStatus({
-    required this.availableCount,
-    required this.totalCount,
-  });
-
-  final int availableCount;
-  final int totalCount;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final color = theme.colorScheme.primary;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: .1),
-        borderRadius: BorderRadius.circular(AppRadius.m),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpace.m,
-          vertical: AppSpace.s,
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.check_circle_outline, color: color),
-            const SizedBox(width: AppSpace.s),
-            Expanded(
-              child: Text(
-                '$availableCount de $totalCount evidencias disponibles offline',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: color,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -1201,8 +1193,8 @@ class _UploadProgressIndicator extends StatelessWidget {
         !active &&
         hasPending &&
         (progress?.stage == EvidenceUploadStage.error ||
-            progress?.hasFailures == true ||
-            progress?.errorMessage?.trim().isNotEmpty == true);
+            (progress?.hasFailures ?? false) ||
+            (progress?.errorMessage?.trim().isNotEmpty ?? false));
     final completed = progress?.processed ?? 0;
     final total = progress?.total ?? pendingCount;
     final title = isImporting
@@ -2430,11 +2422,17 @@ class _EvidenceSection extends StatelessWidget {
     required this.summary,
     required this.decryptionService,
     required this.onOpenEvidence,
+    required this.canDeleteEvidence,
+    required this.isDeletingEvidence,
+    required this.onDeleteEvidence,
   });
 
   final EvidenceCategorySummary summary;
   final EvidenceDecryptionService decryptionService;
   final ValueChanged<RequisitionEvidence> onOpenEvidence;
+  final bool Function(RequisitionEvidence) canDeleteEvidence;
+  final bool Function(RequisitionEvidence) isDeletingEvidence;
+  final ValueChanged<RequisitionEvidence> onDeleteEvidence;
 
   @override
   Widget build(BuildContext context) {
@@ -2482,6 +2480,10 @@ class _EvidenceSection extends StatelessWidget {
                   evidence: visible[index],
                   decryptionService: decryptionService,
                   onOpen: () => onOpenEvidence(visible[index]),
+                  onDelete: canDeleteEvidence(visible[index])
+                      ? () => onDeleteEvidence(visible[index])
+                      : null,
+                  isDeleting: isDeletingEvidence(visible[index]),
                 ),
               );
             },
@@ -2500,6 +2502,9 @@ class _EvidenceSection extends StatelessWidget {
       evidence: summary.items,
       decryptionService: decryptionService,
       onOpenEvidence: onOpenEvidence,
+      canDeleteEvidence: canDeleteEvidence,
+      isDeletingEvidence: isDeletingEvidence,
+      onDeleteEvidence: onDeleteEvidence,
     ),
   );
 }
@@ -2509,10 +2514,14 @@ class _EvidencePreview extends StatelessWidget {
     required this.evidence,
     required this.decryptionService,
     required this.onOpen,
+    this.onDelete,
+    this.isDeleting = false,
   });
   final RequisitionEvidence evidence;
   final EvidenceDecryptionService decryptionService;
   final VoidCallback onOpen;
+  final VoidCallback? onDelete;
+  final bool isDeleting;
 
   @override
   Widget build(BuildContext context) {
@@ -2533,96 +2542,115 @@ class _EvidencePreview extends StatelessWidget {
       color: theme.cardColor,
       borderRadius: BorderRadius.circular(AppRadius.m),
       shadowColor: Colors.transparent,
-      child: InkWell(
-        onTap: onOpen,
-        borderRadius: BorderRadius.circular(AppRadius.m),
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpace.s),
-          child: Row(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(AppRadius.s),
-                child: Container(
-                  width: AppSize.minTouchTarget,
-                  height: AppSize.minTouchTarget,
-                  decoration: BoxDecoration(
-                    color: scheme.primary.withValues(alpha: .14),
-                    borderRadius: BorderRadius.circular(AppRadius.s),
-                  ),
-                  child: evidence.type == RequisitionEvidenceType.image
-                      ? evidence.localPath != null
-                            ? EvidenceThumbnail(
-                                localPath: evidence.localPath,
-                                evidenceId: evidence.id,
-                                wrappedKey: evidence.wrappedKey,
-                                plaintextSha256: evidence.plaintextSha256,
-                                plaintextByteLength:
-                                    evidence.plaintextByteLength,
-                                decryptionService: decryptionService,
-                                fallback: imageFallback,
-                              )
-                            : evidence.contentUrl != null && !evidence.encrypted
-                            ? Image.network(
-                                evidence.contentUrl!,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, _, _) => imageFallback,
-                              )
-                            : imageFallback
-                      : Padding(
-                          padding: const EdgeInsets.all(
-                            AppSpace.m - AppSpace.s,
-                          ),
-                          child: SvgPicture.asset(
-                            'assets/images/icons/$iconAsset',
-                            colorFilter: ColorFilter.mode(
-                              scheme.primary,
-                              BlendMode.srcIn,
-                            ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpace.s),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.s),
+              child: Container(
+                width: AppSize.minTouchTarget,
+                height: AppSize.minTouchTarget,
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: .14),
+                  borderRadius: BorderRadius.circular(AppRadius.s),
+                ),
+                child: evidence.type == RequisitionEvidenceType.image
+                    ? evidence.localPath != null
+                          ? EvidenceThumbnail(
+                              localPath: evidence.localPath,
+                              evidenceId: evidence.id,
+                              wrappedKey: evidence.wrappedKey,
+                              plaintextSha256: evidence.plaintextSha256,
+                              plaintextByteLength: evidence.plaintextByteLength,
+                              decryptionService: decryptionService,
+                              fallback: imageFallback,
+                            )
+                          : evidence.contentUrl != null && !evidence.encrypted
+                          ? Image.network(
+                              evidence.contentUrl!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, _, _) => imageFallback,
+                            )
+                          : imageFallback
+                    : Padding(
+                        padding: const EdgeInsets.all(
+                          AppSpace.m - AppSpace.s,
+                        ),
+                        child: SvgPicture.asset(
+                          'assets/images/icons/$iconAsset',
+                          colorFilter: ColorFilter.mode(
+                            scheme.primary,
+                            BlendMode.srcIn,
                           ),
                         ),
-                ),
-              ),
-              const SizedBox(width: AppSpace.s),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      evidence.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        fontWeight: FontWeight.w600,
                       ),
-                    ),
-                    const SizedBox(height: AppSpace.xs),
-                    Text(
-                      '${evidence.sizeLabel} · ${_evidenceStatusLabel(evidence)}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
               ),
-              IconButton(
-                onPressed: onOpen,
-                tooltip: 'Ver evidencia',
-                icon: SvgPicture.asset(
-                  'assets/images/icons/eye.svg',
-                  width: AppSize.iconS,
-                  height: AppSize.iconS,
-                  colorFilter: ColorFilter.mode(
-                    scheme.primary,
-                    BlendMode.srcIn,
+            ),
+            const SizedBox(width: AppSpace.s),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    evidence.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
+                  const SizedBox(height: AppSpace.xs),
+                  Text(
+                    '${evidence.sizeLabel} · ${_evidenceStatusLabel(evidence)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              onPressed: onOpen,
+              tooltip: 'Ver evidencia',
+              icon: SvgPicture.asset(
+                'assets/images/icons/eye.svg',
+                width: AppSize.iconS,
+                height: AppSize.iconS,
+                colorFilter: ColorFilter.mode(
+                  scheme.primary,
+                  BlendMode.srcIn,
                 ),
               ),
-            ],
-          ),
+            ),
+            if (onDelete != null)
+              isDeleting
+                  ? const SizedBox.square(
+                      dimension: AppSize.minTouchTarget,
+                      child: Center(
+                        child: SizedBox.square(
+                          dimension: AppSize.iconM,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    )
+                  : IconButton(
+                      onPressed: onDelete,
+                      tooltip: 'Eliminar evidencia pendiente',
+                      icon: SvgPicture.asset(
+                        'assets/images/icons/delete.svg',
+                        width: AppSize.iconS,
+                        height: AppSize.iconS,
+                        colorFilter: ColorFilter.mode(
+                          scheme.error,
+                          BlendMode.srcIn,
+                        ),
+                      ),
+                    ),
+          ],
         ),
       ),
     );
@@ -2637,7 +2665,10 @@ String _categoryTitle(EvidenceCategory category) => switch (category) {
 
 String _evidenceStatusLabel(RequisitionEvidence evidence) =>
     switch (evidence.uploadStatus?.toUpperCase()) {
-      'AVAILABLE' => 'Sincronizada',
+      'AVAILABLE' =>
+        evidence.encrypted && evidence.localPath == null
+            ? 'En servidor · pendiente offline'
+            : 'Sincronizada',
       'PENDING_UPLOAD' => 'Pendiente',
       'UPLOADING' => 'Cargando',
       _ => 'Local',
@@ -2667,12 +2698,18 @@ class _AllEvidenceSheet extends StatelessWidget {
     required this.evidence,
     required this.decryptionService,
     required this.onOpenEvidence,
+    required this.canDeleteEvidence,
+    required this.isDeletingEvidence,
+    required this.onDeleteEvidence,
   });
   final String title;
   final String subtitle;
   final List<RequisitionEvidence> evidence;
   final EvidenceDecryptionService decryptionService;
   final ValueChanged<RequisitionEvidence> onOpenEvidence;
+  final bool Function(RequisitionEvidence) canDeleteEvidence;
+  final bool Function(RequisitionEvidence) isDeletingEvidence;
+  final ValueChanged<RequisitionEvidence> onDeleteEvidence;
 
   @override
   Widget build(BuildContext context) {
@@ -2719,6 +2756,15 @@ class _AllEvidenceSheet extends StatelessWidget {
                         itemBuilder: (context, index) => _EvidencePreview(
                           evidence: evidence[index],
                           decryptionService: decryptionService,
+                          onDelete: canDeleteEvidence(evidence[index])
+                              ? () {
+                                  Navigator.of(context).pop();
+                                  WidgetsBinding.instance.addPostFrameCallback(
+                                    (_) => onDeleteEvidence(evidence[index]),
+                                  );
+                                }
+                              : null,
+                          isDeleting: isDeletingEvidence(evidence[index]),
                           onOpen: () {
                             Navigator.of(context).pop();
                             WidgetsBinding.instance.addPostFrameCallback(
@@ -2876,6 +2922,78 @@ class _ConfirmDetailFinalizeSheet extends StatelessWidget {
                       onPressed: onConfirm,
                       icon: const Icon(Icons.lock_outline),
                       label: const Text('Sellar'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ConfirmEvidenceDeleteSheet extends StatelessWidget {
+  const _ConfirmEvidenceDeleteSheet({
+    required this.evidence,
+    required this.onCancel,
+    required this.onConfirm,
+  });
+
+  final RequisitionEvidence evidence;
+  final VoidCallback onCancel;
+  final VoidCallback onConfirm;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Material(
+      color: theme.cardColor,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpace.l),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Eliminar evidencia', style: theme.textTheme.titleLarge),
+              const SizedBox(height: AppSpace.s),
+              Text(
+                evidence.isBackendRecord
+                    ? 'Se eliminará “${evidence.name}” del servidor y del dispositivo. Esta acción solo aplica a evidencias pendientes de sincronización.'
+                    : 'Se eliminará “${evidence.name}” del dispositivo. Esta acción solo aplica a evidencias pendientes de sincronización.',
+              ),
+              const SizedBox(height: AppSpace.l),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: onCancel,
+                      child: const Text('Cancelar'),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpace.s),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: onConfirm,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: scheme.error,
+                        foregroundColor: scheme.onError,
+                      ),
+                      icon: SvgPicture.asset(
+                        'assets/images/icons/delete.svg',
+                        width: AppSize.iconS,
+                        height: AppSize.iconS,
+                        colorFilter: ColorFilter.mode(
+                          scheme.onError,
+                          BlendMode.srcIn,
+                        ),
+                      ),
+                      label: const Text('Eliminar'),
                     ),
                   ),
                 ],

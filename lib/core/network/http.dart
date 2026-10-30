@@ -555,9 +555,9 @@ String _readableHttpErrorMessage(dynamic responseBody, int statusCode) {
 
     // Algunos proxies devuelven HTML aunque la API trabaje con JSON. No se
     // debe mostrar ese documento completo en la interfaz.
-    if (RegExp(r'<[^>]+>').hasMatch(text)) {
+    if (RegExp('<[^>]+>').hasMatch(text)) {
       final title = RegExp(
-        r'<title[^>]*>(.*?)</title>',
+        '<title[^>]*>(.*?)</title>',
         caseSensitive: false,
         dotAll: true,
       ).firstMatch(text)?.group(1)?.replaceAll(RegExp(r'\s+'), ' ').trim();

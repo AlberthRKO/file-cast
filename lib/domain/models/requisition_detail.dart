@@ -166,6 +166,7 @@ final class RequisitionEvidence {
     required this.createdAt,
     required this.sizeLabel,
     required this.byteLength,
+    this.isBackendRecord = false,
     this.requisitionId,
     this.localPath,
     this.sha256,
@@ -189,6 +190,7 @@ final class RequisitionEvidence {
   });
 
   final String id;
+  final bool isBackendRecord;
   final String? requisitionId;
   final String name;
   final RequisitionEvidenceType type;

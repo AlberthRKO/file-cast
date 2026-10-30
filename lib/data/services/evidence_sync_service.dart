@@ -42,6 +42,8 @@ class EvidenceSyncService {
   final StreamController<EvidenceUploadProgress> _progressController =
       StreamController<EvidenceUploadProgress>.broadcast();
   final Random _random = Random.secure();
+  final Map<String, List<EvidenceEncryptionRecipient>>
+  _recipientsByRequisition = <String, List<EvidenceEncryptionRecipient>>{};
   Future<int>? _activeRun;
   bool _runAgainWhenIdle = false;
 
@@ -109,6 +111,7 @@ class EvidenceSyncService {
     _activeRun = run;
     run.then<void>(
       (_) {
+        _recipientsByRequisition.clear();
         if (identical(_activeRun, run)) {
           _activeRun = null;
           _startQueuedRunIfNeeded();
@@ -116,6 +119,7 @@ class EvidenceSyncService {
         unawaited(_scheduleIfPending());
       },
       onError: (Object _, StackTrace __) {
+        _recipientsByRequisition.clear();
         if (identical(_activeRun, run)) {
           _activeRun = null;
           _startQueuedRunIfNeeded();
@@ -284,39 +288,44 @@ class EvidenceSyncService {
 
   Future<String> _syncOne(LocalEvidenceRecord evidence) async {
     await _keyExchange.ensureRegistered(evidence.requisitionId);
-    final recipients = await _keyExchange.recipients(evidence.requisitionId);
+    final recipients = await _recipientsFor(evidence.requisitionId);
     final currentDeviceId = await _crypto.encryptionDeviceId;
-    final keyEnvelopes = <Map<String, dynamic>>[];
-    for (final recipient in recipients) {
-      if (recipient.publicKey.isEmpty) continue;
-      try {
-        final wrappedKey = await _crypto.wrapLocalDataKeyForDevice(
-          wrappedKey: evidence.wrappedKey,
-          evidenceId: evidence.id,
-          recipientPublicKey: recipient.publicKey,
-        );
-        keyEnvelopes.add({
-          'recipientType': 'DEVICE',
-          'recipientId': recipient.deviceId,
-          'wrapAlgorithm': EvidenceCryptoService.deviceKeyAlgorithm,
-          'keyVersion': recipient.keyVersion,
-          'wrappedKey': wrappedKey,
-        });
-      } on Object {
-        // Una clave pública incompatible no debe bloquear el resto del lote.
-      }
-    }
+    final shareableRecipients = recipients
+        .where((recipient) => recipient.publicKey.isNotEmpty)
+        .toList(growable: false);
     final recoveryKey = await _keyExchange.recoveryKey(evidence.requisitionId);
     if (recoveryKey == null) {
       throw StateError(
         'La recuperación institucional no está configurada. La evidencia queda pendiente para evitar una pérdida de acceso.',
       );
     }
-    final recoveryWrappedKey = await _crypto.wrapLocalDataKeyForRecovery(
+    final wrappedKeys = await _crypto.wrapLocalDataKeyForRecipients(
       wrappedKey: evidence.wrappedKey,
       evidenceId: evidence.id,
-      recoveryPublicKey: recoveryKey.publicKey,
+      recipientPublicKeys: [
+        ...shareableRecipients.map((recipient) => recipient.publicKey),
+        recoveryKey.publicKey,
+      ],
     );
+    final keyEnvelopes = <Map<String, dynamic>>[];
+    for (var index = 0; index < shareableRecipients.length; index++) {
+      final wrappedKey = wrappedKeys[index];
+      if (wrappedKey == null) continue;
+      final recipient = shareableRecipients[index];
+      keyEnvelopes.add({
+        'recipientType': 'DEVICE',
+        'recipientId': recipient.deviceId,
+        'wrapAlgorithm': EvidenceCryptoService.deviceKeyAlgorithm,
+        'keyVersion': recipient.keyVersion,
+        'wrappedKey': wrappedKey,
+      });
+    }
+    final recoveryWrappedKey = wrappedKeys[shareableRecipients.length];
+    if (recoveryWrappedKey == null) {
+      throw StateError(
+        'No se pudo preparar la envoltura de recuperación institucional.',
+      );
+    }
     final intent = await _http.request<dynamic>(
       '/api/v1/requisitions/${evidence.requisitionId}/evidence-intents',
       method: HttpMethod.post,
@@ -407,24 +416,20 @@ class EvidenceSyncService {
       '_id',
     ]);
     if (remoteId == null) throw StateError('La API no devolvió el msFileId.');
-    for (final envelope in keyEnvelopes) {
-      await _keyExchange.addEnvelope(
-        requisitionId: evidence.requisitionId,
-        evidenceId: evidence.id,
-        recipientId: envelope['recipientId']! as String,
-        wrappedKey: envelope['wrappedKey']! as String,
-        keyVersion: envelope['keyVersion']! as int,
-      );
-    }
-    if (recoveryKey != null && recoveryWrappedKey != null) {
-      await _keyExchange.addRecoveryEnvelope(
-        requisitionId: evidence.requisitionId,
-        evidenceId: evidence.id,
-        recoveryKey: recoveryKey,
-        wrappedKey: recoveryWrappedKey,
-      );
-    }
+    // Las envolturas ya se guardaron atómicamente al crear la intención. El
+    // endpoint `key-envelopes` queda reservado para reparar o agregar una
+    // envoltura después; repetirlo aquí hacía 7 peticiones extra por archivo.
     return remoteId;
+  }
+
+  Future<List<EvidenceEncryptionRecipient>> _recipientsFor(
+    String requisitionId,
+  ) async {
+    final cached = _recipientsByRequisition[requisitionId];
+    if (cached != null) return cached;
+    final recipients = await _keyExchange.recipients(requisitionId);
+    _recipientsByRequisition[requisitionId] = recipients;
+    return recipients;
   }
 
   /// Las envolturas X25519 se generan con aleatoriedad. Si se reutiliza la

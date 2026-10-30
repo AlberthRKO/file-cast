@@ -51,7 +51,7 @@ class LocalEvidenceDatabaseService {
       return await openDatabase(
         path,
         password: key,
-        version: 4,
+        version: 5,
         onCreate: (db, _) async {
           await db.execute('''
             CREATE TABLE evidencias_locales (
@@ -109,9 +109,11 @@ class LocalEvidenceDatabaseService {
         },
         onUpgrade: (db, oldVersion, _) async {
           if (oldVersion < 2) {
-            await db.execute(
-              "ALTER TABLE evidencias_locales ADD COLUMN metodo_adquisicion "
-              "TEXT NOT NULL DEFAULT 'IMPORTED_FILE'",
+            await _ensureColumn(
+              db,
+              table: 'evidencias_locales',
+              column: 'metodo_adquisicion',
+              definition: "TEXT NOT NULL DEFAULT 'IMPORTED_FILE'",
             );
           }
           if (oldVersion < 3) {
@@ -123,12 +125,16 @@ class LocalEvidenceDatabaseService {
               )
             ''');
           }
-          if (oldVersion < 4) {
-            await db.execute(
-              'ALTER TABLE outbox_evidencias ADD COLUMN '
-              'reintento_automatico INTEGER NOT NULL DEFAULT 1',
-            );
-          }
+          // La migración anterior podía haber agregado la columna y fallar
+          // antes de actualizar user_version. Nunca repetir un ALTER TABLE
+          // ciego: WorkManager y la app pueden reabrir la misma base después
+          // de una actualización o una migración interrumpida.
+          await _ensureColumn(
+            db,
+            table: 'outbox_evidencias',
+            column: 'reintento_automatico',
+            definition: 'INTEGER NOT NULL DEFAULT 1',
+          );
         },
       );
     } on Object catch (error, stackTrace) {
@@ -138,6 +144,20 @@ class LocalEvidenceDatabaseService {
         stackTrace: stackTrace,
       );
     }
+  }
+
+  Future<void> _ensureColumn(
+    Database db, {
+    required String table,
+    required String column,
+    required String definition,
+  }) async {
+    final columns = await db.rawQuery('PRAGMA table_info($table)');
+    final exists = columns.any(
+      (item) => item['name']?.toString() == column,
+    );
+    if (exists) return;
+    await db.execute('ALTER TABLE $table ADD COLUMN $column $definition');
   }
 
   String _databaseErrorMessage(Object error) {
@@ -376,6 +396,64 @@ class LocalEvidenceDatabaseService {
         evidenceId,
       ],
     );
+  }
+
+  /// Elimina una evidencia únicamente mientras no haya recibido un
+  /// identificador de ms-files-v2. La operación se serializa con la outbox
+  /// para evitar borrar un archivo mientras se está subiendo.
+  Future<bool> deletePendingEvidence({
+    required String requisitionId,
+    required String evidenceId,
+  }) async {
+    return withSyncLock(() async {
+      final db = await database;
+      final rows = await db.query(
+        'evidencias_locales',
+        where: 'id = ? AND requisa_id = ?',
+        whereArgs: [evidenceId, requisitionId],
+        limit: 1,
+      );
+      if (rows.isEmpty) return false;
+
+      final record = LocalEvidenceRecord.fromMap(rows.single);
+      final outboxRows = await db.query(
+        'outbox_evidencias',
+        columns: ['estado'],
+        where: 'evidencia_id = ?',
+        whereArgs: [evidenceId],
+        limit: 1,
+      );
+      final outboxState = outboxRows.isEmpty
+          ? null
+          : (outboxRows.single['estado'] as String?)?.toUpperCase();
+      final isSynchronized =
+          record.state.toUpperCase() == 'SINCRONIZADA' ||
+          record.msFileId?.trim().isNotEmpty == true ||
+          outboxState == 'SINCRONIZADA';
+      if (isSynchronized) {
+        throw StateError(
+          'La evidencia ya está sincronizada y no se puede eliminar.',
+        );
+      }
+
+      final encryptedFile = File(record.encryptedPath);
+      if (await encryptedFile.exists()) {
+        await encryptedFile.delete();
+      }
+      await db.transaction((txn) async {
+        await txn.delete(
+          'outbox_evidencias',
+          where: 'evidencia_id = ?',
+          whereArgs: [evidenceId],
+        );
+        await txn.delete(
+          'evidencias_locales',
+          where: 'id = ? AND requisa_id = ?',
+          whereArgs: [evidenceId, requisitionId],
+        );
+      });
+      return true;
+    });
   }
 
   Future<void> close() async {

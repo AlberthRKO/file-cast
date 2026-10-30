@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -317,52 +318,37 @@ class EvidenceCryptoService implements EvidenceDecryptionService {
     required String evidenceId,
     required String recipientPublicKey,
   }) async {
+    final wrappedKeys = await wrapLocalDataKeyForRecipients(
+      wrappedKey: wrappedKey,
+      evidenceId: evidenceId,
+      recipientPublicKeys: [recipientPublicKey],
+    );
+    final result = wrappedKeys.length == 1 ? wrappedKeys.first : null;
+    if (result == null) {
+      throw StateError('No se pudo envolver la clave para el dispositivo.');
+    }
+    return result;
+  }
+
+  /// Envuelve una DEK para varios destinatarios fuera del isolate principal.
+  ///
+  /// La desencriptación de la DEK local ocurre una sola vez y el cálculo
+  /// X25519/HKDF/AES de todos los destinatarios se ejecuta en un isolate
+  /// separado para no bloquear los frames de Flutter durante una subida.
+  Future<List<String?>> wrapLocalDataKeyForRecipients({
+    required String wrappedKey,
+    required String evidenceId,
+    required List<String> recipientPublicKeys,
+  }) async {
+    if (recipientPublicKeys.isEmpty) return const [];
     final localDataKey = await _unwrapDataKey(wrappedKey);
     final dataKeyBytes = await localDataKey.extractBytes();
-    final ephemeral = await _x25519.newKeyPair();
-    final recipientBytes = _decodeBase64Bytes(
-      recipientPublicKey,
-      fieldName: 'La clave pública del destinatario',
-    );
-    if (recipientBytes.length != 32) {
-      throw StateError(
-        'La clave pública del destinatario X25519 no tiene 32 bytes.',
-      );
-    }
-    final remotePublicKey = SimplePublicKey(
-      recipientBytes,
-      type: KeyPairType.x25519,
-    );
-    final sharedSecret = await _x25519.sharedSecretKey(
-      keyPair: ephemeral,
-      remotePublicKey: remotePublicKey,
-    );
-    final salt = _randomBytes(16);
-    final wrappingKey = await _hkdf.deriveKey(
-      secretKey: sharedSecret,
-      nonce: salt,
-      info: utf8.encode('file-cast/evidence-key/$evidenceId/$formatVersion'),
-    );
-    final nonce = _randomBytes(_nonceLength);
-    final box = await _aes.encrypt(
-      dataKeyBytes,
-      secretKey: wrappingKey,
-      nonce: nonce,
-      aad: _keyEnvelopeAad(evidenceId),
-    );
-    final ephemeralPublicKey = await ephemeral.extractPublicKey();
-    ephemeral.destroy();
-    return _base64Url(
-      utf8.encode(
-        jsonEncode({
-          'version': formatVersion,
-          'ephemeralPublicKey': _base64Url(ephemeralPublicKey.bytes),
-          'salt': _base64Url(salt),
-          'nonce': _base64Url(nonce),
-          'ciphertext': _base64Url(box.cipherText),
-          'mac': _base64Url(box.mac.bytes),
-        }),
-      ),
+    return Isolate.run(
+      () => _wrapDataKeyForRecipientsInIsolate({
+        'dataKeyBytes': dataKeyBytes,
+        'evidenceId': evidenceId,
+        'recipientPublicKeys': recipientPublicKeys,
+      }),
     );
   }
 
@@ -545,6 +531,88 @@ class EvidenceCryptoService implements EvidenceDecryptionService {
 
   String _sha256(List<int> bytes) => crypto.sha256.convert(bytes).toString();
 }
+
+Future<List<String?>> _wrapDataKeyForRecipientsInIsolate(
+  Map<String, dynamic> payload,
+) async {
+  final dataKeyBytes = List<int>.from(payload['dataKeyBytes'] as List);
+  final evidenceId = payload['evidenceId'] as String;
+  final recipientPublicKeys = (payload['recipientPublicKeys'] as List)
+      .cast<String>();
+  final x25519 = X25519();
+  final hkdf = Hkdf(hmac: Hmac.sha256(), outputLength: 32);
+  final aes = AesGcm.with256bits();
+  final random = Random.secure();
+  final wrappedKeys = <String?>[];
+
+  for (final recipientPublicKey in recipientPublicKeys) {
+    try {
+      final normalized = base64Url.normalize(
+        recipientPublicKey.replaceAll('+', '-').replaceAll('/', '_'),
+      );
+      final recipientBytes = base64Url.decode(normalized);
+      if (recipientBytes.length != 32) {
+        throw StateError(
+          'La clave pública del destinatario X25519 no tiene 32 bytes.',
+        );
+      }
+      final ephemeral = await x25519.newKeyPair();
+      try {
+        final sharedSecret = await x25519.sharedSecretKey(
+          keyPair: ephemeral,
+          remotePublicKey: SimplePublicKey(
+            recipientBytes,
+            type: KeyPairType.x25519,
+          ),
+        );
+        final salt = _randomBytesForIsolate(random, 16);
+        final wrappingKey = await hkdf.deriveKey(
+          secretKey: sharedSecret,
+          nonce: salt,
+          info: utf8.encode(
+            'file-cast/evidence-key/$evidenceId/${EvidenceCryptoService.formatVersion}',
+          ),
+        );
+        final nonce = _randomBytesForIsolate(random, 12);
+        final box = await aes.encrypt(
+          dataKeyBytes,
+          secretKey: wrappingKey,
+          nonce: nonce,
+          aad: utf8.encode(
+            'file-cast/evidence-key/$evidenceId/${EvidenceCryptoService.formatVersion}',
+          ),
+        );
+        final ephemeralPublicKey = await ephemeral.extractPublicKey();
+        wrappedKeys.add(
+          base64UrlEncode(
+            utf8.encode(
+              jsonEncode({
+                'version': EvidenceCryptoService.formatVersion,
+                'ephemeralPublicKey': base64UrlEncode(
+                  ephemeralPublicKey.bytes,
+                ),
+                'salt': base64UrlEncode(salt),
+                'nonce': base64UrlEncode(nonce),
+                'ciphertext': base64UrlEncode(box.cipherText),
+                'mac': base64UrlEncode(box.mac.bytes),
+              }),
+            ),
+          ),
+        );
+      } finally {
+        ephemeral.destroy();
+      }
+    } on Object {
+      // Mantiene el comportamiento anterior: una clave pública incompatible
+      // no bloquea las demás envolturas del mismo archivo.
+      wrappedKeys.add(null);
+    }
+  }
+  return wrappedKeys;
+}
+
+List<int> _randomBytesForIsolate(Random random, int length) =>
+    List<int>.generate(length, (_) => random.nextInt(256), growable: false);
 
 final class EncryptedEvidenceLocal {
   const EncryptedEvidenceLocal({
