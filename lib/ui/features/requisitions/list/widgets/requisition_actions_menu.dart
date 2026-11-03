@@ -35,7 +35,7 @@ class RequisitionActionsMenu extends StatelessWidget {
           requisition.status == RequisitionStatus.inProgress);
 
   bool get _canViewLocation =>
-      location?.isValid == true && onViewLocation != null;
+      (location?.isValid ?? false) && onViewLocation != null;
 
   @override
   Widget build(BuildContext context) {
@@ -117,10 +117,8 @@ class RequisitionActionsMenu extends StatelessWidget {
                   ),
                 ],
               ),
-              useSafeArea: true,
             ),
             menuItemStyleData: const MenuItemStyleData(
-              height: AppSize.minTouchTarget,
               padding: EdgeInsets.symmetric(horizontal: AppSpace.m),
             ),
             barrierColor: Colors.transparent,
@@ -190,13 +188,14 @@ class _ActionMenuRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        icon != null
-            ? Icon(icon, size: AppSize.iconM, color: color)
-            : SvgPicture.asset(
-                '$assetImgIcon$iconAsset',
-                width: AppSize.iconM,
-                colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
-              ),
+        if (icon != null)
+          Icon(icon, size: AppSize.iconM, color: color)
+        else
+          SvgPicture.asset(
+            '$assetImgIcon$iconAsset',
+            width: AppSize.iconM,
+            colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+          ),
         const SizedBox(width: AppSpace.s),
         Expanded(
           child: Text(

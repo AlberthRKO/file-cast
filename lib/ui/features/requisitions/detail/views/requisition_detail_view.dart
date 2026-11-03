@@ -1,6 +1,7 @@
 import 'dart:async';
 
-import 'package:file_cast/core/theme/colors.dart';
+import 'package:dropdown_button2/dropdown_button2.dart';
+import 'package:file_cast/core/constants/complemento.dart';
 import 'package:file_cast/domain/models/evidence_offline_sync.dart';
 import 'package:file_cast/domain/models/evidence_upload_progress.dart';
 import 'package:file_cast/domain/models/requisition.dart';
@@ -140,26 +141,13 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
         elevation: 0,
         scrolledUnderElevation: 0,
         actions: [
-          if (viewModel.canManageParticipants)
-            IconButton(
-              tooltip: 'Agregar participante',
-              onPressed: () => _showParticipantForm(context),
-              icon: SvgPicture.asset(
-                'assets/images/icons/user_plus.svg',
-                width: AppSize.iconL,
-                height: AppSize.iconL,
-                colorFilter: ColorFilter.mode(
-                  Theme.of(context).colorScheme.primary,
-                  BlendMode.srcIn,
-                ),
-              ),
-            ),
-          IconButton(
-            tooltip: 'Actualizar detalle',
-            onPressed: viewModel.isRefreshing
-                ? null
-                : () => unawaited(viewModel.refresh()),
-            icon: const Icon(Icons.refresh),
+          _RequisitionDetailActionsMenu(
+            canAddParticipant: viewModel.canManageParticipants,
+            canFinalize: viewModel.canFinalize,
+            canLinkCase: viewModel.canLinkCase,
+            onAddParticipant: () => _showParticipantForm(context),
+            onFinalize: () => _finalize(context),
+            onLinkCase: () => _showCaseLink(context),
           ),
           IconButton(
             tooltip: _showInfo
@@ -198,7 +186,6 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
                     onShowSubjects: () => _showSubjects(context),
                     onShowParticipants: () => _showParticipants(context),
                     onShowLocation: () => _showLocation(context),
-                    onLinkCase: () => _showCaseLink(context),
                   )
                 : const SizedBox.shrink(),
           ),
@@ -221,14 +208,6 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
                   ),
                   children: [
                     _EvidenceTotals(categories: categories),
-                    if (viewModel.canFinalize) ...[
-                      const SizedBox(height: AppSpace.m),
-                      _FinalizeCard(
-                        isFinalizing: viewModel.isFinalizing,
-                        canSeal: viewModel.canSeal,
-                        onPressed: () => _finalize(context),
-                      ),
-                    ],
                     for (final category in categories) ...[
                       const SizedBox(height: AppSpace.m),
                       _EvidenceSection(
@@ -505,6 +484,169 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
   }
 }
 
+enum _RequisitionDetailAction { addParticipant, finalize, linkCase }
+
+class _RequisitionDetailActionsMenu extends StatelessWidget {
+  const _RequisitionDetailActionsMenu({
+    required this.canAddParticipant,
+    required this.canFinalize,
+    required this.canLinkCase,
+    required this.onAddParticipant,
+    required this.onFinalize,
+    required this.onLinkCase,
+  });
+
+  final bool canAddParticipant;
+  final bool canFinalize;
+  final bool canLinkCase;
+  final VoidCallback onAddParticipant;
+  final VoidCallback onFinalize;
+  final VoidCallback onLinkCase;
+
+  bool get _hasActions => canAddParticipant || canFinalize || canLinkCase;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_hasActions) return const SizedBox.shrink();
+
+    final theme = Theme.of(context);
+    final iconColor =
+        theme.textTheme.bodyLarge?.color ?? theme.colorScheme.onSurface;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final menuWidth =
+            constraints.maxWidth.isFinite && constraints.maxWidth < 232
+            ? 220.0
+            : 240.0;
+
+        return DropdownButtonHideUnderline(
+          child: DropdownButton2<_RequisitionDetailAction>(
+            customButton: Tooltip(
+              message: 'Acciones de la requisa',
+              child: SizedBox.square(
+                dimension: AppSize.minTouchTarget,
+                child: Center(
+                  child: SvgPicture.asset(
+                    '${assetImgIcon}ellipsisH.svg',
+                    width: AppSize.iconM,
+                    colorFilter: ColorFilter.mode(
+                      iconColor,
+                      BlendMode.srcIn,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            items: [
+              if (canAddParticipant)
+                DropdownMenuItem<_RequisitionDetailAction>(
+                  value: _RequisitionDetailAction.addParticipant,
+                  child: _DetailActionMenuRow(
+                    iconAsset: 'user_plus.svg',
+                    label: 'Agregar participante',
+                    color: iconColor,
+                  ),
+                ),
+              if (canFinalize)
+                DropdownMenuItem<_RequisitionDetailAction>(
+                  value: _RequisitionDetailAction.finalize,
+                  child: _DetailActionMenuRow(
+                    iconAsset: 'lock.svg',
+                    label: 'Cerrar requisa',
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              if (canLinkCase)
+                DropdownMenuItem<_RequisitionDetailAction>(
+                  value: _RequisitionDetailAction.linkCase,
+                  child: _DetailActionMenuRow(
+                    iconAsset: 'link.svg',
+                    label: 'Vincular a un caso',
+                    color: iconColor,
+                  ),
+                ),
+            ],
+            onChanged: (action) {
+              if (action == null) return;
+              switch (action) {
+                case _RequisitionDetailAction.addParticipant:
+                  onAddParticipant();
+                case _RequisitionDetailAction.finalize:
+                  onFinalize();
+                case _RequisitionDetailAction.linkCase:
+                  onLinkCase();
+              }
+            },
+            dropdownStyleData: DropdownStyleData(
+              maxHeight: 220,
+              width: menuWidth,
+              padding: const EdgeInsets.symmetric(vertical: AppSpace.xs),
+              decoration: BoxDecoration(
+                color: theme.cardColor,
+                borderRadius: BorderRadius.circular(AppRadius.m),
+                border: Border.all(
+                  color: theme.dividerColor.withValues(alpha: 0.18),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.18),
+                    blurRadius: 16,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              useSafeArea: true,
+            ),
+            menuItemStyleData: const MenuItemStyleData(
+              height: AppSize.minTouchTarget,
+              padding: EdgeInsets.symmetric(horizontal: AppSpace.m),
+            ),
+            barrierColor: Colors.transparent,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _DetailActionMenuRow extends StatelessWidget {
+  const _DetailActionMenuRow({
+    required this.iconAsset,
+    required this.label,
+    required this.color,
+  });
+
+  final String iconAsset;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SvgPicture.asset(
+          '$assetImgIcon$iconAsset',
+          width: AppSize.iconM,
+          colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+        ),
+        const SizedBox(width: AppSpace.s),
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: color,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _CaseHeader extends StatelessWidget {
   const _CaseHeader({
     required this.detail,
@@ -512,7 +654,6 @@ class _CaseHeader extends StatelessWidget {
     required this.onShowSubjects,
     required this.onShowParticipants,
     required this.onShowLocation,
-    required this.onLinkCase,
   });
 
   final RequisitionDetail detail;
@@ -520,7 +661,6 @@ class _CaseHeader extends StatelessWidget {
   final VoidCallback onShowSubjects;
   final VoidCallback onShowParticipants;
   final VoidCallback onShowLocation;
-  final VoidCallback onLinkCase;
 
   @override
   Widget build(BuildContext context) {
@@ -555,7 +695,6 @@ class _CaseHeader extends StatelessWidget {
                     onShowSubjects: onShowSubjects,
                     onShowParticipants: onShowParticipants,
                     onShowLocation: onShowLocation,
-                    onLinkCase: onLinkCase,
                   ),
                 ),
               );
@@ -574,7 +713,6 @@ class _RequisitionSummaryCard extends StatelessWidget {
     required this.onShowSubjects,
     required this.onShowParticipants,
     required this.onShowLocation,
-    required this.onLinkCase,
   });
 
   final RequisitionDetail detail;
@@ -582,7 +720,6 @@ class _RequisitionSummaryCard extends StatelessWidget {
   final VoidCallback onShowSubjects;
   final VoidCallback onShowParticipants;
   final VoidCallback onShowLocation;
-  final VoidCallback onLinkCase;
 
   @override
   Widget build(BuildContext context) {
@@ -731,8 +868,6 @@ class _RequisitionSummaryCard extends StatelessWidget {
           ),
         ],
         _SummaryFooter(
-          canLinkCase: !hasCase && viewModel.canLinkCase,
-          onLinkCase: onLinkCase,
           sessionsLabel: '${detail.sessions.length} sesiones',
           evidenceLabel: detail.requisition.isSynchronized
               ? 'Evidencias sincronizadas'
@@ -833,8 +968,6 @@ class _SummaryMetric extends StatelessWidget {
 
 class _SummaryFooter extends StatelessWidget {
   const _SummaryFooter({
-    required this.canLinkCase,
-    required this.onLinkCase,
     required this.sessionsLabel,
     required this.evidenceLabel,
     required this.uploadProgress,
@@ -851,8 +984,6 @@ class _SummaryFooter extends StatelessWidget {
     required this.onSyncOffline,
   });
 
-  final bool canLinkCase;
-  final VoidCallback onLinkCase;
   final String sessionsLabel;
   final String evidenceLabel;
   final EvidenceUploadProgress? uploadProgress;
@@ -912,54 +1043,6 @@ class _SummaryFooter extends StatelessWidget {
       onPressed: onSyncOffline,
     );
 
-    final linkButton = AppActionButton(
-      label: 'Vincular a un caso',
-      onPressed: onLinkCase,
-      foregroundColor: textWhite,
-      gradient: const LinearGradient(
-        colors: [actionGradientStart, violet],
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-      ),
-      leadingAsset: 'assets/images/icons/link.svg',
-      maxWidth: 240,
-      elevation: 2,
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpace.m,
-        vertical: AppSpace.s,
-      ),
-    );
-
-    final footer = !canLinkCase
-        ? metrics
-        : LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 720;
-              if (!wide) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    metrics,
-                    const SizedBox(height: AppSpace.s),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: linkButton,
-                    ),
-                  ],
-                );
-              }
-
-              return Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Flexible(child: metrics),
-                  const SizedBox(width: AppSpace.m),
-                  SizedBox(width: 240, child: linkButton),
-                ],
-              );
-            },
-          );
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -974,7 +1057,7 @@ class _SummaryFooter extends StatelessWidget {
           offlineAction,
           const SizedBox(height: AppSpace.s),
         ],
-        footer,
+        metrics,
       ],
     );
   }
@@ -2245,76 +2328,6 @@ class _CaseLinkSheetState extends State<_CaseLinkSheet> {
     if (error == null) {
       Navigator.of(context).pop(item);
     }
-  }
-}
-
-class _FinalizeCard extends StatelessWidget {
-  const _FinalizeCard({
-    required this.isFinalizing,
-    required this.canSeal,
-    required this.onPressed,
-  });
-
-  final bool isFinalizing;
-  final bool canSeal;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final button = FilledButton.icon(
-      onPressed: isFinalizing || !canSeal ? null : onPressed,
-      icon: isFinalizing
-          ? const SizedBox.square(
-              dimension: AppSize.iconS,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : const Icon(Icons.lock_outline),
-      label: const Text('Sellar'),
-    );
-    final explanation = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Cerrar requisa', style: theme.textTheme.titleSmall),
-        const SizedBox(height: AppSpace.xs),
-        Text(
-          canSeal
-              ? 'El backend verificará el caso y la disponibilidad de las evidencias antes de sellarla.'
-              : 'Hay evidencias pendientes de sincronización. Deben estar disponibles antes de sellar la requisa.',
-          style: theme.textTheme.bodySmall,
-        ),
-      ],
-    );
-    return Container(
-      padding: const EdgeInsets.all(AppSpace.m),
-      decoration: BoxDecoration(
-        color: theme.cardColor,
-        borderRadius: BorderRadius.circular(AppRadius.m),
-        boxShadow: _detailCardShadow,
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 560;
-          if (compact) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                explanation,
-                const SizedBox(height: AppSpace.m),
-                Align(alignment: Alignment.centerRight, child: button),
-              ],
-            );
-          }
-          return Row(
-            children: [
-              Expanded(child: explanation),
-              const SizedBox(width: AppSpace.s),
-              button,
-            ],
-          );
-        },
-      ),
-    );
   }
 }
 
