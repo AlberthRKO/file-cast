@@ -99,6 +99,7 @@ app.*.symbols
 
 # Obfuscation related
 app.*.map.json
+artifacts/
 
 # Exceptions to the above rules.
 !**/ios/**/default.mode1v3
