@@ -129,8 +129,6 @@ if [[ "$OBFUSCATE" == true && "$MODE" != 'release' ]]; then
     fail '--obfuscate solo puede usarse con --release.'
 fi
 
-build_dart_defines "$BASE_URL_OVERRIDE"
-
 OBFUSCATION_ARGS=()
 SYMBOLS_DIR=''
 if [[ "$OBFUSCATE" == true ]]; then
@@ -172,8 +170,12 @@ COMMON_ARGS=(
     '--target' "$DART_TARGET"
     "--$MODE"
 )
-COMMON_ARGS+=("${DART_DEFINES[@]}")
-COMMON_ARGS+=("${OBFUSCATION_ARGS[@]}")
+if [[ -n "$BASE_URL_OVERRIDE" ]]; then
+    COMMON_ARGS+=("--dart-define=BASE_URL_FILE_CAST=$BASE_URL_OVERRIDE")
+fi
+if [[ "$OBFUSCATE" == true ]]; then
+    COMMON_ARGS+=("${OBFUSCATION_ARGS[@]}")
+fi
 
 case "$PLATFORM" in
     apk)

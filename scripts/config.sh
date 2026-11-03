@@ -73,15 +73,6 @@ get_flavor_config() {
     esac
 }
 
-build_dart_defines() {
-    local base_url_override="${1:-${BASE_URL_FILE_CAST:-}}"
-
-    DART_DEFINES=()
-    if [[ -n "$base_url_override" ]]; then
-        DART_DEFINES+=("--dart-define=BASE_URL_FILE_CAST=$base_url_override")
-    fi
-}
-
 show_flavor_config() {
     get_flavor_config "${1:-}" || return 1
 

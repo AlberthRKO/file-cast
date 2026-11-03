@@ -87,8 +87,6 @@ get_flavor_config "$REQUESTED_FLAVOR"
 [[ -f "$PROJECT_DIR/$DART_TARGET" ]] ||
     fail "no existe el entrypoint Dart esperado: $DART_TARGET"
 
-build_dart_defines "$BASE_URL_OVERRIDE"
-
 RUN_ARGS=(
     '--flavor' "$FLAVOR"
     '--target' "$DART_TARGET"
@@ -96,7 +94,9 @@ RUN_ARGS=(
 if [[ "$MODE" != 'debug' ]]; then
     RUN_ARGS+=("--$MODE")
 fi
-RUN_ARGS+=("${DART_DEFINES[@]}")
+if [[ -n "$BASE_URL_OVERRIDE" ]]; then
+    RUN_ARGS+=("--dart-define=BASE_URL_FILE_CAST=$BASE_URL_OVERRIDE")
+fi
 if [[ -n "$DEVICE" ]]; then
     RUN_ARGS+=( '--device-id' "$DEVICE" )
 fi
