@@ -237,6 +237,7 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
         enableDrag: false,
         maxWidth: AppSize.formMaxWidth,
         builder: (sheetContext) => _AcquisitionActionSheet(
+          showAndroidUsbActions: viewModel.supportsAndroidUsbAcquisition,
           isImporting: viewModel.isImporting || viewModel.isSelectingEvidence,
           onCapture: () => _closeThen(
             context,
@@ -299,6 +300,7 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
     BuildContext context, {
     required bool transfer,
   }) async {
+    if (!viewModel.supportsAndroidUsbAcquisition) return;
     final sessionId = await viewModel.ensureAcquisitionSession(
       sourcePlatform: 'ANDROID',
       transport: transfer ? 'USB_OTG_ADB' : 'USB_OTG_SCRCPY',
@@ -2800,11 +2802,13 @@ class _AllEvidenceSheet extends StatelessWidget {
 
 class _AcquisitionActionSheet extends StatelessWidget {
   const _AcquisitionActionSheet({
+    required this.showAndroidUsbActions,
     required this.onCapture,
     required this.onTransfer,
     required this.onImport,
     required this.isImporting,
   });
+  final bool showAndroidUsbActions;
   final VoidCallback onCapture;
   final VoidCallback onTransfer;
   final VoidCallback onImport;
@@ -2813,19 +2817,21 @@ class _AcquisitionActionSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
-    final actions = [
-      _ActionData(
-        title: 'Capturar pantalla',
-        subtitle: 'Conecta el dispositivo e inicia la captura.',
-        asset: 'camera.svg',
-        onTap: onCapture,
-      ),
-      _ActionData(
-        title: 'Transferencia de archivos',
-        subtitle: 'Recibe archivos desde el dispositivo conectado.',
-        asset: 'share.svg',
-        onTap: onTransfer,
-      ),
+    final actions = <_ActionData>[
+      if (showAndroidUsbActions) ...[
+        _ActionData(
+          title: 'Capturar pantalla',
+          subtitle: 'Conecta el dispositivo e inicia la captura.',
+          asset: 'camera.svg',
+          onTap: onCapture,
+        ),
+        _ActionData(
+          title: 'Transferencia de archivos',
+          subtitle: 'Recibe archivos desde el dispositivo conectado.',
+          asset: 'share.svg',
+          onTap: onTransfer,
+        ),
+      ],
       _ActionData(
         title: 'Importar archivos',
         subtitle: 'Selecciona imágenes, videos, audios u otros archivos.',
@@ -2863,11 +2869,14 @@ class _AcquisitionActionSheet extends StatelessWidget {
                 const SizedBox(height: AppSpace.m),
                 LayoutBuilder(
                   builder: (context, constraints) {
-                    final columns = constraints.maxWidth >= 840
+                    final preferredColumns = constraints.maxWidth >= 840
                         ? 3
                         : constraints.maxWidth >= 600
                         ? 2
                         : 1;
+                    final columns = actions.length < preferredColumns
+                        ? actions.length
+                        : preferredColumns;
                     return GridView.builder(
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),

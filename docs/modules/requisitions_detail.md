@@ -22,10 +22,10 @@ La vista previa se abre como diálogo responsive con ancho máximo en pantallas 
 
 Las grabaciones del mirror se remultiplexan desde el H.264 Annex-B de scrcpy a muestras AVC/AVCC antes de escribirlas en MP4. Al salir de la pantalla de mirror se libera la textura, el decoder y la sesión nativa; al volver se crea una textura y un decoder nuevos, evitando mostrar el último frame congelado con el canal táctil todavía activo.
 
-- El botón flotante **+** abre un `ModalBottomSheet` con las tres acciones de adquisición mientras la requisa está en `DRAFT` o `IN_PROGRESS`.
-- **Captura de pantalla:** crea o reutiliza una sesión `OPEN` en el backend con `ANDROID`/`USB_OTG_SCRCPY` y abre la conexión asociada a `requisitionId` y `sessionId`.
-- **Transferencia de archivos:** crea o reutiliza la misma sesión con `ANDROID`/`USB_OTG_ADB` y continúa en `/requisitions/:requisitionId/acquisitions/:sessionId/transfer`.
-- **Importar archivos:** selecciona uno o varios archivos, muestra el preview de confirmación, crea o reutiliza una sesión de tipo `FILE_CAST`/`SYSTEM_PICKER` al aceptar, cifra y registra el lote en el outbox local, y muestra su progreso y estado en la cabecera fija.
+- El botón flotante **+** abre un `ModalBottomSheet` con las acciones de adquisición disponibles mientras la requisa está en `DRAFT` o `IN_PROGRESS`: en Android incluye captura, transferencia e importación; en iOS conserva únicamente la importación local.
+- **Captura de pantalla:** en Android crea o reutiliza una sesión `OPEN` en el backend con `ANDROID`/`USB_OTG_SCRCPY` y abre la conexión asociada a `requisitionId` y `sessionId`.
+- **Transferencia de archivos:** en Android crea o reutiliza la misma sesión con `ANDROID`/`USB_OTG_ADB` y continúa en `/requisitions/:requisitionId/acquisitions/:sessionId/transfer`.
+- **Importar archivos:** en Android e iOS selecciona uno o varios archivos mediante el selector del sistema, muestra el preview de confirmación, crea o reutiliza una sesión de tipo `FILE_CAST`/`SYSTEM_PICKER` al aceptar, cifra y registra el lote en el outbox local, y muestra su progreso y estado en la cabecera fija.
 - **Sellar requisa:** solicita confirmación y llama `POST /api/v1/requisitions/:id/finalize`; el backend valida el caso y que las evidencias estén disponibles antes de cambiar el estado a `SEALED`.
 
 ## Estructura
@@ -58,7 +58,7 @@ lib/ui/features/acquisition/transfer/
 
 ## Límite iOS
 
-En iOS/iPadOS se omite la comprobación ADB/OTG, porque el canal Android no existe. La pantalla de conexión informa la limitación y devuelve al detalle; importar archivos permanece disponible mediante los selectores del sistema.
+En iOS/iPadOS las acciones de captura por ADB/scrcpy y transferencia ADB no se muestran, porque el canal Android no existe. La pantalla de conexión conserva un fallback si se alcanza por una ruta externa, pero no inicia adquisición. Importar archivos permanece disponible mediante los selectores del sistema.
 
 ## Deuda
 
@@ -67,4 +67,4 @@ En iOS/iPadOS se omite la comprobación ADB/OTG, porque el canal Android no exis
 - La compatibilidad de video depende de que el archivo no esté corrupto, protegido por DRM o use un códec propietario ausente del build nativo; `media_kit` amplía la cobertura, pero no convierte automáticamente archivos dañados.
 - El cierre explícito de una sesión (`POST /api/v1/requisitions/:id/sessions/:sessionId/complete`) todavía no está conectado al ciclo de salida de las pantallas de adquisición.
 - Transferencia ADB desde almacenamiento compartido está implementada como vertical local; falta validación física, persistencia probatoria y backend.
-- ADB/scrcpy conserva alcance Android; iOS requiere app compañera o puente macOS.
+- ADB/scrcpy conserva alcance Android. La adquisición de un iPhone objetivo desde un inspector Android queda documentada como PoC futura separada: mirror por HDMI/UVC y archivos mediante `libimobiledevice`/AFC de solo lectura; no está implementada todavía.

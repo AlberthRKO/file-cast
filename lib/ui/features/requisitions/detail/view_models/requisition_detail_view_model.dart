@@ -118,6 +118,9 @@ class RequisitionDetailViewModel extends ChangeNotifier {
         status == RequisitionStatus.inProgress;
   }
 
+  bool get supportsAndroidUsbAcquisition =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
   int get pendingEvidenceCount =>
       _detail?.evidence
           .where(
