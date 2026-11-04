@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:file_cast/core/network/debug_http_overrides.dart';
 import 'package:file_cast/core/network/http.dart' as file_cast_http;
 import 'package:file_cast/core/notifications/local_notification_service.dart';
 import 'package:file_cast/core/storage/secure_storage_service.dart';
@@ -127,6 +128,7 @@ void evidenceBackgroundCallbackDispatcher() {
     final operation = (inputData?['operation'] as String?)?.toUpperCase();
     if (taskName != _evidenceTaskName && operation == null) return true;
     DartPluginRegistrant.ensureInitialized();
+    configureDebugHttpOverrides();
 
     final baseUrl = inputData?['baseUrl'] as String?;
     if (baseUrl == null || baseUrl.trim().isEmpty) return false;
