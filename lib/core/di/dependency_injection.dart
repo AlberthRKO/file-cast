@@ -60,7 +60,10 @@ class DependencyInjection {
         create: (_) => LocalNotificationService(),
       ),
       Provider<EvidenceBackgroundSyncService>(
-        create: (_) => EvidenceBackgroundSyncService(baseUrl: Config.baseUrl),
+        create: (_) => EvidenceBackgroundSyncService(
+          baseUrl: Config.baseUrl,
+          authBaseUrl: Config.baseUrlAuth,
+        ),
       ),
       ProxyProvider<EvidenceCryptoService, EvidenceDecryptionService>(
         update: (_, crypto, previous) => crypto,
@@ -69,7 +72,7 @@ class DependencyInjection {
         update: (_, storage, previous) => AuthSessionService(
           client: http.Client(),
           storage: storage,
-          baseUrl: Config.baseUrl,
+          baseUrl: Config.baseUrlAuth,
         ),
       ),
       ProxyProvider<AuthSessionService, AuthRepository>(

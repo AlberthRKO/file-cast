@@ -11,11 +11,11 @@ import 'package:file_cast/data/models/user_model.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
-/// Cliente de sesión para la fachada de autenticación de file-cast-back.
+/// Cliente de sesión para el microservicio público de autenticación.
 ///
-/// El backend reenvía estas operaciones a ms-auth. Este servicio mantiene el
-/// detalle HTTP y la persistencia de tokens fuera del dominio y evita que las
-/// llamadas de login/refresh entren al interceptor de peticiones autenticadas.
+/// Este servicio mantiene el detalle HTTP y la persistencia de tokens fuera
+/// del dominio y evita que las llamadas de login/refresh entren al interceptor
+/// de peticiones de negocio de file-cast-back.
 class AuthSessionService {
   AuthSessionService({
     required http.Client client,
@@ -23,12 +23,12 @@ class AuthSessionService {
     String? baseUrl,
   }) : _client = client,
        _storage = storage,
-       _baseUrl = baseUrl ?? Config.baseUrl;
+       _baseUrl = baseUrl ?? Config.baseUrlAuth;
 
-  static const _loginPath = '/api/v1/auth/login';
-  static const _refreshPath = '/api/v1/auth/refresh-token';
-  static const _logoutPath = '/api/v1/auth/logout';
-  static const _mePath = '/api/v1/auth/me';
+  static const _loginPath = '/v1/auth/login';
+  static const _refreshPath = '/v1/auth/refresh-token';
+  static const _logoutPath = '/v1/auth/logout';
+  static const _mePath = '/v1/auth/me';
   static const _userAgent = 'FileCast';
 
   final http.Client _client;
@@ -279,7 +279,7 @@ class AuthSessionService {
 
     final body = await _requestJson(
       _mePath,
-      method: 'GET',
+      method: 'POST',
       accessToken: accessToken,
     );
     final user = _userFromResponse(body);
@@ -322,7 +322,8 @@ class AuthSessionService {
     final refreshToken = _firstString([payload['refreshToken']]);
     if (accessToken == null || accessToken.isEmpty) {
       throw const AuthSessionException(
-        message: 'ms-auth no devolvió un access token válido.',
+        message:
+            'El servicio de autenticación no devolvió un access token válido.',
       );
     }
 
@@ -407,10 +408,10 @@ class AuthSessionService {
     final deviceId = await _getOrCreateDeviceId();
     final headers = <String, String>{
       'Accept': 'application/json',
-      'Content-Type': 'application/json',
       'user-agent': _userAgent,
       'x-aplicacion': appMp,
       'x-dispositivo-unico': deviceId,
+      if (body != null) 'Content-Type': 'application/json',
       if (accessToken != null && accessToken.isNotEmpty)
         'Authorization': 'Bearer $accessToken',
     };
@@ -523,7 +524,7 @@ class AuthSessionService {
   Map<String, dynamic> _payload(dynamic body) {
     if (body is! Map) {
       throw const AuthSessionException(
-        message: 'Respuesta inválida de ms-auth.',
+        message: 'Respuesta inválida del servicio de autenticación.',
       );
     }
 

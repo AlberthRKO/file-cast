@@ -20,9 +20,10 @@ SHELL := /bin/bash
 FLAVOR ?= development
 MODE ?= release
 BASE_URL_FILE_CAST ?=
+BASE_URL_AUTH ?=
 DEVICE ?=
 
-export BASE_URL_FILE_CAST
+export BASE_URL_FILE_CAST BASE_URL_AUTH
 
 help: ## Mostrar los comandos disponibles
 	@echo "Uso genérico:"
@@ -43,9 +44,9 @@ help: ## Mostrar los comandos disponibles
 	@echo ""
 	@echo "Atajos: dev-*, stage-* y prod-*"
 	@echo ""
-	@echo "Opcional: BASE_URL_FILE_CAST=https://... para compilar un override de la URL."
+	@echo "Opcionales: BASE_URL_FILE_CAST=https://... y BASE_URL_AUTH=https://... para compilar overrides."
 
-apk: ## Compilar APK. Variables: FLAVOR, MODE, BASE_URL_FILE_CAST
+apk: ## Compilar APK. Variables: FLAVOR, MODE, BASE_URL_FILE_CAST, BASE_URL_AUTH
 	@./scripts/build.sh "$(FLAVOR)" apk --$(MODE)
 
 apk-split: ## Compilar APKs separados por ABI

@@ -88,6 +88,12 @@ BASE_URL_FILE_CAST=https://api.example.test make staging-apk-split
 
 El valor se compila mediante `--dart-define=BASE_URL_FILE_CAST=...`.
 
+## URL del microservicio de autenticación
+
+La autenticación usa el microservicio público separado. Su valor por defecto es
+https://auth.dev.mp.gob.bo y puede reemplazarse al compilar con
+BASE_URL_AUTH o con la opción --auth-url de los scripts.
+
 ## Firma y ofuscación
 
 Las builds Android release usan la configuración existente de

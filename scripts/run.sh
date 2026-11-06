@@ -29,6 +29,7 @@ Opciones:
   --release                 Release
   --device <id>             Dispositivo específico
   --base-url <url>          Override compilado de BASE_URL_FILE_CAST
+  --auth-url <url>          Override compilado de BASE_URL_AUTH
   --help                    Mostrar esta ayuda
 EOF
 }
@@ -48,6 +49,7 @@ shift
 MODE='debug'
 DEVICE=''
 BASE_URL_OVERRIDE="${BASE_URL_FILE_CAST:-}"
+AUTH_URL_OVERRIDE="${BASE_URL_AUTH:-}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -73,6 +75,11 @@ while [[ $# -gt 0 ]]; do
             BASE_URL_OVERRIDE="$2"
             shift 2
             ;;
+        --auth-url)
+            [[ $# -ge 2 ]] || fail '--auth-url requiere un valor.'
+            AUTH_URL_OVERRIDE="$2"
+            shift 2
+            ;;
         --help|-h)
             show_help
             exit 0
@@ -96,6 +103,9 @@ if [[ "$MODE" != 'debug' ]]; then
 fi
 if [[ -n "$BASE_URL_OVERRIDE" ]]; then
     RUN_ARGS+=("--dart-define=BASE_URL_FILE_CAST=$BASE_URL_OVERRIDE")
+fi
+if [[ -n "$AUTH_URL_OVERRIDE" ]]; then
+    RUN_ARGS+=("--dart-define=BASE_URL_AUTH=$AUTH_URL_OVERRIDE")
 fi
 if [[ -n "$DEVICE" ]]; then
     RUN_ARGS+=( '--device-id' "$DEVICE" )

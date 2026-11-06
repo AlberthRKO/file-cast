@@ -44,6 +44,7 @@ Opciones:
   --split-per-abi           APK separado para armeabi-v7a, arm64-v8a y x86_64
   --obfuscate               Ofusca Dart y guarda símbolos en artifacts/symbols
   --base-url <url>          Override compilado de BASE_URL_FILE_CAST
+  --auth-url <url>          Override compilado de BASE_URL_AUTH
   --help                    Mostrar esta ayuda
 
 Ejemplos:
@@ -67,6 +68,7 @@ MODE='release'
 SPLIT_PER_ABI=false
 OBFUSCATE=false
 BASE_URL_OVERRIDE="${BASE_URL_FILE_CAST:-}"
+AUTH_URL_OVERRIDE="${BASE_URL_AUTH:-}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -93,6 +95,11 @@ while [[ $# -gt 0 ]]; do
         --base-url)
             [[ $# -ge 2 ]] || fail "--base-url requiere un valor."
             BASE_URL_OVERRIDE="$2"
+            shift 2
+            ;;
+        --auth-url)
+            [[ $# -ge 2 ]] || fail "--auth-url requiere un valor."
+            AUTH_URL_OVERRIDE="$2"
             shift 2
             ;;
         --help|-h)
@@ -153,6 +160,9 @@ fi
 if [[ -n "$BASE_URL_OVERRIDE" ]]; then
     echo -e "${YELLOW}BASE_URL_FILE_CAST: override compilado${NC}"
 fi
+if [[ -n "$AUTH_URL_OVERRIDE" ]]; then
+    echo -e "${YELLOW}BASE_URL_AUTH: override compilado${NC}"
+fi
 if [[ -n "$SYMBOLS_DIR" ]]; then
     echo -e "${YELLOW}Símbolos Dart: $SYMBOLS_DIR${NC}"
 fi
@@ -172,6 +182,9 @@ COMMON_ARGS=(
 )
 if [[ -n "$BASE_URL_OVERRIDE" ]]; then
     COMMON_ARGS+=("--dart-define=BASE_URL_FILE_CAST=$BASE_URL_OVERRIDE")
+fi
+if [[ -n "$AUTH_URL_OVERRIDE" ]]; then
+    COMMON_ARGS+=("--dart-define=BASE_URL_AUTH=$AUTH_URL_OVERRIDE")
 fi
 if [[ "$OBFUSCATE" == true ]]; then
     COMMON_ARGS+=("${OBFUSCATION_ARGS[@]}")

@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:file_cast/core/config/config.dart';
 import 'package:file_cast/core/network/debug_http_overrides.dart';
 import 'package:file_cast/core/network/http.dart' as file_cast_http;
 import 'package:file_cast/core/notifications/local_notification_service.dart';
@@ -24,9 +25,13 @@ const _offlineUniquePrefix = 'file_cast_evidence_offline_';
 /// proceso. El sistema operativo sigue decidiendo cuándo ejecutarlos; no se
 /// promete ejecución durante un force-stop explícito del usuario.
 class EvidenceBackgroundSyncService {
-  EvidenceBackgroundSyncService({required this.baseUrl});
+  EvidenceBackgroundSyncService({
+    required this.baseUrl,
+    required this.authBaseUrl,
+  });
 
   final String baseUrl;
+  final String authBaseUrl;
   static Future<void>? _initialization;
 
   static Future<void> initializeDispatcher() {
@@ -55,6 +60,7 @@ class EvidenceBackgroundSyncService {
         'operation': 'UPLOAD',
         'jobId': 'UPLOAD',
         'baseUrl': baseUrl,
+        'authBaseUrl': authBaseUrl,
       },
       constraints: Constraints(networkType: NetworkType.connected),
       existingWorkPolicy: ExistingWorkPolicy.keep,
@@ -79,6 +85,7 @@ class EvidenceBackgroundSyncService {
         'jobId': 'OFFLINE_SYNC:$requisitionId',
         'requisitionId': requisitionId,
         'baseUrl': baseUrl,
+        'authBaseUrl': authBaseUrl,
       },
       constraints: Constraints(networkType: NetworkType.connected),
       existingWorkPolicy: ExistingWorkPolicy.keep,
@@ -132,6 +139,9 @@ void evidenceBackgroundCallbackDispatcher() {
 
     final baseUrl = inputData?['baseUrl'] as String?;
     if (baseUrl == null || baseUrl.trim().isEmpty) return false;
+    final authBaseUrl =
+        inputData?['authBaseUrl'] as String? ?? Config.baseUrlAuth;
+    if (authBaseUrl.trim().isEmpty) return false;
 
     final notifications = LocalNotificationService();
     await notifications.initialize(requestPermissions: false);
@@ -139,7 +149,7 @@ void evidenceBackgroundCallbackDispatcher() {
     final auth = AuthSessionService(
       client: http.Client(),
       storage: secureStorage,
-      baseUrl: baseUrl,
+      baseUrl: authBaseUrl,
     );
     if (!await auth.hasStoredSession()) {
       await notifications.dispose();

@@ -49,26 +49,31 @@ get_flavor_config() {
             FLAVOR_KIND='entorno'
             FLAVOR_LABEL='[DEV] File Cast'
             DEFAULT_BASE_URL='https://file-cast-backend.dev.mp.gob.bo'
+            DEFAULT_AUTH_URL='https://auth.dev.mp.gob.bo'
             ;;
         staging)
             FLAVOR_KIND='entorno'
             FLAVOR_LABEL='[STG] File Cast'
             DEFAULT_BASE_URL='https://staging-api.example.com'
+            DEFAULT_AUTH_URL='https://auth.dev.mp.gob.bo'
             ;;
         production)
             FLAVOR_KIND='entorno'
             FLAVOR_LABEL='File Cast'
             DEFAULT_BASE_URL='https://api.example.com'
+            DEFAULT_AUTH_URL='https://auth.dev.mp.gob.bo'
             ;;
         cliente1)
             FLAVOR_KIND='cliente'
             FLAVOR_LABEL='Cliente 1 File Cast'
             DEFAULT_BASE_URL='https://api-cliente1.example.com'
+            DEFAULT_AUTH_URL='https://auth.dev.mp.gob.bo'
             ;;
         cliente2)
             FLAVOR_KIND='cliente'
             FLAVOR_LABEL='Cliente 2 File Cast'
             DEFAULT_BASE_URL='https://api-cliente2.example.com'
+            DEFAULT_AUTH_URL='https://auth.dev.mp.gob.bo'
             ;;
     esac
 }
@@ -81,10 +86,16 @@ show_flavor_config() {
     echo "Nombre visible Android/iOS: $FLAVOR_LABEL"
     echo "Target Dart: $DART_TARGET"
     echo "URL por defecto en Config.dart: $DEFAULT_BASE_URL"
+    echo "URL auth por defecto en Config.dart: $DEFAULT_AUTH_URL"
     if [[ -n "${BASE_URL_FILE_CAST:-}" ]]; then
         echo "URL compilada por override: $BASE_URL_FILE_CAST"
     else
         echo "URL compilada por override: <ninguna; se usa Config.dart>"
+    fi
+    if [[ -n "${BASE_URL_AUTH:-}" ]]; then
+        echo "URL auth compilada por override: $BASE_URL_AUTH"
+    else
+        echo "URL auth compilada por override: <ninguna; se usa Config.dart>"
     fi
 }
 

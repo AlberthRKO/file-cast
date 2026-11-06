@@ -77,6 +77,17 @@ class Config {
     }
   }
 
+  /// URL pública del microservicio de autenticación.
+  ///
+  /// Se mantiene separada de [baseUrl], que corresponde al backend de File
+  /// Cast. Puede reemplazarse mediante --dart-define.
+  static String get baseUrlAuth {
+    return const String.fromEnvironment(
+      'BASE_URL_AUTH',
+      defaultValue: 'https://auth.dev.mp.gob.bo',
+    );
+  }
+
   static String get _developmentBaseUrl {
     const configuredBaseUrl = String.fromEnvironment('BASE_URL_FILE_CAST');
     if (configuredBaseUrl.isNotEmpty) return configuredBaseUrl;
