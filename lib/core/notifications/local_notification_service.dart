@@ -80,6 +80,7 @@ class LocalNotificationService {
   final FlutterLocalNotificationsPlugin _plugin;
   final StreamController<LocalNotificationPayload> _clicks =
       StreamController<LocalNotificationPayload>.broadcast();
+  final Map<String, Future<void>> _progressUpdates = <String, Future<void>>{};
   Future<void>? _initialization;
   bool _permissionsRequested = false;
   LocalNotificationPayload? _pendingLaunchPayload;
@@ -213,47 +214,95 @@ class LocalNotificationService {
     int completed = 0,
     int skipped = 0,
     int failed = 0,
+  }) {
+    final jobId =
+        '${operation == EvidenceJobOperation.upload ? 'UPLOAD' : 'OFFLINE_SYNC'}:$requisitionId';
+    final previous = _progressUpdates[jobId];
+
+    Future<void> update() async {
+      if (previous != null) {
+        try {
+          await previous;
+        } on Object {
+          // Una actualización fallida no debe bloquear el estado siguiente.
+        }
+      }
+      await _showProgressNow(
+        operation: operation,
+        requisitionId: requisitionId,
+        total: total,
+        processed: processed,
+        active: active,
+        hasFailures: hasFailures,
+        completed: completed,
+        skipped: skipped,
+        failed: failed,
+      );
+    }
+
+    final current = update();
+    _progressUpdates[jobId] = current;
+    unawaited(
+      current.then<void>(
+        (_) {
+          if (identical(_progressUpdates[jobId], current)) {
+            _progressUpdates.remove(jobId);
+          }
+        },
+        onError: (Object _, StackTrace __) {
+          if (identical(_progressUpdates[jobId], current)) {
+            _progressUpdates.remove(jobId);
+          }
+        },
+      ),
+    );
+    return current;
+  }
+
+  Future<void> _showProgressNow({
+    required EvidenceJobOperation operation,
+    required String requisitionId,
+    required int total,
+    required int processed,
+    required bool active,
+    required bool hasFailures,
+    int completed = 0,
+    int skipped = 0,
+    int failed = 0,
   }) async {
     if (kIsWeb) return;
     await initialize(requestPermissions: false);
     final jobId =
         '${operation == EvidenceJobOperation.upload ? 'UPLOAD' : 'OFFLINE_SYNC'}:$requisitionId';
+    // La pantalla conserva el resultado final. La notificación del sistema
+    // representa únicamente trabajo activo y debe desaparecer siempre que el
+    // flujo termina, falla o es pausado; así nunca queda un aviso `ongoing`
+    // huérfano después de cerrar un worker.
+    if (!active) {
+      await _plugin.cancel(stableId(jobId));
+      return;
+    }
     final progress = total <= 0
         ? 0
         : (((processed / total) * 1000).round().clamp(0, 1000)).toInt();
-    final isComplete = !active && !hasFailures;
-    final title = !active && hasFailures
-        ? 'Sincronización con errores'
-        : operation == EvidenceJobOperation.upload
-        ? (isComplete ? 'Sincronización completada' : 'Subiendo evidencias')
-        : (isComplete
-              ? 'Evidencias listas para uso offline'
-              : 'Preparando evidencias para uso offline');
-    final body = active
-        ? operation == EvidenceJobOperation.upload
-              ? 'Subiendo $processed de $total archivos'
-              : 'Guardando $processed de $total archivos'
-        : hasFailures
-        ? operation == EvidenceJobOperation.offlineSync && total > 0
-              ? '$processed de $total procesadas · '
-                    '$completed recuperadas · $skipped ya disponibles · '
-                    '$failed con error'
-              : 'Algunas evidencias requieren reintento'
-        : operation == EvidenceJobOperation.upload
-        ? 'Todas las evidencias pendientes fueron procesadas'
-        : 'La copia cifrada está disponible en este dispositivo';
+    final title = operation == EvidenceJobOperation.upload
+        ? 'Subiendo evidencias'
+        : 'Preparando evidencias para uso offline';
+    final body = operation == EvidenceJobOperation.upload
+        ? 'Subiendo $processed de $total archivos'
+        : 'Guardando $processed de $total archivos';
     final details = AndroidNotificationDetails(
       channelId,
       channelName,
       channelDescription: channelDescription,
       importance: Importance.low,
       priority: Priority.low,
-      ongoing: active,
-      autoCancel: !active,
+      ongoing: true,
+      autoCancel: false,
       onlyAlertOnce: true,
       playSound: false,
       enableVibration: false,
-      showProgress: active && total > 0,
+      showProgress: total > 0,
       maxProgress: 1000,
       progress: progress,
       icon: '@mipmap/ic_launcher',
@@ -290,7 +339,23 @@ class LocalNotificationService {
     final prefix = operation == EvidenceJobOperation.upload
         ? 'UPLOAD'
         : 'OFFLINE_SYNC';
-    await _plugin.cancel(stableId('$prefix:$requisitionId'));
+    await cancelJobId('$prefix:$requisitionId');
+  }
+
+  /// Cancela el aviso de foreground que crea WorkManager. Ese aviso usa un
+  /// ID global para la outbox de subida y no el ID por requisa de la UI.
+  Future<void> cancelJobId(String jobId) async {
+    if (kIsWeb) return;
+    await initialize(requestPermissions: false);
+    final pending = _progressUpdates[jobId];
+    if (pending != null) {
+      try {
+        await pending;
+      } on Object {
+        // La cancelación sigue siendo válida aunque el update haya fallado.
+      }
+    }
+    await _plugin.cancel(stableId(jobId));
   }
 
   Future<void> dispose() async {

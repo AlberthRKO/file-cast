@@ -10,7 +10,7 @@ enum AcquisitionConnectionPhase {
   error,
 }
 
-enum AcquisitionRecordingPhase { idle, recording, saving }
+enum AcquisitionRecordingPhase { idle, starting, recording, saving }
 
 enum AcquisitionDestination { mirror, transfer }
 

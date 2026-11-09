@@ -61,6 +61,8 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   bool _isImporting = false;
   bool _isSelectingEvidence = false;
   bool _isSyncing = false;
+  bool _isCancellingUpload = false;
+  String? _uploadingEvidenceId;
   bool _isRefreshing = false;
   bool _isOfflineSyncing = false;
   bool _waitingForOfflineReload = false;
@@ -91,10 +93,15 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   String? _offlineSyncError;
   List<String> _offlineSyncErrors = const [];
   Future<void>? _silentReloadInFlight;
+  Future<void>? _remoteUploadRefreshInFlight;
+  bool _silentReloadQueued = false;
+  bool _uploadRequestInFlight = false;
+  Timer? _uploadStatusTimer;
   bool _disposed = false;
   bool get isImporting => _isImporting;
   bool get isSelectingEvidence => _isSelectingEvidence;
   bool get isSyncing => _isSyncing;
+  bool get isCancellingUpload => _isCancellingUpload;
   bool get isRefreshing => _isRefreshing;
   List<ImportedEvidenceDraft> get selectedEvidence => _selectedEvidence;
   EvidenceUploadProgress? get uploadProgress => _uploadProgress;
@@ -131,11 +138,18 @@ class RequisitionDetailViewModel extends ChangeNotifier {
           .length ??
       0;
 
+  int get failedEvidenceCount =>
+      _detail?.evidence
+          .where((item) => item.uploadStatus?.toUpperCase() == 'ERROR')
+          .length ??
+      0;
+
   bool get hasPendingEvidence => pendingEvidenceCount > 0;
 
   bool canDeleteEvidence(RequisitionEvidence evidence) {
+    if (_uploadingEvidenceId == evidence.id) return false;
     final status = evidence.uploadStatus?.toUpperCase();
-    if (status != 'PENDING_UPLOAD') return false;
+    if (status != 'PENDING_UPLOAD' && status != 'ERROR') return false;
     return evidence.isBackendRecord ||
         evidence.localPath?.trim().isNotEmpty == true;
   }
@@ -144,6 +158,16 @@ class RequisitionDetailViewModel extends ChangeNotifier {
 
   bool isDeletingEvidence(RequisitionEvidence evidence) =>
       _deletingEvidenceId == evidence.id;
+
+  bool canUploadEvidence(RequisitionEvidence evidence) {
+    if (_uploadingEvidenceId != null || _isCancellingUpload) return false;
+    final status = evidence.uploadStatus?.toUpperCase();
+    return (status == 'PENDING_UPLOAD' || status == 'ERROR') &&
+        evidence.localPath?.trim().isNotEmpty == true;
+  }
+
+  bool isUploadingEvidence(RequisitionEvidence evidence) =>
+      _uploadingEvidenceId == evidence.id;
 
   int get offlineEvidenceTotalCount =>
       _detail?.evidence
@@ -256,7 +280,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
       _uploadProgress = progress;
       if (progress.isActive) {
         _isSyncing = true;
-      } else if (_isSyncing) {
+      } else if (_isSyncing && !_uploadRequestInFlight) {
         _isSyncing = false;
       }
       notifyListeners();
@@ -280,7 +304,9 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     if (!_disposed) notifyListeners();
     try {
       _detail = await _repository.getDetail(requisitionId);
+      _updateUploadStatusPolling();
       _phase = RequisitionDetailPhase.content;
+      _clearUploadStateWhenNoPendingEvidence();
     } catch (_) {
       _phase = RequisitionDetailPhase.error;
       _errorMessage = 'No se pudo recuperar la requisa.';
@@ -290,9 +316,17 @@ class RequisitionDetailViewModel extends ChangeNotifier {
 
   Future<void> _reloadSilently() {
     final inFlight = _silentReloadInFlight;
-    if (inFlight != null) return inFlight;
+    if (inFlight != null) {
+      _silentReloadQueued = true;
+      return inFlight;
+    }
 
-    final future = _performSilentReload();
+    final future = () async {
+      do {
+        _silentReloadQueued = false;
+        await _performSilentReload();
+      } while (_silentReloadQueued && !_disposed);
+    }();
     _silentReloadInFlight = future;
     unawaited(
       future.whenComplete(() {
@@ -306,12 +340,47 @@ class RequisitionDetailViewModel extends ChangeNotifier {
 
   Future<void> _performSilentReload() async {
     try {
-      _detail = await _repository.getDetail(requisitionId);
+      final hadPendingEvidence = pendingEvidenceCount > 0;
+      _detail = await _repository.getCachedDetail(requisitionId);
+      _updateUploadStatusPolling();
       _phase = RequisitionDetailPhase.content;
       _clearUploadStateWhenNoPendingEvidence();
       if (!_disposed) notifyListeners();
+      if (hadPendingEvidence && pendingEvidenceCount == 0) {
+        unawaited(_refreshRemoteAfterUpload());
+      }
     } catch (_) {
       // The existing detail remains visible until a deliberate retry.
+    }
+  }
+
+  Future<void> _refreshRemoteAfterUpload() {
+    final inFlight = _remoteUploadRefreshInFlight;
+    if (inFlight != null) return inFlight;
+    final refresh = _performRemoteRefreshAfterUpload();
+    _remoteUploadRefreshInFlight = refresh;
+    unawaited(
+      refresh.whenComplete(() {
+        if (identical(_remoteUploadRefreshInFlight, refresh)) {
+          _remoteUploadRefreshInFlight = null;
+        }
+      }),
+    );
+    return refresh;
+  }
+
+  Future<void> _performRemoteRefreshAfterUpload() async {
+    try {
+      final refreshed = await _repository.refreshDetail(requisitionId);
+      if (_disposed) return;
+      _detail = refreshed;
+      _updateUploadStatusPolling();
+      _phase = RequisitionDetailPhase.content;
+      _clearUploadStateWhenNoPendingEvidence();
+      notifyListeners();
+    } catch (_) {
+      // La confirmación local de la outbox ya está visible. Una caída de la
+      // lectura remota posterior no debe convertir una carga exitosa en error.
     }
   }
 
@@ -326,8 +395,10 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     _errorMessage = null;
     if (!_disposed) notifyListeners();
     try {
-      _detail = await _repository.getDetail(requisitionId);
+      _detail = await _repository.refreshDetail(requisitionId);
+      _updateUploadStatusPolling();
       _phase = RequisitionDetailPhase.content;
+      _clearUploadStateWhenNoPendingEvidence();
     } catch (error) {
       _errorMessage = _messageFromError(
         error,
@@ -402,6 +473,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
         );
         if (result != null) {
           _detail = result;
+          _updateUploadStatusPolling();
           imported = true;
           _selectedEvidence = const [];
           _isSyncing = true;
@@ -421,28 +493,100 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   }
 
   Future<void> _syncImportedEvidence() async {
+    _uploadRequestInFlight = true;
     try {
-      await _repository.syncPendingEvidence();
-      // El worker de WorkManager puede haber tomado la outbox antes que el
-      // isolate principal. El detalle remoto es la fuente de verdad y debe
-      // reflejar el estado AVAILABLE al terminar cualquier sincronización.
+      final synchronized = await _repository.syncPendingEvidence(
+        requisitionId: requisitionId,
+      );
+      // Primero se refleja la confirmación local para que el badge y el total
+      // cambien sin esperar otra petición. Luego se reconcilia en segundo
+      // plano todo el detalle con la fuente remota.
       await _reloadSilently();
+      if (synchronized > 0) {
+        unawaited(_refreshRemoteAfterUpload());
+      }
     } catch (error) {
       _errorMessage = _messageFromError(
         error,
         fallback: 'La evidencia quedó guardada y se reintentará más tarde.',
       );
     } finally {
+      _uploadRequestInFlight = false;
       _isSyncing = false;
       if (!_disposed) notifyListeners();
     }
   }
 
   void retryPendingEvidence() {
-    if (_isSyncing || _disposed || !hasPendingEvidence) return;
+    if (_isSyncing || _isCancellingUpload || _disposed || !hasPendingEvidence) {
+      return;
+    }
     _isSyncing = true;
+    _uploadProgress = null;
+    _errorMessage = null;
     if (!_disposed) notifyListeners();
     unawaited(_syncImportedEvidence());
+  }
+
+  Future<void> cancelPendingEvidenceSync() async {
+    if (_disposed || _isCancellingUpload || !hasPendingEvidence) return;
+    _isCancellingUpload = true;
+    _isSyncing = false;
+    if (!_disposed) notifyListeners();
+    try {
+      await _repository.cancelPendingEvidenceSync(requisitionId: requisitionId);
+      _uploadProgress = null;
+      await _reloadSilently();
+    } catch (error) {
+      _errorMessage = _messageFromError(
+        error,
+        fallback: 'No se pudo detener la sincronización. Intenta nuevamente.',
+      );
+    } finally {
+      _isCancellingUpload = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  Future<String?> uploadPendingEvidence(RequisitionEvidence evidence) async {
+    if (_disposed) return 'El detalle de la requisa ya no está disponible.';
+    if (!canUploadEvidence(evidence)) {
+      return 'La evidencia ya se está subiendo o no tiene una copia local disponible.';
+    }
+
+    _uploadingEvidenceId = evidence.id;
+    _uploadRequestInFlight = true;
+    _isSyncing = true;
+    _uploadProgress = null;
+    _errorMessage = null;
+    if (!_disposed) notifyListeners();
+    try {
+      final synchronized = await _repository.syncEvidence(
+        requisitionId: requisitionId,
+        evidenceId: evidence.id,
+      );
+      await _reloadSilently();
+      _clearUploadStateWhenNoPendingEvidence();
+      if (!synchronized) {
+        return 'No se pudo cargar la evidencia. Quedó guardada para volver a intentarlo.';
+      }
+      unawaited(_refreshRemoteAfterUpload());
+      return null;
+    } catch (error) {
+      final message = _messageFromError(
+        error,
+        fallback:
+            'No se pudo cargar la evidencia. Quedó guardada para volver a intentarlo.',
+      );
+      _errorMessage = message;
+      await _reloadSilently();
+      return message;
+    } finally {
+      _uploadingEvidenceId = null;
+      _uploadRequestInFlight = false;
+      _isSyncing = false;
+      if (!_disposed) notifyListeners();
+    }
   }
 
   Future<String?> deletePendingEvidence(RequisitionEvidence evidence) async {
@@ -460,6 +604,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
         requisitionId: requisitionId,
         evidence: evidence,
       );
+      _updateUploadStatusPolling();
       await _reloadSilently();
       _clearUploadStateWhenNoPendingEvidence();
       _phase = RequisitionDetailPhase.content;
@@ -592,6 +737,22 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     if (pendingEvidenceCount != 0) return;
     _isSyncing = false;
     _uploadProgress = null;
+  }
+
+  void _updateUploadStatusPolling() {
+    if (pendingEvidenceCount == 0) {
+      _uploadStatusTimer?.cancel();
+      _uploadStatusTimer = null;
+      return;
+    }
+    // WorkManager actualiza SQLite desde otro isolate y no puede publicar en
+    // el StreamController de esta pantalla. Esta reconciliación consulta solo
+    // el snapshot local cacheado y permite observar el estado terminal sin
+    // recargar el detalle remoto ni las miniaturas.
+    _uploadStatusTimer ??= Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => unawaited(_reloadSilently()),
+    );
   }
 
   Future<void> disposeEvidencePreview(PreparedEvidencePreview preview) =>
@@ -816,6 +977,11 @@ class RequisitionDetailViewModel extends ChangeNotifier {
 
   String _messageFromError(Object error, {required String fallback}) {
     final message = error.toString().replaceFirst('Bad state: ', '').trim();
+    final normalized = message.toLowerCase();
+    if (normalized.contains('timeout') ||
+        normalized.contains('bloqueo de sincronización local')) {
+      return 'La sincronización local está ocupada. Se reintentará automáticamente.';
+    }
     if (message.contains('SqfliteSqlCipherOpenDatabaseOptions') ||
         message.contains('SqfliteOpenDatabaseOptions')) {
       return 'La base local cifrada no pudo abrirse. Actualiza la aplicación '
@@ -841,6 +1007,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     _changesSubscription?.cancel();
     _uploadProgressSubscription?.cancel();
     _offlineSyncProgressSubscription?.cancel();
+    _uploadStatusTimer?.cancel();
     _knownParticipants.clear();
     super.dispose();
   }

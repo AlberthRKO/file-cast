@@ -333,8 +333,9 @@ class EvidenceCryptoService implements EvidenceDecryptionService {
   /// Envuelve una DEK para varios destinatarios fuera del isolate principal.
   ///
   /// La desencriptación de la DEK local ocurre una sola vez y el cálculo
-  /// X25519/HKDF/AES de todos los destinatarios se ejecuta en un isolate
-  /// separado para no bloquear los frames de Flutter durante una subida.
+  /// X25519/HKDF/AES de los destinatarios se reparte entre un número acotado
+  /// de isolates. Así varias claves autorizadas no convierten la preparación
+  /// en una espera secuencial larga ni saturan todos los núcleos del equipo.
   Future<List<String?>> wrapLocalDataKeyForRecipients({
     required String wrappedKey,
     required String evidenceId,
@@ -343,13 +344,37 @@ class EvidenceCryptoService implements EvidenceDecryptionService {
     if (recipientPublicKeys.isEmpty) return const [];
     final localDataKey = await _unwrapDataKey(wrappedKey);
     final dataKeyBytes = await localDataKey.extractBytes();
-    return Isolate.run(
-      () => _wrapDataKeyForRecipientsInIsolate({
-        'dataKeyBytes': dataKeyBytes,
-        'evidenceId': evidenceId,
-        'recipientPublicKeys': recipientPublicKeys,
-      }),
+    final availableWorkers = max(1, Platform.numberOfProcessors - 1);
+    final workerCount = min(
+      recipientPublicKeys.length,
+      min(6, availableWorkers),
     );
+    final batchSize = (recipientPublicKeys.length / workerCount).ceil();
+    final batches = <List<String>>[];
+    for (
+      var offset = 0;
+      offset < recipientPublicKeys.length;
+      offset += batchSize
+    ) {
+      batches.add(
+        recipientPublicKeys
+            .skip(offset)
+            .take(batchSize)
+            .toList(growable: false),
+      );
+    }
+    final wrappedBatches = await Future.wait(
+      batches.map(
+        (batch) => Isolate.run(
+          () => _wrapDataKeyForRecipientsInIsolate({
+            'dataKeyBytes': dataKeyBytes,
+            'evidenceId': evidenceId,
+            'recipientPublicKeys': batch,
+          }),
+        ),
+      ),
+    );
+    return wrappedBatches.expand((batch) => batch).toList(growable: false);
   }
 
   Future<String> wrapLocalDataKeyForRecovery({

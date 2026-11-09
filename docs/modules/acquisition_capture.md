@@ -40,13 +40,14 @@ El flujo respeta `View -> ViewModel -> Repository -> Service`. El servicio de pl
 - Los bytes se escriben directamente en almacenamiento privado; no cruzan MethodChannel.
 - Se valida la firma PNG, se limita la captura a 32 MiB y se calcula SHA-256 durante la escritura.
 - La grabación reutiliza el H.264 recibido de scrcpy: el mismo paquete alimenta el decoder y `MediaMuxer`.
-- Se mantiene en memoria un GOP acotado a 24 MiB desde el último keyframe. Al iniciar una grabación, ese GOP se precarga para garantizar que el MP4 empiece con una muestra sincronizable; esto evita el fallo de `MediaMuxer.stop()` cuando el usuario detiene antes del siguiente keyframe.
-- La configuración H.264 acumula los paquetes de codec y selecciona los SPS/PPS más recientes. El recorder valida que ambos existan antes de abrir el track.
-- Los PTS se normalizan desde el keyframe inicial, se escribe una muestra EOS al cerrar, se valida que el archivo final no esté vacío y recién entonces se calcula SHA-256 y se registra la evidencia.
-- El pre-roll puede incluir una fracción breve anterior al toque de “Grabar”; es el costo de conservar un GOP decodificable sin reiniciar el encoder ni interrumpir el espejo.
-- Los metadatos se agregan al repositorio de detalle en memoria y quedan visibles inmediatamente en el workspace.
+- Al pulsar **Grabar video**, el recorder entra en `starting` y espera el siguiente keyframe posterior a la intención del operador. El servidor scrcpy solicita un intervalo de keyframe de un segundo (`video_codec_options=i-frame-interval=1`) para que este inicio no dependa del GOP largo predeterminado del encoder. El botón muestra **Preparando…** y el contador comienza únicamente cuando ese frame ya fue escrito; no se precargan imágenes anteriores al toque.
+- La configuración H.264 acumula los paquetes de codec y selecciona los SPS/PPS más recientes. El recorder valida que ambos existan y los entrega al track como CSD con start code Annex-B, según el contrato Android de AVC.
+- Las muestras del encoder de scrcpy se entregan a `MediaMuxer` sin convertirlas nuevamente a AVCC. Los PTS se normalizan desde el keyframe inicial, se escribe una muestra EOS vacía para cerrar la duración del último frame y el contenedor se finaliza primero como `.part`.
+- Antes de calcular SHA-256 y registrar la evidencia, `MediaMetadataRetriever` verifica que el MP4 final contenga una pista de video y dimensiones válidas. Un archivo incompleto se elimina y se informa en el mirror; nunca se cifra ni entra a la outbox.
+- Si un encoder ignora el intervalo solicitado y el stream no entrega un keyframe dentro de 20 segundos, el inicio se cancela, se elimina el parcial y se informa el error. Así el MP4 siempre comienza en una muestra sincronizable sin sumar segundos anteriores ni desalinear el contador visible.
+- El archivo válido se cifra, persiste en SQLite/SQLCipher y queda visible inmediatamente en el workspace. Su badge se actualiza desde la outbox local (`Pendiente`, `Subiendo`, `Sincronizada` o `Error`) sin recargar las miniaturas existentes.
 
-Los archivos están en `filesDir/evidence/<requisitionId>/<sessionId>`. Esta ubicación y el hash local preparan la integración, pero todavía no constituyen almacenamiento inmutable ni una cadena de custodia forense.
+La captura nativa se crea transitoriamente en `filesDir/evidence/<requisitionId>/<sessionId>`. Después de validarla y calcular el hash, el repositorio común la cifra como FCE, elimina el plano y persiste metadata/outbox en SQLite SQLCipher. Este pipeline conserva integridad local, pero todavía no sustituye el ledger inmutable de cadena de custodia pendiente.
 
 ## Control del dispositivo
 
@@ -57,7 +58,7 @@ Los archivos están en `filesDir/evidence/<requisitionId>/<sessionId>`. Esta ubi
 - Mouse y trackpad usan el mismo canal; la rueda se convierte al formato fixed-point de 16 bits de scrcpy 2.7.
 - La cola nativa de control está acotada a 256 mensajes y compacta movimientos antiguos para evitar latencia creciente o consumo de memoria.
 - El primer `A_OKAY` de cada stream confirma `A_OPEN` y no se reutiliza como confirmación de `A_WRTE`. De esta manera solo existe un paquete de control sin confirmar y `DOWN`, `MOVE` y `UP` conservan su orden en USB.
-- El botón de diagnóstico del AppBar muestra resolución del header, salida vigente de MediaCodec, resolución incluida en el paquete táctil, último gesto, paquetes encolados/confirmados/fallidos, estado y tamaño del pre-roll de grabación, y salida acumulada de scrcpy-server. Si `queued` y `acknowledged` avanzan pero el servidor informa `different device size`, el problema es la resolución; si coinciden las resoluciones y el fabricante rechaza la inyección, debe habilitarse el ajuste de seguridad del objetivo.
+- El botón de diagnóstico del AppBar muestra resolución del header, salida vigente de MediaCodec, resolución incluida en el paquete táctil, último gesto, paquetes encolados/confirmados/fallidos, estado de espera del keyframe de grabación y salida acumulada de scrcpy-server. Si `queued` y `acknowledged` avanzan pero el servidor informa `different device size`, el problema es la resolución; si coinciden las resoluciones y el fabricante rechaza la inyección, debe habilitarse el ajuste de seguridad del objetivo.
 - Algunos fabricantes exigen habilitar adicionalmente “Depuración USB (ajustes de seguridad)” para aceptar inyección táctil. File Cast no puede activar esa autorización del objetivo.
 
 El repositorio `diyews/scrcpy-flutter` se usó como referencia para captura de puntero y escalado, pero no se copió su serialización: utiliza un servidor personalizado antiguo y un mensaje táctil de 28 bytes. File Cast usa el servidor oficial 2.7 verificado y, por tanto, conserva el mensaje de 32 bytes con `action_button` y `buttons`, tal como exige esa versión.
@@ -88,8 +89,8 @@ La conexión base ADB se separó del arranque del mirror. `connectForTransfer` p
 
 ## Pendiente antes de piloto
 
-- Persistir el índice de evidencias y su ledger; actualmente el catálogo es in-memory.
-- Cifrado local, claves, sellado, sincronización reanudable y verificación en backend.
+- Completar el ledger inmutable de cadena de custodia y su validación probatoria end-to-end; el índice local, cifrado FCE y outbox ya están persistidos.
+- Validar en hardware la subida reanudable, pausa/reintento y recuperación mediante WorkManager con pérdida real de red y reinicio de proceso.
 - Medición de espacio y backpressure/colas acotadas para sesiones largas.
 - Manejo completo de background, extracción de cable y recuperación del proceso; la rotación del objetivo ya actualiza el tamaño táctil, pero debe cubrirse en la matriz física.
 - IDs y errores tipados; los modelos manuales deben migrar a Freezed junto con el generador acordado.

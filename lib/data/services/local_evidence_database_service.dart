@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -11,6 +12,13 @@ class LocalEvidenceDatabaseService {
   LocalEvidenceDatabaseService({required SecureStorageService storage})
     : _storage = storage;
 
+  static const _lockPollInterval = Duration(milliseconds: 100);
+  static const _defaultLockWaitTimeout = Duration(seconds: 30);
+  // Todas las secciones protegidas son transacciones SQLite cortas. Una lease
+  // menor al tiempo máximo de espera permite recuperar en la misma operación
+  // el lock si otro isolate murió antes de ejecutar su `finally`.
+  static const _lockLeaseDuration = Duration(seconds: 10);
+  static const _staleClaimTimeout = Duration(minutes: 15);
   static const _databaseKeyName = 'file_cast_evidence_database_key_v1';
   static const _databaseName = 'file_cast_evidence_v1.db';
 
@@ -178,31 +186,33 @@ class LocalEvidenceDatabaseService {
   }
 
   Future<void> saveEvidence(LocalEvidenceRecord evidence) async {
-    await withSyncLock(() async {
-      final db = await database;
-      final now = DateTime.now().toUtc().toIso8601String();
-      await db.transaction((txn) async {
-        await txn.insert(
-          'evidencias_locales',
-          {
-            ...evidence.toMap(),
-            'actualizado_at': now,
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-        await txn.insert(
-          'outbox_evidencias',
-          {
-            'operation_id': evidence.clientOperationId,
-            'evidencia_id': evidence.id,
-            'estado': 'PENDIENTE',
-            'intentos': 0,
-            'reintento_automatico': 1,
-            'actualizado_at': now,
-          },
-          conflictAlgorithm: ConflictAlgorithm.ignore,
-        );
-      });
+    // Guardar una captura o un video es una transacción local corta. No debe
+    // esperar el lock de sincronización, porque el worker puede conservarlo
+    // mientras realiza una subida de red. SQLite ya serializa esta escritura
+    // con sus propias transacciones y la outbox queda atómica.
+    final db = await database;
+    final now = DateTime.now().toUtc().toIso8601String();
+    await db.transaction((txn) async {
+      await txn.insert(
+        'evidencias_locales',
+        {
+          ...evidence.toMap(),
+          'actualizado_at': now,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      await txn.insert(
+        'outbox_evidencias',
+        {
+          'operation_id': evidence.clientOperationId,
+          'evidencia_id': evidence.id,
+          'estado': 'PENDIENTE',
+          'intentos': 0,
+          'reintento_automatico': 1,
+          'actualizado_at': now,
+        },
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
     });
   }
 
@@ -246,18 +256,35 @@ class LocalEvidenceDatabaseService {
   /// de WorkManager. Cada isolate crea su propia instancia del servicio, por
   /// lo que un booleano en memoria no evita que ambos consuman la misma
   /// evidencia pendiente.
-  Future<T> withSyncLock<T>(Future<T> Function() operation) async {
-    final db = await database;
+  Future<T> withSyncLock<T>(
+    Future<T> Function() operation, {
+    Duration waitTimeout = _defaultLockWaitTimeout,
+  }) async {
+    if (waitTimeout <= Duration.zero) {
+      throw ArgumentError.value(
+        waitTimeout,
+        'waitTimeout',
+        'Debe ser mayor que cero.',
+      );
+    }
+
+    final db = await database.timeout(
+      waitTimeout,
+      onTimeout: () => throw TimeoutException(
+        'La base local tardó demasiado en abrirse.',
+        waitTimeout,
+      ),
+    );
+    final deadline = DateTime.now().add(waitTimeout);
     final owner =
         '${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 32)}';
-    final leaseDuration = const Duration(hours: 1);
     var acquired = false;
 
     while (!acquired) {
       try {
         acquired = await db.transaction<bool>((txn) async {
           final now = DateTime.now().millisecondsSinceEpoch;
-          final expiresAt = now + leaseDuration.inMilliseconds;
+          final expiresAt = now + _lockLeaseDuration.inMilliseconds;
           final renewed = await txn.rawUpdate(
             'UPDATE sync_locks SET owner = ?, expires_at = ? '
             'WHERE id = 1 AND expires_at <= ?',
@@ -287,7 +314,16 @@ class LocalEvidenceDatabaseService {
       }
 
       if (!acquired) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
+        final remaining = deadline.difference(DateTime.now());
+        if (remaining <= Duration.zero) {
+          throw TimeoutException(
+            'No se pudo adquirir el bloqueo de sincronización local.',
+            waitTimeout,
+          );
+        }
+        await Future<void>.delayed(
+          remaining < _lockPollInterval ? remaining : _lockPollInterval,
+        );
       }
     }
 
@@ -335,6 +371,105 @@ class LocalEvidenceDatabaseService {
     return rows.map(LocalEvidenceRecord.fromMap).toList(growable: false);
   }
 
+  /// Reserva un lote pequeño de evidencias para un ciclo de subida.
+  ///
+  /// El lock solo cubre la selección y el cambio de estado. La red, el
+  /// cifrado de claves y la subida del archivo ocurren fuera del lock, así
+  /// que una captura nueva nunca queda esperando a que termine un video o un
+  /// lote grande de evidencias.
+  Future<List<LocalEvidenceRecord>> claimPending({
+    int limit = 10,
+    bool automaticOnly = false,
+    String? requisitionId,
+    String? evidenceId,
+    Iterable<String> excludedEvidenceIds = const <String>[],
+  }) async {
+    if (limit <= 0) return const <LocalEvidenceRecord>[];
+    final excluded = excludedEvidenceIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    return withSyncLock(() async {
+      final db = await database;
+      final now = DateTime.now().toUtc();
+      final nowIso = now.toIso8601String();
+      final staleBefore = now.subtract(_staleClaimTimeout).toIso8601String();
+      return db.transaction<List<LocalEvidenceRecord>>((txn) async {
+        // Recupera trabajos que quedaron reservados si el proceso murió o el
+        // worker fue detenido antes de publicar el resultado final.
+        await txn.rawUpdate(
+          '''
+          UPDATE outbox_evidencias
+          SET estado = 'ERROR',
+              ultimo_error = 'La sincronización anterior no finalizó.',
+              actualizado_at = ?
+          WHERE estado = 'SUBIENDO' AND actualizado_at <= ?
+          ''',
+          [nowIso, staleBefore],
+        );
+        await txn.rawUpdate(
+          '''
+          UPDATE evidencias_locales
+          SET estado = 'ERROR', actualizado_at = ?
+          WHERE estado = 'SUBIENDO' AND actualizado_at <= ?
+          ''',
+          [nowIso, staleBefore],
+        );
+
+        final where = <String>[
+          "o.estado IN ('PENDIENTE', 'ERROR')",
+          "e.sesion_id <> ''",
+          if (automaticOnly) 'o.reintento_automatico = 1',
+          if (requisitionId?.trim().isNotEmpty == true) 'e.requisa_id = ?',
+          if (evidenceId?.trim().isNotEmpty == true) 'o.evidencia_id = ?',
+          if (excluded.isNotEmpty)
+            'o.evidencia_id NOT IN (${List.filled(excluded.length, '?').join(', ')})',
+        ];
+        final args = <Object?>[
+          if (requisitionId?.trim().isNotEmpty == true) requisitionId!.trim(),
+          if (evidenceId?.trim().isNotEmpty == true) evidenceId!.trim(),
+          if (excluded.isNotEmpty) ...excluded,
+          limit,
+        ];
+        final rows = await txn.rawQuery(
+          '''
+          SELECT e.*
+          FROM evidencias_locales e
+          INNER JOIN outbox_evidencias o ON o.evidencia_id = e.id
+          WHERE ${where.join(' AND ')}
+          ORDER BY e.creado_at ASC
+          LIMIT ?
+          ''',
+          args,
+        );
+        if (rows.isEmpty) return const <LocalEvidenceRecord>[];
+
+        for (final row in rows) {
+          await txn.update(
+            'outbox_evidencias',
+            {
+              'estado': 'SUBIENDO',
+              'actualizado_at': nowIso,
+            },
+            where: 'evidencia_id = ? AND estado IN (?, ?)',
+            whereArgs: [row['id'], 'PENDIENTE', 'ERROR'],
+          );
+          await txn.update(
+            'evidencias_locales',
+            {
+              'estado': 'SUBIENDO',
+              'actualizado_at': nowIso,
+            },
+            where: 'id = ?',
+            whereArgs: [row['id']],
+          );
+        }
+        return rows.map(LocalEvidenceRecord.fromMap).toList(growable: false);
+      });
+    });
+  }
+
   Future<List<LocalEvidenceRecord>> forRequisition(String requisitionId) async {
     final db = await database;
     final rows = await db.query(
@@ -344,6 +479,110 @@ class LocalEvidenceDatabaseService {
       orderBy: 'creado_at ASC',
     );
     return rows.map(LocalEvidenceRecord.fromMap).toList(growable: false);
+  }
+
+  /// Pausa toda la outbox no confirmada de una requisa. La evidencia permanece
+  /// cifrada en el dispositivo y no será reclamada por reintentos automáticos.
+  Future<void> pausePendingForRequisition(String requisitionId) async {
+    final normalizedId = requisitionId.trim();
+    if (normalizedId.isEmpty) return;
+    await withSyncLock(() async {
+      final db = await database;
+      final now = DateTime.now().toUtc().toIso8601String();
+      await db.transaction((txn) async {
+        await txn.rawUpdate(
+          '''
+          UPDATE outbox_evidencias
+          SET estado = 'PENDIENTE', ultimo_error = NULL,
+              reintento_automatico = 0, actualizado_at = ?
+          WHERE estado <> 'SINCRONIZADA' AND evidencia_id IN (
+              SELECT id FROM evidencias_locales WHERE requisa_id = ?
+            )
+          ''',
+          [now, normalizedId],
+        );
+        await txn.rawUpdate(
+          '''
+          UPDATE evidencias_locales
+          SET estado = 'PENDIENTE', actualizado_at = ?
+          WHERE estado <> 'SINCRONIZADA' AND requisa_id = ?
+          ''',
+          [now, normalizedId],
+        );
+      });
+    });
+  }
+
+  /// Reactiva una outbox pausada o con error para un reintento solicitado por
+  /// el usuario. La próxima reclamación mostrará SUBIENDO solo para el archivo
+  /// que realmente esté siendo procesado.
+  Future<void> resumePendingForRequisition(String requisitionId) async {
+    final normalizedId = requisitionId.trim();
+    if (normalizedId.isEmpty) return;
+    await withSyncLock(() async {
+      final db = await database;
+      final now = DateTime.now().toUtc().toIso8601String();
+      await db.transaction((txn) async {
+        await txn.rawUpdate(
+          '''
+          UPDATE outbox_evidencias
+          SET estado = 'PENDIENTE', ultimo_error = NULL,
+              reintento_automatico = 1, actualizado_at = ?
+          WHERE estado <> 'SINCRONIZADA' AND evidencia_id IN (
+              SELECT id FROM evidencias_locales WHERE requisa_id = ?
+            )
+          ''',
+          [now, normalizedId],
+        );
+        await txn.rawUpdate(
+          '''
+          UPDATE evidencias_locales
+          SET estado = 'PENDIENTE', actualizado_at = ?
+          WHERE estado <> 'SINCRONIZADA' AND requisa_id = ?
+          ''',
+          [now, normalizedId],
+        );
+      });
+    });
+  }
+
+  /// Reactiva una única evidencia. El resto de la requisa conserva su estado
+  /// pausado para que una acción individual no dispare todo el lote.
+  Future<void> resumeEvidenceForUpload({
+    required String requisitionId,
+    required String evidenceId,
+  }) async {
+    final normalizedRequisitionId = requisitionId.trim();
+    final normalizedEvidenceId = evidenceId.trim();
+    if (normalizedRequisitionId.isEmpty || normalizedEvidenceId.isEmpty) {
+      return;
+    }
+    await withSyncLock(() async {
+      final db = await database;
+      final now = DateTime.now().toUtc().toIso8601String();
+      await db.transaction((txn) async {
+        await txn.rawUpdate(
+          '''
+          UPDATE outbox_evidencias
+          SET estado = 'PENDIENTE', ultimo_error = NULL,
+              reintento_automatico = 1, actualizado_at = ?
+          WHERE estado <> 'SINCRONIZADA' AND evidencia_id = ?
+            AND evidencia_id IN (
+              SELECT id FROM evidencias_locales WHERE requisa_id = ?
+            )
+          ''',
+          [now, normalizedEvidenceId, normalizedRequisitionId],
+        );
+        await txn.rawUpdate(
+          '''
+          UPDATE evidencias_locales
+          SET estado = 'PENDIENTE', actualizado_at = ?
+          WHERE estado <> 'SINCRONIZADA' AND id = ? AND requisa_id = ?
+          ''',
+          [now, normalizedEvidenceId, normalizedRequisitionId],
+        );
+      });
+    });
   }
 
   Future<void> markUploaded(String evidenceId, String msFileId) async {
@@ -381,21 +620,28 @@ class LocalEvidenceDatabaseService {
     final safeMessage = message.length > 512
         ? message.substring(0, 512)
         : message;
-    await db.rawUpdate(
-      '''
-      UPDATE outbox_evidencias
-      SET estado = 'ERROR', intentos = intentos + 1,
-          ultimo_error = ?, reintento_automatico = ?, actualizado_at = ?
-      WHERE evidencia_id = ?
-        AND estado <> 'SINCRONIZADA'
-      ''',
-      [
-        safeMessage,
-        retryable ? 1 : 0,
-        DateTime.now().toUtc().toIso8601String(),
-        evidenceId,
-      ],
-    );
+    final now = DateTime.now().toUtc().toIso8601String();
+    await db.transaction((txn) async {
+      final changed = await txn.rawUpdate(
+        '''
+        UPDATE outbox_evidencias
+        SET estado = 'ERROR', intentos = intentos + 1,
+            ultimo_error = ?, reintento_automatico = ?, actualizado_at = ?
+        WHERE evidencia_id = ? AND estado <> 'SINCRONIZADA'
+        ''',
+        [safeMessage, retryable ? 1 : 0, now, evidenceId],
+      );
+      if (changed == 0) return;
+      await txn.update(
+        'evidencias_locales',
+        {
+          'estado': 'ERROR',
+          'actualizado_at': now,
+        },
+        where: 'id = ?',
+        whereArgs: [evidenceId],
+      );
+    });
   }
 
   /// Elimina una evidencia únicamente mientras no haya recibido un

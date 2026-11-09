@@ -478,7 +478,7 @@ Salida: conectar/desconectar repetidamente sin fugas y con ledger.
 
 ### Fase 4 — evidencia de pantalla Android
 
-Estado al 4 de septiembre de 2026: screenshot binario, control táctil validado, muxer MP4, SHA-256 local, contador de grabación, feedback flotante y galería en vivo implementados como primera integración. El recorder conserva un GOP acotado desde el último keyframe, precarga SPS/PPS y muestras sincronizables, normaliza PTS y valida el archivo antes de registrarlo. Continúan pendientes la revalidación física del MP4 corregido, persistencia transaccional, cifrado, cuotas/espacio, segmentación y manifiesto.
+Estado actualizado al 9 de noviembre de 2026: screenshot binario, control táctil validado, muxer MP4, SHA-256 local, contador de grabación, feedback flotante y galería en vivo implementados. El recorder conserva SPS/PPS, solicita a scrcpy un keyframe cada segundo, espera el siguiente posterior al toque, confirma entonces el estado `recording`, normaliza PTS y valida el archivo antes de registrarlo. Ya no precarga un GOP anterior, por lo que duración, imagen y contador comparten el mismo inicio. Continúan pendientes la revalidación física del MP4 corregido, cuotas/espacio, segmentación y manifiesto.
 
 - screenshot binario;
 - recording/muxer;

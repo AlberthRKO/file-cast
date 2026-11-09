@@ -6,6 +6,7 @@ import 'package:file_cast/domain/repositories/acquisition_repository.dart';
 import 'package:file_cast/domain/services/evidence_decryption_service.dart';
 import 'package:file_cast/ui/core/navigation/route_args/mirror_route_args.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
+import 'package:file_cast/ui/core/widgets/evidence_sync_badge.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/view_models/mirror_view_model.dart';
 import 'package:file_cast/ui/core/widgets/evidence_thumbnail.dart';
 import 'package:flutter/gestures.dart';
@@ -177,7 +178,11 @@ class _MirrorPane extends StatelessWidget {
                     height: math.min(260.0, constraints.maxHeight * .55),
                     child: _DiagnosticsPanel(viewModel: viewModel),
                   ),
-                if (viewModel.message != null)
+                if (viewModel.message != null ||
+                    viewModel.recordingPhase ==
+                        AcquisitionRecordingPhase.starting ||
+                    viewModel.recordingPhase ==
+                        AcquisitionRecordingPhase.saving)
                   Positioned(
                     left: AppSpace.s,
                     right: AppSpace.s,
@@ -188,7 +193,12 @@ class _MirrorPane extends StatelessWidget {
                         child: ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 440),
                           child: _MirrorStatusOverlay(
-                            message: viewModel.message!,
+                            message:
+                                viewModel.message ??
+                                (viewModel.recordingPhase ==
+                                        AcquisitionRecordingPhase.starting
+                                    ? 'Preparando la grabación desde el siguiente frame clave…'
+                                    : 'Guardando el video de forma segura…'),
                             isError: viewModel.messageIsError,
                           ),
                         ),
@@ -392,6 +402,8 @@ class _CaptureControls extends StatelessWidget {
   Widget build(BuildContext context) {
     final recording =
         viewModel.recordingPhase == AcquisitionRecordingPhase.recording;
+    final starting =
+        viewModel.recordingPhase == AcquisitionRecordingPhase.starting;
     final saving = viewModel.recordingPhase == AcquisitionRecordingPhase.saving;
     return Wrap(
       alignment: WrapAlignment.center,
@@ -410,7 +422,9 @@ class _CaptureControls extends StatelessWidget {
           icon: const Icon(Icons.home_outlined),
         ),
         FilledButton.icon(
-          onPressed: viewModel.isCapturing ? null : viewModel.captureScreenshot,
+          onPressed: viewModel.isCapturing || starting || saving
+              ? null
+              : viewModel.captureScreenshot,
           icon: viewModel.isCapturing
               ? const SizedBox.square(
                   dimension: AppSize.iconM,
@@ -428,12 +442,21 @@ class _CaptureControls extends StatelessWidget {
                 ? Theme.of(context).colorScheme.onError
                 : null,
           ),
-          onPressed: saving ? null : viewModel.toggleRecording,
-          icon: Icon(
-            recording ? Icons.stop_rounded : Icons.fiber_manual_record_rounded,
-          ),
+          onPressed: starting || saving ? null : viewModel.toggleRecording,
+          icon: starting || saving
+              ? const SizedBox.square(
+                  dimension: AppSize.iconM,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(
+                  recording
+                      ? Icons.stop_rounded
+                      : Icons.fiber_manual_record_rounded,
+                ),
           label: Text(
-            saving
+            starting
+                ? 'Preparando…'
+                : saving
                 ? 'Guardando…'
                 : recording
                 ? 'Detener · ${viewModel.recordingDurationLabel}'
@@ -482,7 +505,10 @@ class _EvidencePane extends StatelessWidget {
                         const SizedBox(width: AppSpace.s),
                     itemBuilder: (_, index) => SizedBox(
                       width: 150,
-                      child: _EvidenceCard(evidence: evidence[index]),
+                      child: _EvidenceCard(
+                        key: ValueKey(evidence[index].id),
+                        evidence: evidence[index],
+                      ),
                     ),
                   )
                 : GridView.builder(
@@ -494,8 +520,10 @@ class _EvidencePane extends StatelessWidget {
                           childAspectRatio: 1.2,
                         ),
                     itemCount: evidence.length,
-                    itemBuilder: (_, index) =>
-                        _EvidenceCard(evidence: evidence[index]),
+                    itemBuilder: (_, index) => _EvidenceCard(
+                      key: ValueKey(evidence[index].id),
+                      evidence: evidence[index],
+                    ),
                   ),
           ),
         ],
@@ -505,7 +533,7 @@ class _EvidencePane extends StatelessWidget {
 }
 
 class _EvidenceCard extends StatelessWidget {
-  const _EvidenceCard({required this.evidence});
+  const _EvidenceCard({required this.evidence, super.key});
   final RequisitionEvidence evidence;
 
   @override
@@ -543,11 +571,22 @@ class _EvidenceCard extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.all(AppSpace.s),
               color: Colors.black.withValues(alpha: .68),
-              child: Text(
-                evidence.name,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Colors.white, fontSize: 11),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    evidence.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontSize: 11),
+                  ),
+                  const SizedBox(height: AppSpace.xs),
+                  EvidenceSyncBadge(
+                    uploadStatus: evidence.uploadStatus,
+                    hasLocalCopy: path?.trim().isNotEmpty == true,
+                  ),
+                ],
               ),
             ),
           ),

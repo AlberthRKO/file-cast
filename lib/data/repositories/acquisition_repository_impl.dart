@@ -28,6 +28,9 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
   Stream<void> get deviceChanges => _platformService.deviceChanges;
 
   @override
+  Stream<String> get evidenceChanges => _detailRepository.changes;
+
+  @override
   Stream<FileTransferProgress> get fileTransferProgress =>
       _platformService.fileTransferProgress;
 
@@ -87,6 +90,10 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
       _detailRepository.getDetail(requisitionId);
 
   @override
+  Future<RequisitionDetail> getCachedRequisitionDetail(String requisitionId) =>
+      _detailRepository.getCachedDetail(requisitionId);
+
+  @override
   Future<RequisitionDetail> captureScreenshot({
     required String requisitionId,
     required String sessionId,
@@ -104,7 +111,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
   }
 
   @override
-  Future<RequisitionDetail> startRecording({
+  Future<void> startRecording({
     required String requisitionId,
     required String sessionId,
   }) async {
@@ -112,7 +119,6 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
       requisitionId: requisitionId,
       sessionId: sessionId,
     );
-    return _detailRepository.getDetail(requisitionId);
   }
 
   @override
@@ -150,8 +156,23 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
           ? 'SCREEN_CAPTURE'
           : 'SCREEN_RECORDING',
     );
-    unawaited(_syncService?.syncPending());
+    _triggerBackgroundSync();
     return detail;
+  }
+
+  void _triggerBackgroundSync() {
+    final syncService = _syncService;
+    if (syncService == null) return;
+    unawaited(
+      syncService.syncPendingInForeground().then<void>(
+        (_) {},
+        onError: (Object _, StackTrace __) {
+          // La evidencia ya quedó cifrada y en la outbox. La sincronización se
+          // reintentará por conectividad o WorkManager; no debe convertir un
+          // guardado local exitoso en un error del flujo de captura.
+        },
+      ),
+    );
   }
 
   @override
@@ -227,7 +248,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
             .toList(growable: false),
       );
     }
-    unawaited(_syncService?.syncPending());
+    _triggerBackgroundSync();
     return result;
   }
 

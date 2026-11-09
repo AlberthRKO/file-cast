@@ -20,6 +20,7 @@ import 'package:file_cast/ui/core/widgets/app_action_button.dart';
 import 'package:file_cast/ui/core/widgets/app_form_input_icon.dart';
 import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
 import 'package:file_cast/ui/core/widgets/evidence_thumbnail.dart';
+import 'package:file_cast/ui/core/widgets/evidence_sync_badge.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
 import 'package:file_cast/ui/features/requisitions/detail/view_models/requisition_detail_view_model.dart';
 import 'package:file_cast/ui/features/requisitions/detail/widgets/evidence_preview_sheet.dart';
@@ -219,6 +220,10 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
                         isDeletingEvidence: viewModel.isDeletingEvidence,
                         onDeleteEvidence: (evidence) =>
                             _deleteEvidence(context, evidence),
+                        canUploadEvidence: viewModel.canUploadEvidence,
+                        isUploadingEvidence: viewModel.isUploadingEvidence,
+                        onUploadEvidence: (evidence) =>
+                            _uploadEvidence(context, evidence),
                       ),
                     ],
                   ],
@@ -457,6 +462,22 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
       evidence.isBackendRecord
           ? 'La evidencia pendiente fue eliminada del servidor y del dispositivo.'
           : 'La evidencia pendiente fue eliminada del dispositivo.',
+    );
+  }
+
+  Future<void> _uploadEvidence(
+    BuildContext context,
+    RequisitionEvidence evidence,
+  ) async {
+    final error = await viewModel.uploadPendingEvidence(evidence);
+    if (!context.mounted) return;
+    if (error != null) {
+      await showAppErrorBottomSheet(context, error);
+      return;
+    }
+    await showAppSuccessBottomSheet(
+      context,
+      'La evidencia fue cargada y sincronizada con el servidor.',
     );
   }
 
@@ -871,9 +892,11 @@ class _RequisitionSummaryCard extends StatelessWidget {
         ],
         _SummaryFooter(
           sessionsLabel: '${detail.sessions.length} sesiones',
-          evidenceLabel: detail.requisition.isSynchronized
-              ? 'Evidencias sincronizadas'
-              : 'Evidencias pendientes',
+          evidenceLabel: viewModel.failedEvidenceCount > 0
+              ? 'Evidencias con errores'
+              : viewModel.pendingEvidenceCount > 0
+              ? 'Evidencias pendientes'
+              : 'Evidencias sincronizadas',
           uploadProgress: viewModel.uploadProgress,
           offlineSyncProgress: viewModel.offlineSyncProgress,
           offlineSyncError: viewModel.offlineSyncError,
@@ -884,7 +907,10 @@ class _RequisitionSummaryCard extends StatelessWidget {
           offlineAvailableCount: viewModel.offlineEvidenceAvailableCount,
           offlineTotalCount: viewModel.offlineEvidenceTotalCount,
           pendingCount: viewModel.pendingEvidenceCount,
+          failedCount: viewModel.failedEvidenceCount,
           onRetry: viewModel.retryPendingEvidence,
+          onCancelUpload: viewModel.cancelPendingEvidenceSync,
+          isCancellingUpload: viewModel.isCancellingUpload,
           onSyncOffline: viewModel.syncEvidenceForOffline,
         ),
       ],
@@ -982,7 +1008,10 @@ class _SummaryFooter extends StatelessWidget {
     required this.offlineAvailableCount,
     required this.offlineTotalCount,
     required this.pendingCount,
+    required this.failedCount,
     required this.onRetry,
+    required this.onCancelUpload,
+    required this.isCancellingUpload,
     required this.onSyncOffline,
   });
 
@@ -998,7 +1027,10 @@ class _SummaryFooter extends StatelessWidget {
   final int offlineAvailableCount;
   final int offlineTotalCount;
   final int pendingCount;
+  final int failedCount;
   final VoidCallback onRetry;
+  final VoidCallback onCancelUpload;
+  final bool isCancellingUpload;
   final VoidCallback onSyncOffline;
 
   @override
@@ -1032,7 +1064,10 @@ class _SummaryFooter extends StatelessWidget {
       isImporting: isImporting,
       isSyncing: isSyncing,
       pendingCount: pendingCount,
+      failedCount: failedCount,
       onRetry: onRetry,
+      onCancel: onCancelUpload,
+      isCancelling: isCancellingUpload,
     );
 
     final offlineAction = _OfflineSyncAction(
@@ -1094,20 +1129,25 @@ class _OfflineSyncAction extends StatelessWidget {
     final processed = progress?.processed ?? 0;
     final syncTotal = progress?.total ?? totalCount;
     final failedCount = progress?.failed ?? 0;
+    final pendingOfflineCount = (totalCount - availableCount).clamp(
+      0,
+      totalCount,
+    );
     final displayedErrors = errors.isNotEmpty
         ? errors
         : errorMessage?.trim().isNotEmpty ?? false
         ? [errorMessage!]
         : const <String>[];
     final hasFailed = failedCount > 0 || displayedErrors.isNotEmpty;
-    final hasFinished = progress != null && !isSyncing && !progress!.isActive;
-    final summary = progress != null && syncTotal > 0
-        ? '$processed de $syncTotal procesadas · '
+    final globalSummary =
+        '$availableCount de $totalCount evidencias disponibles offline'
+        '${pendingOfflineCount > 0 ? ' · $pendingOfflineCount ${pendingOfflineCount == 1 ? 'pendiente' : 'pendientes'}' : ''}.';
+    final lastAttemptSummary = progress == null || syncTotal <= 0
+        ? null
+        : 'Último intento: $processed de $syncTotal procesadas · '
               '${progress!.completed} recuperadas · '
               '${progress!.skipped} ya disponibles · '
-              '$failedCount con error'
-        : '$availableCount de $totalCount evidencias guardadas localmente'
-              '${totalCount > availableCount ? ' · ${totalCount - availableCount} pendientes' : ''}.';
+              '$failedCount con error.';
     final title = isSyncing
         ? progress?.total == null || progress!.total == 0
               ? 'Preparando evidencias offline'
@@ -1116,13 +1156,8 @@ class _OfflineSyncAction extends StatelessWidget {
         ? 'Evidencias disponibles offline'
         : hasFailed
         ? 'Sincronización incompleta'
-        : hasFinished
-        ? 'Sincronización completada'
         : 'Sincronizar para uso offline';
-    final subtitle = isSyncing
-        ? progress?.currentFileName ??
-              'Guardando copias cifradas en el dispositivo.'
-        : summary;
+    final currentFileName = isSyncing ? progress?.currentFileName : null;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1155,14 +1190,36 @@ class _OfflineSyncAction extends StatelessWidget {
                 color: theme.colorScheme.primary,
               ),
             ),
+            if (currentFileName != null) ...[
+              Text(
+                currentFileName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: AppSpace.xxs),
+            ],
             Text(
-              subtitle,
-              maxLines: 3,
+              globalSummary,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
+            if (!isSyncing && hasFailed && lastAttemptSummary != null) ...[
+              const SizedBox(height: AppSpace.xxs),
+              Text(
+                lastAttemptSummary,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
             if (!isSyncing && hasFailed) ...[
               const SizedBox(height: AppSpace.xs),
               Row(
@@ -1259,50 +1316,64 @@ class _UploadProgressIndicator extends StatelessWidget {
     required this.isImporting,
     required this.isSyncing,
     required this.pendingCount,
+    required this.failedCount,
     required this.onRetry,
+    required this.onCancel,
+    required this.isCancelling,
   });
 
   final EvidenceUploadProgress? progress;
   final bool isImporting;
   final bool isSyncing;
   final int pendingCount;
+  final int failedCount;
   final VoidCallback onRetry;
+  final VoidCallback onCancel;
+  final bool isCancelling;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final active = isImporting || isSyncing || (progress?.isActive ?? false);
+    final isPreparingUpload =
+        !isImporting &&
+        active &&
+        progress?.stage == EvidenceUploadStage.preparing;
     final hasPending = pendingCount > 0;
     final hasError =
         !active &&
         hasPending &&
-        (progress?.stage == EvidenceUploadStage.error ||
+        (failedCount > 0 ||
+            progress?.stage == EvidenceUploadStage.error ||
             (progress?.hasFailures ?? false) ||
             (progress?.errorMessage?.trim().isNotEmpty ?? false));
-    final completed = progress?.processed ?? 0;
-    final total = progress?.total ?? pendingCount;
-    final title = isImporting
+    final title = isCancelling
+        ? 'Pausando sincronización'
+        : isImporting
         ? 'Preparando archivos para subir'
-        : active && total > 0
-        ? 'Subiendo $completed de $total archivos'
+        : isPreparingUpload
+        ? 'Preparando seguridad · $pendingCount ${pendingCount == 1 ? 'pendiente' : 'pendientes'}'
         : active
-        ? 'Subiendo evidencias'
+        ? 'Subiendo evidencia · $pendingCount ${pendingCount == 1 ? 'pendiente' : 'pendientes'}'
         : hasError
-        ? '$pendingCount ${pendingCount == 1 ? 'archivo pendiente' : 'archivos pendientes'}'
+        ? _pendingTitle(pendingCount, failedCount)
         : hasPending
-        ? 'Sincronización pendiente'
+        ? _pendingTitle(pendingCount, failedCount)
         : 'Evidencias sincronizadas';
-    final subtitle =
-        progress?.errorMessage ??
-        progress?.currentFileName ??
-        (isImporting
-            ? 'Se están cifrando localmente.'
-            : hasError
-            ? 'La carga se reintentará cuando haya conexión.'
-            : hasPending
-            ? 'La carga continúa en segundo plano.'
-            : 'No hay evidencias pendientes de sincronización.');
+    final subtitle = isCancelling
+        ? 'Los archivos seguirán cifrados y guardados en este dispositivo.'
+        : progress?.errorMessage ??
+              (isPreparingUpload
+                  ? 'Generando accesos cifrados para ${progress?.currentFileName ?? 'la evidencia'}.'
+                  : progress?.currentFileName ??
+                        (isImporting
+                            ? 'Se están cifrando localmente.'
+                            : hasError
+                            ? 'La carga se detuvo. Puedes reintentarlo.'
+                            : hasPending
+                            ? 'Guardados localmente. Puedes cargar todos o elegir uno desde su menú.'
+                            : 'No hay evidencias pendientes de sincronización.'));
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -1315,81 +1386,126 @@ class _UploadProgressIndicator extends StatelessWidget {
           horizontal: AppSpace.s,
           vertical: AppSpace.xs,
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            SizedBox.square(
-              dimension: AppSize.iconM,
-              child: active
-                  ? CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: scheme.primary,
-                    )
-                  : SvgPicture.asset(
-                      hasError
-                          ? 'assets/images/icons/sync.svg'
-                          : 'assets/images/icons/check.svg',
-                      colorFilter: ColorFilter.mode(
-                        scheme.primary,
-                        BlendMode.srcIn,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox.square(
+                  dimension: AppSize.iconM,
+                  child: active || isCancelling
+                      ? CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: scheme.primary,
+                        )
+                      : SvgPicture.asset(
+                          hasError
+                              ? 'assets/images/icons/sync.svg'
+                              : hasPending
+                              ? 'assets/images/icons/sync.svg'
+                              : 'assets/images/icons/check.svg',
+                          colorFilter: ColorFilter.mode(
+                            scheme.primary,
+                            BlendMode.srcIn,
+                          ),
+                        ),
+                ),
+                const SizedBox(width: AppSpace.s),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: scheme.primary,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
-                    ),
-            ),
-            const SizedBox(width: AppSpace.s),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: scheme.primary,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                  if (active && progress?.fraction != null) ...[
-                    const SizedBox(height: AppSpace.xs),
-                    LinearProgressIndicator(
-                      value: progress!.fraction,
-                      minHeight: 3,
-                      borderRadius: BorderRadius.circular(AppRadius.pill),
-                    ),
-                  ] else if (isImporting || active) ...[
-                    const SizedBox(height: AppSpace.xs),
-                    const LinearProgressIndicator(minHeight: 3),
-                  ],
-                ],
-              ),
-            ),
-            if (hasError) ...[
-              const SizedBox(width: AppSpace.xs),
-              IconButton(
-                onPressed: onRetry,
-                tooltip: 'Reintentar carga',
-                icon: SvgPicture.asset(
-                  'assets/images/icons/sync.svg',
-                  width: AppSize.iconS,
-                  height: AppSize.iconS,
-                  colorFilter: ColorFilter.mode(
-                    scheme.primary,
-                    BlendMode.srcIn,
+                      Text(
+                        subtitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                      if (active &&
+                          (progress?.processed ?? 0) > 0 &&
+                          progress?.fraction != null) ...[
+                        const SizedBox(height: AppSpace.xs),
+                        LinearProgressIndicator(
+                          value: progress!.fraction,
+                          minHeight: 3,
+                          borderRadius: BorderRadius.circular(AppRadius.pill),
+                        ),
+                      ] else if (isImporting || active) ...[
+                        const SizedBox(height: AppSpace.xs),
+                        const LinearProgressIndicator(minHeight: 3),
+                      ],
+                    ],
                   ),
                 ),
+              ],
+            ),
+            if (hasPending && !isImporting) ...[
+              const SizedBox(height: AppSpace.xs),
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: AppSpace.xs,
+                runSpacing: AppSpace.xs,
+                children: [
+                  if (!active)
+                    TextButton.icon(
+                      onPressed: isCancelling ? null : onRetry,
+                      icon: SvgPicture.asset(
+                        'assets/images/icons/sync.svg',
+                        width: AppSize.iconS,
+                        height: AppSize.iconS,
+                        colorFilter: ColorFilter.mode(
+                          scheme.primary,
+                          BlendMode.srcIn,
+                        ),
+                      ),
+                      label: Text(
+                        hasError ? 'Reintentar' : 'Cargar pendientes',
+                      ),
+                    ),
+                  if (active)
+                    TextButton.icon(
+                      onPressed: isCancelling ? null : onCancel,
+                      icon: isCancelling
+                          ? const SizedBox.square(
+                              dimension: AppSize.iconS,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Icon(
+                              Icons.pause_circle_outline,
+                              color: scheme.error,
+                            ),
+                      label: const Text('Pausar carga'),
+                    ),
+                ],
               ),
             ],
           ],
         ),
       ),
     );
+  }
+
+  String _pendingTitle(int pendingCount, int failedCount) {
+    if (failedCount <= 0) {
+      return '$pendingCount ${pendingCount == 1 ? 'archivo pendiente' : 'archivos pendientes'}';
+    }
+    if (failedCount >= pendingCount) {
+      return '$failedCount ${failedCount == 1 ? 'archivo con error' : 'archivos con error'}';
+    }
+    final remaining = pendingCount - failedCount;
+    return '$failedCount con error · $remaining pendientes';
   }
 }
 
@@ -2440,6 +2556,9 @@ class _EvidenceSection extends StatelessWidget {
     required this.canDeleteEvidence,
     required this.isDeletingEvidence,
     required this.onDeleteEvidence,
+    required this.canUploadEvidence,
+    required this.isUploadingEvidence,
+    required this.onUploadEvidence,
   });
 
   final EvidenceCategorySummary summary;
@@ -2448,6 +2567,9 @@ class _EvidenceSection extends StatelessWidget {
   final bool Function(RequisitionEvidence) canDeleteEvidence;
   final bool Function(RequisitionEvidence) isDeletingEvidence;
   final ValueChanged<RequisitionEvidence> onDeleteEvidence;
+  final bool Function(RequisitionEvidence) canUploadEvidence;
+  final bool Function(RequisitionEvidence) isUploadingEvidence;
+  final ValueChanged<RequisitionEvidence> onUploadEvidence;
 
   @override
   Widget build(BuildContext context) {
@@ -2492,13 +2614,18 @@ class _EvidenceSection extends StatelessWidget {
                   mainAxisExtent: 68,
                 ),
                 itemBuilder: (context, index) => _EvidencePreview(
+                  key: ValueKey(visible[index].id),
                   evidence: visible[index],
                   decryptionService: decryptionService,
                   onOpen: () => onOpenEvidence(visible[index]),
                   onDelete: canDeleteEvidence(visible[index])
                       ? () => onDeleteEvidence(visible[index])
                       : null,
+                  onUpload: canUploadEvidence(visible[index])
+                      ? () => onUploadEvidence(visible[index])
+                      : null,
                   isDeleting: isDeletingEvidence(visible[index]),
+                  isUploading: isUploadingEvidence(visible[index]),
                 ),
               );
             },
@@ -2520,6 +2647,9 @@ class _EvidenceSection extends StatelessWidget {
       canDeleteEvidence: canDeleteEvidence,
       isDeletingEvidence: isDeletingEvidence,
       onDeleteEvidence: onDeleteEvidence,
+      canUploadEvidence: canUploadEvidence,
+      isUploadingEvidence: isUploadingEvidence,
+      onUploadEvidence: onUploadEvidence,
     ),
   );
 }
@@ -2530,13 +2660,18 @@ class _EvidencePreview extends StatelessWidget {
     required this.decryptionService,
     required this.onOpen,
     this.onDelete,
+    this.onUpload,
     this.isDeleting = false,
+    this.isUploading = false,
+    super.key,
   });
   final RequisitionEvidence evidence;
   final EvidenceDecryptionService decryptionService;
   final VoidCallback onOpen;
   final VoidCallback? onDelete;
+  final VoidCallback? onUpload;
   final bool isDeleting;
+  final bool isUploading;
 
   @override
   Widget build(BuildContext context) {
@@ -2617,13 +2752,26 @@ class _EvidencePreview extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: AppSpace.xs),
-                  Text(
-                    '${evidence.sizeLabel} · ${_evidenceStatusLabel(evidence)}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          '${evidence.sizeLabel} · ${_evidenceStatusLabel(evidence)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: AppSpace.xs),
+                      EvidenceSyncBadge(
+                        uploadStatus: evidence.uploadStatus,
+                        hasLocalCopy:
+                            evidence.localPath?.trim().isNotEmpty == true,
+                        compact: true,
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -2641,35 +2789,145 @@ class _EvidencePreview extends StatelessWidget {
                 ),
               ),
             ),
-            if (onDelete != null)
-              isDeleting
-                  ? const SizedBox.square(
-                      dimension: AppSize.minTouchTarget,
-                      child: Center(
-                        child: SizedBox.square(
-                          dimension: AppSize.iconM,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      ),
-                    )
-                  : IconButton(
-                      onPressed: onDelete,
-                      tooltip: 'Eliminar evidencia pendiente',
-                      icon: SvgPicture.asset(
-                        'assets/images/icons/delete.svg',
-                        width: AppSize.iconS,
-                        height: AppSize.iconS,
-                        colorFilter: ColorFilter.mode(
-                          scheme.error,
-                          BlendMode.srcIn,
-                        ),
-                      ),
-                    ),
+            if (onDelete != null ||
+                onUpload != null ||
+                isDeleting ||
+                isUploading)
+              _EvidenceActionsMenu(
+                onUpload: onUpload,
+                onDelete: onDelete,
+                isBusy: isDeleting || isUploading,
+              ),
           ],
         ),
       ),
     );
   }
+}
+
+enum _EvidenceAction { upload, delete }
+
+class _EvidenceActionsMenu extends StatelessWidget {
+  const _EvidenceActionsMenu({
+    required this.onUpload,
+    required this.onDelete,
+    required this.isBusy,
+  });
+
+  final VoidCallback? onUpload;
+  final VoidCallback? onDelete;
+  final bool isBusy;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isBusy) {
+      return const SizedBox.square(
+        dimension: AppSize.minTouchTarget,
+        child: Center(
+          child: SizedBox.square(
+            dimension: AppSize.iconM,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+
+    final theme = Theme.of(context);
+    final iconColor = theme.colorScheme.onSurface;
+    return DropdownButtonHideUnderline(
+      child: DropdownButton2<_EvidenceAction>(
+        customButton: Tooltip(
+          message: 'Acciones de la evidencia',
+          child: SizedBox.square(
+            dimension: AppSize.minTouchTarget,
+            child: Center(
+              child: SvgPicture.asset(
+                '${assetImgIcon}ellipsisH.svg',
+                width: AppSize.iconM,
+                colorFilter: ColorFilter.mode(iconColor, BlendMode.srcIn),
+              ),
+            ),
+          ),
+        ),
+        items: [
+          if (onUpload != null)
+            DropdownMenuItem<_EvidenceAction>(
+              value: _EvidenceAction.upload,
+              child: _EvidenceActionRow(
+                icon: Icons.cloud_upload_outlined,
+                label: 'Cargar',
+                color: theme.colorScheme.primary,
+              ),
+            ),
+          if (onDelete != null)
+            DropdownMenuItem<_EvidenceAction>(
+              value: _EvidenceAction.delete,
+              child: _EvidenceActionRow(
+                icon: Icons.delete_outline_rounded,
+                label: 'Eliminar',
+                color: theme.colorScheme.error,
+              ),
+            ),
+        ],
+        onChanged: (action) {
+          switch (action) {
+            case _EvidenceAction.upload:
+              onUpload?.call();
+            case _EvidenceAction.delete:
+              onDelete?.call();
+            case null:
+              return;
+          }
+        },
+        dropdownStyleData: DropdownStyleData(
+          width: 200,
+          padding: const EdgeInsets.symmetric(vertical: AppSpace.xs),
+          decoration: BoxDecoration(
+            color: theme.cardColor,
+            borderRadius: BorderRadius.circular(AppRadius.m),
+            border: Border.all(
+              color: theme.dividerColor.withValues(alpha: .18),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: .18),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+        ),
+        menuItemStyleData: const MenuItemStyleData(
+          padding: EdgeInsets.symmetric(horizontal: AppSpace.m),
+        ),
+        barrierColor: Colors.transparent,
+      ),
+    );
+  }
+}
+
+class _EvidenceActionRow extends StatelessWidget {
+  const _EvidenceActionRow({
+    required this.icon,
+    required this.label,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Icon(icon, size: AppSize.iconM, color: color),
+      const SizedBox(width: AppSpace.s),
+      Text(
+        label,
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: color),
+      ),
+    ],
+  );
 }
 
 String _categoryTitle(EvidenceCategory category) => switch (category) {
@@ -2685,7 +2943,8 @@ String _evidenceStatusLabel(RequisitionEvidence evidence) =>
             ? 'En servidor · pendiente offline'
             : 'Sincronizada',
       'PENDING_UPLOAD' => 'Pendiente',
-      'UPLOADING' => 'Cargando',
+      'UPLOADING' => 'Subiendo',
+      'ERROR' => 'Error de subida · reintentar',
       _ => 'Local',
     };
 
@@ -2716,6 +2975,9 @@ class _AllEvidenceSheet extends StatelessWidget {
     required this.canDeleteEvidence,
     required this.isDeletingEvidence,
     required this.onDeleteEvidence,
+    required this.canUploadEvidence,
+    required this.isUploadingEvidence,
+    required this.onUploadEvidence,
   });
   final String title;
   final String subtitle;
@@ -2725,6 +2987,9 @@ class _AllEvidenceSheet extends StatelessWidget {
   final bool Function(RequisitionEvidence) canDeleteEvidence;
   final bool Function(RequisitionEvidence) isDeletingEvidence;
   final ValueChanged<RequisitionEvidence> onDeleteEvidence;
+  final bool Function(RequisitionEvidence) canUploadEvidence;
+  final bool Function(RequisitionEvidence) isUploadingEvidence;
+  final ValueChanged<RequisitionEvidence> onUploadEvidence;
 
   @override
   Widget build(BuildContext context) {
@@ -2769,6 +3034,7 @@ class _AllEvidenceSheet extends StatelessWidget {
                           mainAxisExtent: 68,
                         ),
                         itemBuilder: (context, index) => _EvidencePreview(
+                          key: ValueKey(evidence[index].id),
                           evidence: evidence[index],
                           decryptionService: decryptionService,
                           onDelete: canDeleteEvidence(evidence[index])
@@ -2779,7 +3045,16 @@ class _AllEvidenceSheet extends StatelessWidget {
                                   );
                                 }
                               : null,
+                          onUpload: canUploadEvidence(evidence[index])
+                              ? () {
+                                  Navigator.of(context).pop();
+                                  WidgetsBinding.instance.addPostFrameCallback(
+                                    (_) => onUploadEvidence(evidence[index]),
+                                  );
+                                }
+                              : null,
                           isDeleting: isDeletingEvidence(evidence[index]),
+                          isUploading: isUploadingEvidence(evidence[index]),
                           onOpen: () {
                             Navigator.of(context).pop();
                             WidgetsBinding.instance.addPostFrameCallback(

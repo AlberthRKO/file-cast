@@ -41,7 +41,21 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
   }
 
   Future<void> _initialize() async {
-    await _controller.initialize();
+    final file = File(widget.path);
+    if (!await file.exists()) {
+      throw StateError('El archivo de video ya no está disponible.');
+    }
+    if (await file.length() == 0) {
+      throw StateError('El archivo de video está vacío o incompleto.');
+    }
+    try {
+      await _controller.initialize().timeout(const Duration(seconds: 20));
+    } on TimeoutException {
+      throw StateError(
+        'El video tardó demasiado en abrirse. Puede estar incompleto o usar '
+        'un formato no compatible.',
+      );
+    }
     // Los previews de evidencia son reproducciones únicas. Esto también
     // fuerza el comportamiento esperado del backend media_kit.
     await _controller.setLooping(false);
@@ -120,8 +134,8 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
         return const _VideoPreviewLoading();
       }
       if (snapshot.hasError || !_controller.value.isInitialized) {
-        return const _VideoPreviewFailure(
-          message: 'El códec o contenedor de este video no es compatible.',
+        return _VideoPreviewFailure(
+          message: _videoInitializationError(snapshot.error),
         );
       }
 
@@ -313,6 +327,12 @@ class _VideoPreviewFailure extends StatelessWidget {
       child: Text(message, textAlign: TextAlign.center),
     ),
   );
+}
+
+String _videoInitializationError(Object? error) {
+  final message = error?.toString().replaceFirst('Bad state: ', '').trim();
+  if (message != null && message.isNotEmpty) return message;
+  return 'El códec o contenedor de este video no es compatible.';
 }
 
 String _formatVideoDuration(Duration duration) {

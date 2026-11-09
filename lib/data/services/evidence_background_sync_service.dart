@@ -108,6 +108,12 @@ class EvidenceBackgroundSyncService {
     );
   }
 
+  Future<void> cancelUpload() async {
+    await initializeDispatcher();
+    if (!_supportsBackgroundTasks) return;
+    await Workmanager().cancelByUniqueName(_uploadUniqueName);
+  }
+
   bool get _supportsBackgroundTasks =>
       !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.android ||
@@ -145,6 +151,7 @@ void evidenceBackgroundCallbackDispatcher() {
 
     final notifications = LocalNotificationService();
     await notifications.initialize(requestPermissions: false);
+    final requisitionId = inputData?['requisitionId'] as String?;
     final secureStorage = SecureStorageService(const FlutterSecureStorage());
     final auth = AuthSessionService(
       client: http.Client(),
@@ -152,6 +159,15 @@ void evidenceBackgroundCallbackDispatcher() {
       baseUrl: authBaseUrl,
     );
     if (!await auth.hasStoredSession()) {
+      try {
+        await notifications.cancelJobId(
+          operation == 'OFFLINE_SYNC'
+              ? 'OFFLINE_SYNC:${requisitionId ?? ''}'
+              : 'UPLOAD',
+        );
+      } on Object {
+        // La ausencia de sesión no debe dejar el engine sin finalizar.
+      }
       await notifications.dispose();
       return true;
     }
@@ -172,7 +188,6 @@ void evidenceBackgroundCallbackDispatcher() {
     );
     try {
       if (operation == 'OFFLINE_SYNC') {
-        final requisitionId = inputData?['requisitionId'] as String?;
         if (requisitionId == null || requisitionId.isEmpty) return false;
         final detail = await RequisitionDetailService(http: client).getDetail(
           requisitionId,
@@ -204,6 +219,18 @@ void evidenceBackgroundCallbackDispatcher() {
     } on Object {
       return false;
     } finally {
+      // WorkManager usa un aviso foreground separado de los avisos de
+      // progreso por requisa. No lo dejamos permanente después de que el
+      // worker terminó, incluso si terminó por error y será reintentado.
+      try {
+        await notifications.cancelJobId(
+          operation == 'OFFLINE_SYNC'
+              ? 'OFFLINE_SYNC:${requisitionId ?? ''}'
+              : 'UPLOAD',
+        );
+      } on Object {
+        // El resultado del worker no depende de limpiar la notificación.
+      }
       // No cerrar explícitamente esta conexión desde el engine de
       // WorkManager. El worker puede ejecutarse en un engine Flutter distinto
       // al de la interfaz, pero ambos apuntan al mismo archivo SQLite/SQLCipher.

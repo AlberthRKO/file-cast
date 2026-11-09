@@ -95,9 +95,9 @@ class Config {
     // Desde Android Emulator, localhost apunta al propio emulador. La
     // dirección especial 10.0.2.2 apunta al equipo anfitrión.
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      return 'https://file-cast-backend.dev.mp.gob.bo';
+      return 'https://0dpchkdj-3000.brs.devtunnels.ms';
     }
 
-    return 'https://file-cast-backend.dev.mp.gob.bo';
+    return 'https://0dpchkdj-3000.brs.devtunnels.ms';
   }
 }

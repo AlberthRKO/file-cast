@@ -5,6 +5,7 @@ typedef RemoteFilePreview = ({String localPath, String? documentText});
 
 abstract interface class AcquisitionRepository {
   Stream<void> get deviceChanges;
+  Stream<String> get evidenceChanges;
 
   Future<AcquisitionAvailability> getAvailability();
   Future<List<AcquisitionDevice>> getDevices();
@@ -28,11 +29,12 @@ abstract interface class AcquisitionRepository {
     required String sessionId,
   });
   Future<RequisitionDetail> getRequisitionDetail(String requisitionId);
+  Future<RequisitionDetail> getCachedRequisitionDetail(String requisitionId);
   Future<RequisitionDetail> captureScreenshot({
     required String requisitionId,
     required String sessionId,
   });
-  Future<RequisitionDetail> startRecording({
+  Future<void> startRecording({
     required String requisitionId,
     required String sessionId,
   });

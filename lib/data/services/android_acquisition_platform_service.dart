@@ -124,7 +124,8 @@ class AndroidAcquisitionPlatformService {
     await _adbClient.startPersistentShell(
       'CLASSPATH=$_serverRemotePath app_process / '
       'com.genymobile.scrcpy.Server 2.7 tunnel_forward=true '
-      'audio=false control=true log_level=debug max_fps=30 video_bit_rate=8000000',
+      'audio=false control=true log_level=debug max_fps=30 '
+      'video_bit_rate=8000000 video_codec_options=i-frame-interval=1',
     );
     await Future<void>.delayed(const Duration(seconds: 2));
 

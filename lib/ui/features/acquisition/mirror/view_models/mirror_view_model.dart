@@ -35,7 +35,12 @@ class MirrorViewModel extends ChangeNotifier {
   bool get messageIsError => _messageIsError;
   bool _disposed = false;
   StreamSubscription<void>? _deviceSubscription;
+  StreamSubscription<String>? _evidenceChangesSubscription;
   Timer? _recordingTimer;
+  Future<void>? _recordingStopInFlight;
+  Future<void>? _evidenceRefreshInFlight;
+  bool _evidenceRefreshQueued = false;
+  Timer? _evidenceStatusTimer;
   Timer? _messageTimer;
   DateTime? _recordingStartedAt;
   bool _touchErrorReported = false;
@@ -63,6 +68,12 @@ class MirrorViewModel extends ChangeNotifier {
   }
 
   Future<void> load() async {
+    _evidenceChangesSubscription ??= _repository.evidenceChanges.listen((
+      changedId,
+    ) {
+      if (changedId != requisitionId || _disposed) return;
+      unawaited(_refreshEvidenceDetail());
+    });
     _deviceSubscription ??= _repository.deviceChanges.listen((_) async {
       final session = await _repository.activeSession(
         requisitionId: requisitionId,
@@ -92,6 +103,59 @@ class MirrorViewModel extends ChangeNotifier {
       );
     }
     _safeNotify();
+  }
+
+  Future<void> _refreshEvidenceDetail() async {
+    final inFlight = _evidenceRefreshInFlight;
+    if (inFlight != null) {
+      _evidenceRefreshQueued = true;
+      return inFlight;
+    }
+    final refresh = () async {
+      do {
+        _evidenceRefreshQueued = false;
+        try {
+          final detail = await _repository.getCachedRequisitionDetail(
+            requisitionId,
+          );
+          if (_disposed) return;
+          _detail = detail;
+          _safeNotify();
+        } on Object {
+          // El snapshot local existente permanece visible. Un evento recibido
+          // durante esta lectura deja otra vuelta en cola para no perder el
+          // estado terminal de la subida.
+        }
+      } while (_evidenceRefreshQueued && !_disposed);
+    }();
+    _evidenceRefreshInFlight = refresh;
+    try {
+      await refresh;
+    } finally {
+      if (identical(_evidenceRefreshInFlight, refresh)) {
+        _evidenceRefreshInFlight = null;
+      }
+    }
+  }
+
+  void _updateEvidenceStatusPolling() {
+    final hasUnresolved =
+        _detail?.evidence.any((evidence) {
+          final status = evidence.uploadStatus?.toUpperCase();
+          return status == 'PENDING_UPLOAD' ||
+              status == 'UPLOADING' ||
+              status == 'ERROR';
+        }) ??
+        false;
+    if (!hasUnresolved) {
+      _evidenceStatusTimer?.cancel();
+      _evidenceStatusTimer = null;
+      return;
+    }
+    _evidenceStatusTimer ??= Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => unawaited(_refreshEvidenceDetail()),
+    );
   }
 
   void toggleDiagnostics() {
@@ -133,7 +197,7 @@ class MirrorViewModel extends ChangeNotifier {
       _showMessage('Captura guardada.', notify: false);
     } catch (error) {
       _showMessage(
-        'No se pudo capturar la pantalla: $error',
+        'No se pudo capturar la pantalla: ${_userFacingError(error)}',
         isError: true,
         duration: const Duration(seconds: 4),
         notify: false,
@@ -144,9 +208,14 @@ class MirrorViewModel extends ChangeNotifier {
   }
 
   Future<void> toggleRecording() async {
-    if (_recordingPhase == AcquisitionRecordingPhase.saving) return;
+    if (_recordingPhase == AcquisitionRecordingPhase.starting ||
+        _recordingPhase == AcquisitionRecordingPhase.saving) {
+      return;
+    }
     _clearMessage(notify: false);
     if (_recordingPhase == AcquisitionRecordingPhase.idle) {
+      _recordingPhase = AcquisitionRecordingPhase.starting;
+      _safeNotify();
       try {
         await _repository.startRecording(
           requisitionId: requisitionId,
@@ -160,8 +229,9 @@ class MirrorViewModel extends ChangeNotifier {
         );
         _showMessage('Grabación iniciada.', notify: false);
       } catch (error) {
+        _recordingPhase = AcquisitionRecordingPhase.idle;
         _showMessage(
-          'No se pudo iniciar la grabación: $error',
+          'No se pudo iniciar la grabación: ${_userFacingError(error)}',
           isError: true,
           duration: const Duration(seconds: 4),
           notify: false,
@@ -173,19 +243,28 @@ class MirrorViewModel extends ChangeNotifier {
     _recordingPhase = AcquisitionRecordingPhase.saving;
     _recordingTimer?.cancel();
     _safeNotify();
+    final stopOperation = _repository
+        .stopRecording(
+          requisitionId: requisitionId,
+          sessionId: sessionId,
+        )
+        .then<void>((detail) {
+          if (!_disposed) _detail = detail;
+        });
+    _recordingStopInFlight = stopOperation;
     try {
-      _detail = await _repository.stopRecording(
-        requisitionId: requisitionId,
-        sessionId: sessionId,
-      );
+      await stopOperation;
       _showMessage('Video guardado.', notify: false);
     } catch (error) {
       _showMessage(
-        'No se pudo guardar la grabación: $error',
+        'No se pudo completar el guardado del video: ${_userFacingError(error)}',
         isError: true,
         duration: const Duration(seconds: 4),
         notify: false,
       );
+    }
+    if (identical(_recordingStopInFlight, stopOperation)) {
+      _recordingStopInFlight = null;
     }
     _recordingPhase = AcquisitionRecordingPhase.idle;
     _recordingStartedAt = null;
@@ -260,22 +339,47 @@ class MirrorViewModel extends ChangeNotifier {
     if (notify) _safeNotify();
   }
 
+  String _userFacingError(Object error) {
+    final message = error.toString().replaceFirst('Bad state: ', '').trim();
+    final normalized = message.toLowerCase();
+    if (normalized.contains('timeout') ||
+        normalized.contains('bloqueo de sincronización local')) {
+      return 'La sincronización local está ocupada. El archivo quedará en cola y se reintentará automáticamente.';
+    }
+    if (message.isEmpty) return 'Intenta nuevamente.';
+    return message.length > 180 ? '${message.substring(0, 177)}…' : message;
+  }
+
   void _safeNotify() {
-    if (!_disposed) notifyListeners();
+    if (_disposed) return;
+    _updateEvidenceStatusPolling();
+    notifyListeners();
   }
 
   @override
   void dispose() {
     _disposed = true;
     _deviceSubscription?.cancel();
+    _evidenceChangesSubscription?.cancel();
     _recordingTimer?.cancel();
     _messageTimer?.cancel();
     _diagnosticTimer?.cancel();
+    _evidenceStatusTimer?.cancel();
     unawaited(_releaseAcquisitionSession());
     super.dispose();
   }
 
   Future<void> _releaseAcquisitionSession() async {
+    final pendingStop = _recordingStopInFlight;
+    if (pendingStop != null) {
+      try {
+        await pendingStop;
+      } catch (_) {
+        // Se libera el mirror aunque la finalización del archivo haya fallado.
+      }
+      await _repository.disconnect();
+      return;
+    }
     if (_recordingPhase == AcquisitionRecordingPhase.recording) {
       try {
         await _repository.stopRecording(

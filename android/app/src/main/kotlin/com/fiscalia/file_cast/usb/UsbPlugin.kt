@@ -24,7 +24,6 @@ import com.fiscalia.file_cast.sync.AdbSyncClient
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
-import java.util.ArrayDeque
 import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -37,8 +36,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         private const val EVENT_CHANNEL = "com.fiscalia.file_cast/usb/events"
         private const val ACTION_USB_PERMISSION = "com.fiscalia.file_cast.USB_PERMISSION"
         private const val FLAG_VIDEO_CONFIG = Long.MIN_VALUE
-        private const val FLAG_VIDEO_KEY_FRAME = 1L shl 62
-        private const val MAX_RECORDING_PREROLL_BYTES = 24 * 1024 * 1024
+        private const val RECORDING_START_TIMEOUT_MS = 20_000L
         private const val MIN_FREE_SPACE_BYTES = 64L * 1024 * 1024
         private const val MAX_TRANSFER_BATCH_FILES = 200
         private const val MAX_PREVIEW_FILE_BYTES = 256L * 1024 * 1024
@@ -79,8 +77,8 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     @Volatile private var recorder: ScrcpyRecorder? = null
     private var lastCodecConfig: ByteArray? = null
     private val recorderLock = Any()
-    private val recentVideoPackets = ArrayDeque<BufferedVideoPacket>()
-    private var recentVideoBytes = 0
+    private var pendingRecordingStartResult: MethodChannel.Result? = null
+    private var recordingStartTimeout: Runnable? = null
 
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -696,14 +694,16 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                                 localId = localId,
                                 onPacket = { headerValue, payload ->
                                     decoder.feedPacket(payload, headerValue)
-                                    synchronized(recorderLock) {
+                                    val recordingStarted = synchronized(recorderLock) {
                                         if ((headerValue and FLAG_VIDEO_CONFIG) != 0L) {
                                             lastCodecConfig = (lastCodecConfig ?: byteArrayOf()) + payload
-                                            clearRecordingPreroll()
+                                            false
                                         } else {
-                                            cacheRecordingPacket(headerValue, payload)
-                                            recorder?.writePacket(headerValue, payload)
+                                            recorder?.writePacket(headerValue, payload) == true
                                         }
+                                    }
+                                    if (recordingStarted) {
+                                        mainHandler.post { completeRecordingStart() }
                                     }
                                 },
                                 onError = { msg ->
@@ -741,7 +741,6 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     stopRecorderSafely()
                     synchronized(recorderLock) {
                         lastCodecConfig = null
-                        clearRecordingPreroll()
                     }
                     scrcpyServerShellLocalId = null
                     wmSizeWidth = 0
@@ -782,8 +781,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     synchronized(recorderLock) {
                         log.appendLine(
                             "Recording: active=${recorder != null} " +
-                                "prerollPackets=${recentVideoPackets.size} " +
-                                "prerollBytes=$recentVideoBytes " +
+                                "waitingForKeyframe=${pendingRecordingStartResult != null} " +
                                 "codecConfigBytes=${lastCodecConfig?.size ?: 0}"
                         )
                     }
@@ -1081,10 +1079,6 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     }
 
     private fun startScreenRecording(call: MethodCall, result: MethodChannel.Result) {
-        if (recorder != null) {
-            result.error("ALREADY_RECORDING", "Ya existe una grabación activa", null)
-            return
-        }
         if (scrcpyDecoder == null || mirrorVideoWidth <= 0 || mirrorVideoHeight <= 0) {
             result.error("MIRROR_NOT_READY", "El flujo de video aún no está listo", null)
             return
@@ -1094,40 +1088,77 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         try {
             val file = File(evidenceDirectory(requisitionId, sessionId), "grabacion-${System.currentTimeMillis()}.mp4")
             synchronized(recorderLock) {
+                if (recorder != null || pendingRecordingStartResult != null) {
+                    throw IllegalStateException("Ya existe una grabación activa")
+                }
                 val config = lastCodecConfig
                     ?: throw IllegalStateException("Aún no se recibió la configuración H.264")
-                val firstPacket = recentVideoPackets.peekFirst()
-                if (firstPacket == null ||
-                    (firstPacket.headerValue and FLAG_VIDEO_KEY_FRAME) == 0L) {
-                    throw IllegalStateException("Aún no se recibió un keyframe de video")
-                }
                 val nextRecorder = ScrcpyRecorder(file, mirrorVideoWidth, mirrorVideoHeight)
                 try {
                     nextRecorder.start(config)
-                    recentVideoPackets.forEach { packet ->
-                        nextRecorder.writePacket(packet.headerValue, packet.payload)
-                    }
+                    pendingRecordingStartResult = result
+                    val timeout = Runnable { timeoutRecordingStart(result) }
+                    recordingStartTimeout = timeout
                     recorder = nextRecorder
+                    mainHandler.postDelayed(timeout, RECORDING_START_TIMEOUT_MS)
                 } catch (error: Exception) {
                     nextRecorder.abort()
                     throw error
                 }
             }
-            result.success(mapOf("name" to file.name, "path" to file.absolutePath, "byteLength" to 0, "sha256" to ""))
         } catch (error: Exception) {
             Log.e(TAG, "startScreenRecording error", error)
-            recorder = null
             result.error("RECORDING_ERROR", error.message ?: "No se pudo iniciar la grabación", null)
         }
     }
 
+    private fun completeRecordingStart() {
+        val completion = synchronized(recorderLock) {
+            val pendingResult = pendingRecordingStartResult ?: return
+            val activeRecorder = recorder ?: return
+            recordingStartTimeout?.let(mainHandler::removeCallbacks)
+            recordingStartTimeout = null
+            pendingRecordingStartResult = null
+            pendingResult to activeRecorder.file()
+        }
+        val (pendingResult, file) = completion
+        pendingResult.success(
+            mapOf(
+                "name" to file.name,
+                "path" to file.absolutePath,
+                "byteLength" to 0,
+                "sha256" to "",
+            ),
+        )
+    }
+
+    private fun timeoutRecordingStart(expectedResult: MethodChannel.Result) {
+        val timedOut = synchronized(recorderLock) {
+            if (pendingRecordingStartResult !== expectedResult) return
+            pendingRecordingStartResult = null
+            recordingStartTimeout = null
+            val activeRecorder = recorder
+            recorder = null
+            activeRecorder
+        }
+        try { timedOut?.abort() } catch (error: Exception) {
+            Log.e(TAG, "Could not abort recording after start timeout", error)
+        }
+        expectedResult.error(
+            "RECORDING_START_TIMEOUT",
+            "El video no entregó un frame clave para iniciar la grabación.",
+            null,
+        )
+    }
+
     private fun stopScreenRecording(result: MethodChannel.Result) {
-        val activeRecorder = recorder
+        val activeRecorder = synchronized(recorderLock) {
+            if (pendingRecordingStartResult != null) null else recorder.also { recorder = null }
+        }
         if (activeRecorder == null) {
             result.error("NOT_RECORDING", "No existe una grabación activa", null)
             return
         }
-        recorder = null
         Thread {
             try {
                 val file = activeRecorder.stop()
@@ -1146,29 +1177,28 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     }
 
     private fun stopRecorderSafely() {
-        val activeRecorder = recorder ?: return
-        recorder = null
-        try { activeRecorder.stop() } catch (error: Exception) {
-            Log.e(TAG, "Could not finalize active recording", error)
+        val stopped = synchronized(recorderLock) {
+            recordingStartTimeout?.let(mainHandler::removeCallbacks)
+            recordingStartTimeout = null
+            val pendingResult = pendingRecordingStartResult
+            pendingRecordingStartResult = null
+            val activeRecorder = recorder
+            recorder = null
+            pendingResult to activeRecorder
         }
-    }
-
-    private fun cacheRecordingPacket(headerValue: Long, payload: ByteArray) {
-        if ((headerValue and FLAG_VIDEO_KEY_FRAME) != 0L) clearRecordingPreroll()
-        if (recentVideoPackets.isEmpty() && (headerValue and FLAG_VIDEO_KEY_FRAME) == 0L) return
-        if (payload.size > MAX_RECORDING_PREROLL_BYTES) {
-            clearRecordingPreroll()
-            return
+        val (pendingResult, activeRecorder) = stopped
+        try { activeRecorder?.abort() } catch (error: Exception) {
+            Log.e(TAG, "Could not abort active recording", error)
         }
-        val copy = payload.copyOf()
-        recentVideoPackets.addLast(BufferedVideoPacket(headerValue, copy))
-        recentVideoBytes += copy.size
-        if (recentVideoBytes > MAX_RECORDING_PREROLL_BYTES) clearRecordingPreroll()
-    }
-
-    private fun clearRecordingPreroll() {
-        recentVideoPackets.clear()
-        recentVideoBytes = 0
+        if (pendingResult != null) {
+            mainHandler.post {
+                pendingResult.error(
+                    "RECORDING_INTERRUPTED",
+                    "La conexión se interrumpió antes de iniciar la grabación.",
+                    null,
+                )
+            }
+        }
     }
 
     private fun evidenceDirectory(requisitionId: String, sessionId: String): File {
@@ -1453,7 +1483,6 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         stopRecorderSafely()
         synchronized(recorderLock) {
             lastCodecConfig = null
-            clearRecordingPreroll()
         }
         mirrorTextureEntry?.release()
         mirrorTextureEntry = null
@@ -1503,8 +1532,3 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         mainHandler.post { sendEvent("file_transfer", data) }
     }
 }
-
-private data class BufferedVideoPacket(
-    val headerValue: Long,
-    val payload: ByteArray,
-)

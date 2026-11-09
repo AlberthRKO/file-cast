@@ -44,6 +44,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
   final Map<String, List<LocalEvidenceRecord>> _cachedLocalEvidence = {};
   final Map<String, RequisitionDetail> _cachedRemoteDetails = {};
   final Map<String, Set<String>> _deletedEvidenceIds = {};
+  final Map<String, Future<void>> _keySharingInFlight = {};
   final EvidencePickerService _pickerService;
   final EvidenceCryptoService? _cryptoService;
   final LocalEvidenceDatabaseService? _database;
@@ -86,8 +87,27 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       _offlineSyncService?.progress ?? const Stream.empty();
 
   @override
-  Future<int> syncPendingEvidence() =>
-      _syncService?.syncPending() ?? Future<int>.value(0);
+  Future<int> syncPendingEvidence({required String requisitionId}) =>
+      _syncService?.retryPendingEvidence(requisitionId: requisitionId) ??
+      Future<int>.value(0);
+
+  @override
+  Future<bool> syncEvidence({
+    required String requisitionId,
+    required String evidenceId,
+  }) =>
+      _syncService?.retryEvidence(
+        requisitionId: requisitionId,
+        evidenceId: evidenceId,
+      ) ??
+      Future<bool>.value(false);
+
+  @override
+  Future<void> cancelPendingEvidenceSync({
+    required String requisitionId,
+  }) async {
+    await _syncService?.cancelPendingEvidence(requisitionId: requisitionId);
+  }
 
   @override
   Future<RequisitionDetail> deletePendingEvidence({
@@ -103,9 +123,10 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       }
     }
 
-    if (evidence.uploadStatus?.toUpperCase() != 'PENDING_UPLOAD') {
+    final uploadStatus = evidence.uploadStatus?.toUpperCase();
+    if (uploadStatus != 'PENDING_UPLOAD' && uploadStatus != 'ERROR') {
       throw StateError(
-        'La evidencia ya está sincronizada o no está pendiente de subida.',
+        'La evidencia ya está sincronizada o se está subiendo.',
       );
     }
 
@@ -206,30 +227,82 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
 
   @override
   Future<RequisitionDetail> getDetail(String requisitionId) async {
-    try {
-      await _keyExchange?.ensureRegistered(requisitionId);
-    } on Object {
-      // La carga del detalle sigue disponible aunque el registro criptográfico
-      // quede pendiente por conectividad o por una versión antigua del backend.
-    }
     RequisitionDetail remote;
     try {
       remote = await _detailService.getDetail(requisitionId);
       remote = _withoutDeletedEvidence(requisitionId, remote);
       _cachedRemoteDetails[requisitionId] = remote;
-      await _sharePersistedKeys(requisitionId, remote);
     } catch (_) {
       final cached = _cachedRemoteDetails[requisitionId];
       if (cached == null) rethrow;
       remote = cached;
     }
+
+    RequisitionDetail detail;
     try {
-      return await _mergeRemoteDetail(remote, requisitionId);
+      detail = await _mergeRemoteDetail(remote, requisitionId);
     } on Object {
       // El detalle remoto sigue siendo válido aunque una lectura local antigua
       // esté bloqueada o tenga una fila incompatible. La siguiente carga puede
       // volver a reconstruir la copia offline sin ocultar la requisa.
-      return remote;
+      detail = remote;
+    }
+    _schedulePersistedKeySharing(requisitionId, remote);
+    return detail;
+  }
+
+  @override
+  Future<RequisitionDetail> refreshDetail(String requisitionId) async {
+    var remote = await _detailService.getDetail(requisitionId);
+    remote = _withoutDeletedEvidence(requisitionId, remote);
+    _cachedRemoteDetails[requisitionId] = remote;
+    RequisitionDetail detail;
+    try {
+      detail = await _mergeRemoteDetail(remote, requisitionId);
+    } on Object {
+      detail = remote;
+    }
+    _schedulePersistedKeySharing(requisitionId, remote);
+    return detail;
+  }
+
+  @override
+  Future<RequisitionDetail> getCachedDetail(String requisitionId) async {
+    final cached = _cachedRemoteDetails[requisitionId];
+    if (cached == null) return getDetail(requisitionId);
+    try {
+      return await _mergeRemoteDetail(cached, requisitionId);
+    } on Object {
+      return cached;
+    }
+  }
+
+  void _schedulePersistedKeySharing(
+    String requisitionId,
+    RequisitionDetail remote,
+  ) {
+    if (_keySharingInFlight.containsKey(requisitionId)) return;
+
+    final task = _sharePersistedKeysSafely(requisitionId, remote);
+    _keySharingInFlight[requisitionId] = task;
+    unawaited(
+      task.whenComplete(() {
+        if (identical(_keySharingInFlight[requisitionId], task)) {
+          _keySharingInFlight.remove(requisitionId);
+        }
+      }),
+    );
+  }
+
+  Future<void> _sharePersistedKeysSafely(
+    String requisitionId,
+    RequisitionDetail remote,
+  ) async {
+    try {
+      await _sharePersistedKeys(requisitionId, remote);
+    } on Object {
+      // La reparación de envolturas es mantenimiento secundario. Nunca debe
+      // impedir que el detalle remoto llegue a la pantalla.
     }
   }
 
@@ -241,6 +314,14 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     final crypto = _cryptoService;
     final database = _database;
     if (keyExchange == null || crypto == null || database == null) return;
+    try {
+      // El registro del dispositivo es necesario para reparar envolturas,
+      // pero no para renderizar el detalle remoto. Esta tarea ya corre fuera
+      // del flujo de carga de la pantalla.
+      await keyExchange.ensureRegistered(requisitionId);
+    } on Object {
+      return;
+    }
     if (!keyExchange.canShareKeys(requisitionId)) return;
     final local = await _localEvidenceSafely(requisitionId);
     if (local.isEmpty) return;
@@ -434,9 +515,13 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     final database = _database;
     if (database == null) return const <LocalEvidenceRecord>[];
     try {
-      final local = await database.withSyncLock(
-        () => database.forRequisition(requisitionId),
-      );
+      // Esta lectura no modifica la base. No debe esperar el lock global,
+      // porque WorkManager puede conservarlo mientras sincroniza evidencias.
+      // Si SQLite está ocupado o la apertura cifrada se demora, el detalle
+      // remoto sigue siendo suficiente para renderizar la pantalla.
+      final local = await database
+          .forRequisition(requisitionId)
+          .timeout(const Duration(seconds: 2));
       _cachedLocalEvidence[requisitionId] = local;
       return local;
     } on Object {
@@ -580,7 +665,6 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       (items) => [...items, ...imported],
       ifAbsent: () => imported,
     );
-    await _syncService?.scheduleBackgroundSync();
     final cachedRemote = _cachedRemoteDetails[requisitionId];
     if (cachedRemote == null) return getDetail(requisitionId);
     return _mergeRemoteDetail(cachedRemote, requisitionId);
@@ -708,9 +792,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       aadHash: record.aadHash,
       wrappedKey: record.wrappedKey,
       keyVersion: record.keyVersion,
-      uploadStatus: record.state == 'SINCRONIZADA'
-          ? 'AVAILABLE'
-          : 'PENDING_UPLOAD',
+      uploadStatus: _uploadStatusForLocalState(record.state),
     );
   }
 
@@ -750,11 +832,10 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
         remoteWrappedKey: remote.remoteWrappedKey,
         remoteWrapAlgorithm: remote.remoteWrapAlgorithm,
         keyVersion: remote.keyVersion ?? persisted.keyVersion,
-        uploadStatus:
-            remote.uploadStatus ??
-            (persisted.state.toUpperCase() == 'SINCRONIZADA'
-                ? 'AVAILABLE'
-                : 'PENDING_UPLOAD'),
+        uploadStatus: _mergeUploadStatus(
+          remoteStatus: remote.uploadStatus,
+          localState: persisted.state,
+        ),
         contentUrl: remote.contentUrl,
         downloadUrl: remote.downloadUrl,
         contentSessionToken: remote.contentSessionToken,
@@ -787,10 +868,33 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       remoteWrappedKey: remote.remoteWrappedKey,
       remoteWrapAlgorithm: remote.remoteWrapAlgorithm,
       keyVersion: remote.keyVersion ?? imported.keyVersion,
-      uploadStatus: remote.uploadStatus,
+      uploadStatus: remote.uploadStatus ?? imported.uploadStatus,
       contentUrl: remote.contentUrl,
       downloadUrl: remote.downloadUrl,
       contentSessionToken: remote.contentSessionToken,
     );
+  }
+
+  String _uploadStatusForLocalState(String state) =>
+      switch (state.toUpperCase()) {
+        'SINCRONIZADA' => 'AVAILABLE',
+        'SUBIENDO' => 'UPLOADING',
+        'ERROR' => 'ERROR',
+        _ => 'PENDING_UPLOAD',
+      };
+
+  String _mergeUploadStatus({
+    required String? remoteStatus,
+    required String localState,
+  }) {
+    final normalizedRemote = remoteStatus?.trim().toUpperCase();
+    final normalizedLocal = _uploadStatusForLocalState(localState);
+    // AVAILABLE es la confirmación del servidor. Un estado local transitorio
+    // o fallido no debe ocultar una subida que ya fue aceptada remotamente.
+    if (normalizedRemote == 'AVAILABLE') return 'AVAILABLE';
+    if (normalizedLocal == 'ERROR' || normalizedLocal == 'UPLOADING') {
+      return normalizedLocal;
+    }
+    return normalizedRemote ?? normalizedLocal;
   }
 }

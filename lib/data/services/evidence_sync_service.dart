@@ -44,6 +44,9 @@ class EvidenceSyncService {
   final Random _random = Random.secure();
   final Map<String, List<EvidenceEncryptionRecipient>>
   _recipientsByRequisition = <String, List<EvidenceEncryptionRecipient>>{};
+  final Map<String, int> _activeUploadTotals = <String, int>{};
+  final Map<String, String> _activeEvidenceRequisitions = <String, String>{};
+  final Set<String> _cancelledRequisitions = <String>{};
   Future<int>? _activeRun;
   bool _runAgainWhenIdle = false;
 
@@ -71,6 +74,7 @@ class EvidenceSyncService {
   Future<void> scheduleBackgroundSync() async {
     try {
       if ((await _database.pending(limit: 1, automaticOnly: true)).isEmpty) {
+        await _notifications?.cancelJobId('UPLOAD');
         return;
       }
       await _backgroundScheduler?.scheduleUpload();
@@ -84,15 +88,42 @@ class EvidenceSyncService {
     try {
       // Los errores permanentes (por ejemplo HTTP 413) solo se reintentan
       // cuando el usuario pulsa la acción explícita de reintento.
-      await syncPending(includeNonRetryable: false);
+      await syncPendingInForeground();
     } catch (_) {
       // La evidencia permanece en la outbox para el siguiente intento.
     }
   }
 
+  /// El isolate visible toma propiedad de la outbox antes de iniciar. Si ya
+  /// había un worker programado, se cancela para que no existan dos motores
+  /// subiendo archivos distintos y publicando estados contradictorios.
+  Future<int> syncPendingInForeground({
+    String? requisitionId,
+    String? evidenceId,
+  }) async {
+    try {
+      await _backgroundScheduler?.cancelUpload();
+    } on Object {
+      // La outbox sigue protegida por claim atómico si la plataforma no puede
+      // cancelar un worker que ya estaba finalizando.
+    }
+    try {
+      await _notifications?.cancelJobId('UPLOAD');
+    } on Object {
+      // Limpiar el aviso no condiciona el intento de subida.
+    }
+    return syncPending(
+      includeNonRetryable: false,
+      requisitionId: requisitionId,
+      evidenceId: evidenceId,
+    );
+  }
+
   Future<int> syncPending({
-    int limit = 50,
-    bool includeNonRetryable = true,
+    int limit = 1,
+    bool includeNonRetryable = false,
+    String? requisitionId,
+    String? evidenceId,
   }) {
     final activeRun = _activeRun;
     if (activeRun != null) {
@@ -102,32 +133,205 @@ class EvidenceSyncService {
       _runAgainWhenIdle = true;
       return activeRun;
     }
-    final run = _database.withSyncLock(
-      () => _syncAllPending(
-        limit: limit,
-        includeNonRetryable: includeNonRetryable,
-      ),
+    final run = _syncPendingSafely(
+      limit: limit,
+      includeNonRetryable: includeNonRetryable,
+      requisitionId: requisitionId,
+      evidenceId: evidenceId,
     );
     _activeRun = run;
     run.then<void>(
       (_) {
+        var queuedRunStarted = false;
         _recipientsByRequisition.clear();
         if (identical(_activeRun, run)) {
           _activeRun = null;
-          _startQueuedRunIfNeeded();
+          _cancelledRequisitions.clear();
+          queuedRunStarted = _startQueuedRunIfNeeded();
         }
-        unawaited(_scheduleIfPending());
+        if (!queuedRunStarted) unawaited(_scheduleIfPending());
       },
       onError: (Object _, StackTrace __) {
+        var queuedRunStarted = false;
         _recipientsByRequisition.clear();
         if (identical(_activeRun, run)) {
           _activeRun = null;
-          _startQueuedRunIfNeeded();
+          _cancelledRequisitions.clear();
+          queuedRunStarted = _startQueuedRunIfNeeded();
         }
-        unawaited(_scheduleIfPending());
+        if (!queuedRunStarted) unawaited(_scheduleIfPending());
       },
     );
     return run;
+  }
+
+  Future<void> cancelPendingEvidence({required String requisitionId}) async {
+    final normalizedId = requisitionId.trim();
+    if (normalizedId.isEmpty) return;
+    _cancelledRequisitions.add(normalizedId);
+    _runAgainWhenIdle = false;
+    try {
+      await _backgroundScheduler?.cancelUpload();
+      await _notifications?.cancelJobId('UPLOAD');
+      await _notifications?.cancelJob(
+        operation: EvidenceJobOperation.upload,
+        requisitionId: normalizedId,
+      );
+      await _database.pausePendingForRequisition(normalizedId);
+      _publishChanges([normalizedId]);
+    } finally {
+      if (_activeRun == null) _cancelledRequisitions.remove(normalizedId);
+    }
+  }
+
+  Future<int> retryPendingEvidence({required String requisitionId}) async {
+    final normalizedId = requisitionId.trim();
+    if (normalizedId.isEmpty) return 0;
+    _cancelledRequisitions.remove(normalizedId);
+    await _database.resumePendingForRequisition(normalizedId);
+    _publishChanges([normalizedId]);
+    return syncPendingInForeground(requisitionId: normalizedId);
+  }
+
+  /// Reintenta una sola evidencia. Si existía una carga global, la pausa de
+  /// forma segura, espera la confirmación HTTP que ya estuviera en curso y
+  /// conserva pausados los demás archivos de la requisa.
+  Future<bool> retryEvidence({
+    required String requisitionId,
+    required String evidenceId,
+  }) async {
+    final normalizedRequisitionId = requisitionId.trim();
+    final normalizedEvidenceId = evidenceId.trim();
+    if (normalizedRequisitionId.isEmpty || normalizedEvidenceId.isEmpty) {
+      return false;
+    }
+
+    await cancelPendingEvidence(requisitionId: normalizedRequisitionId);
+    final running = _activeRun;
+    if (running != null) {
+      try {
+        await running;
+      } on Object {
+        // La fila conserva el error y se reactiva explícitamente debajo.
+      }
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    _cancelledRequisitions.remove(normalizedRequisitionId);
+    await _database.resumeEvidenceForUpload(
+      requisitionId: normalizedRequisitionId,
+      evidenceId: normalizedEvidenceId,
+    );
+    _publishChanges([normalizedRequisitionId]);
+    final synchronized = await syncPendingInForeground(
+      requisitionId: normalizedRequisitionId,
+      evidenceId: normalizedEvidenceId,
+    );
+    if (synchronized > 0) return true;
+
+    final records = await _database.forRequisition(normalizedRequisitionId);
+    return records.any(
+      (record) =>
+          record.id == normalizedEvidenceId &&
+          record.state.toUpperCase() == 'SINCRONIZADA',
+    );
+  }
+
+  Future<int> _syncPendingSafely({
+    required int limit,
+    required bool includeNonRetryable,
+    String? requisitionId,
+    String? evidenceId,
+  }) async {
+    try {
+      return await _syncAllPending(
+        limit: limit,
+        includeNonRetryable: includeNonRetryable,
+        requisitionId: requisitionId,
+        evidenceId: evidenceId,
+      );
+    } catch (error) {
+      await _releaseActiveClaims(error);
+      // Un fallo al reservar el lote (por ejemplo, una base local que estaba
+      // cerrándose) no debe dejar una notificación `ongoing` sin un estado
+      // final. Publicamos el error y luego conservamos la excepción para que
+      // el worker pueda reintentar según su política.
+      await _emitTerminalFailure(error, automaticOnly: !includeNonRetryable);
+      rethrow;
+    }
+  }
+
+  Future<void> _releaseActiveClaims(Object error) async {
+    if (_activeEvidenceRequisitions.isEmpty) return;
+    final message = _safeMessage(error);
+    final claimed = Map<String, String>.from(_activeEvidenceRequisitions);
+    for (final evidenceId in claimed.keys) {
+      try {
+        await _database.markError(
+          evidenceId,
+          message,
+          retryable: _isRetryableError(message),
+        );
+      } on Object {
+        // Si la base también está ocupada, la reclamación caduca y el próximo
+        // ciclo la recupera como ERROR. Nunca se deja un estado SUBIENDO como
+        // estado terminal de la aplicación.
+      }
+    }
+    for (final requisitionId in claimed.values.toSet()) {
+      if (!_changesController.isClosed) {
+        _changesController.add(requisitionId);
+      }
+    }
+    _activeEvidenceRequisitions.clear();
+  }
+
+  Future<void> _emitTerminalFailure(
+    Object error, {
+    required bool automaticOnly,
+  }) async {
+    final totals = <String, int>{..._activeUploadTotals};
+    try {
+      final pending = await _database.pending(
+        limit: 5000,
+        automaticOnly: automaticOnly,
+      );
+      final pendingByRequisition = <String, int>{};
+      for (final evidence in pending) {
+        pendingByRequisition.update(
+          evidence.requisitionId,
+          (value) => value + 1,
+          ifAbsent: () => 1,
+        );
+      }
+      for (final entry in pendingByRequisition.entries) {
+        totals.update(
+          entry.key,
+          (value) => value > entry.value ? value : entry.value,
+          ifAbsent: () => entry.value,
+        );
+      }
+    } on Object {
+      // El error original es más útil que un segundo fallo de diagnóstico.
+    }
+    if (totals.isEmpty) return;
+    final message = _safeMessage(error);
+    for (final entry in totals.entries) {
+      _emitProgress(
+        requisitionId: entry.key,
+        total: entry.value,
+        completed: 0,
+        failed: entry.value,
+        stage: EvidenceUploadStage.error,
+        isActive: false,
+        errorMessage: message,
+      );
+      await _notifications?.cancelJob(
+        operation: EvidenceJobOperation.upload,
+        requisitionId: entry.key,
+      );
+    }
+    _activeUploadTotals.clear();
   }
 
   Future<void> _scheduleIfPending() async {
@@ -141,35 +345,58 @@ class EvidenceSyncService {
     }
   }
 
-  void _startQueuedRunIfNeeded() {
-    if (!_runAgainWhenIdle) return;
+  bool _startQueuedRunIfNeeded() {
+    if (!_runAgainWhenIdle) return false;
     _runAgainWhenIdle = false;
     unawaited(_triggerSync());
+    return true;
   }
 
   Future<int> _syncAllPending({
     required int limit,
     required bool includeNonRetryable,
+    String? requisitionId,
+    String? evidenceId,
   }) async {
     var synchronized = 0;
     final attempted = <String>{};
     while (true) {
-      final pending =
-          (await _database.pending(
-                limit: limit,
-                automaticOnly: !includeNonRetryable,
-              ))
-              .where((evidence) => !attempted.contains(evidence.id))
-              .toList(growable: false);
+      final pending = await _database.claimPending(
+        limit: limit,
+        automaticOnly: !includeNonRetryable,
+        requisitionId: requisitionId,
+        evidenceId: evidenceId,
+        excludedEvidenceIds: attempted,
+      );
       if (pending.isEmpty) return synchronized;
       attempted.addAll(pending.map((evidence) => evidence.id));
-      final processed = await _syncPending(pending: pending);
+      final cancelledRequisitions = pending
+          .map((evidence) => evidence.requisitionId)
+          .where(_cancelledRequisitions.contains)
+          .toSet();
+      for (final requisitionId in cancelledRequisitions) {
+        await _database.pausePendingForRequisition(requisitionId);
+      }
+      final activePending = pending
+          .where(
+            (evidence) =>
+                !_cancelledRequisitions.contains(evidence.requisitionId),
+          )
+          .toList(growable: false);
+      _publishChanges(cancelledRequisitions);
+      if (activePending.isEmpty) continue;
+      _publishChanges(activePending.map((evidence) => evidence.requisitionId));
+      final processed = await _syncPending(pending: activePending);
       synchronized += processed;
     }
   }
 
   Future<int> _syncPending({required List<LocalEvidenceRecord> pending}) async {
     if (pending.isEmpty) return 0;
+
+    _activeEvidenceRequisitions.addAll({
+      for (final evidence in pending) evidence.id: evidence.requisitionId,
+    });
 
     final totals = <String, int>{};
     for (final evidence in pending) {
@@ -179,22 +406,45 @@ class EvidenceSyncService {
         ifAbsent: () => 1,
       );
     }
+    _activeUploadTotals
+      ..clear()
+      ..addAll(totals);
     final completed = <String, int>{};
     final failed = <String, int>{};
     final errors = <String, String>{};
     var synchronized = 0;
     for (final evidence in pending) {
+      if (_cancelledRequisitions.contains(evidence.requisitionId)) {
+        await _database.pausePendingForRequisition(evidence.requisitionId);
+        continue;
+      }
       _emitProgress(
         requisitionId: evidence.requisitionId,
         total: totals[evidence.requisitionId]!,
         completed: completed[evidence.requisitionId] ?? 0,
         failed: failed[evidence.requisitionId] ?? 0,
-        stage: EvidenceUploadStage.uploading,
+        stage: EvidenceUploadStage.preparing,
         isActive: true,
         currentFileName: evidence.originalName,
       );
       try {
-        final remoteId = await _syncOne(evidence);
+        final remoteId = await _syncOne(
+          evidence,
+          onReadyToUpload: () {
+            _emitProgress(
+              requisitionId: evidence.requisitionId,
+              total: totals[evidence.requisitionId]!,
+              completed: completed[evidence.requisitionId] ?? 0,
+              failed: failed[evidence.requisitionId] ?? 0,
+              stage: EvidenceUploadStage.uploading,
+              isActive: true,
+              currentFileName: evidence.originalName,
+            );
+          },
+        );
+        // Una petición HTTP en curso no se puede deshacer con seguridad. Si
+        // el servidor ya confirmó el archivo, persistimos esa confirmación y
+        // pausamos únicamente los siguientes; así un reintento no lo duplica.
         await _database.markUploaded(evidence.id, remoteId);
         completed.update(
           evidence.requisitionId,
@@ -202,7 +452,14 @@ class EvidenceSyncService {
           ifAbsent: () => 1,
         );
         synchronized += 1;
+        if (_cancelledRequisitions.contains(evidence.requisitionId)) {
+          await _database.pausePendingForRequisition(evidence.requisitionId);
+        }
       } catch (error) {
+        if (_cancelledRequisitions.contains(evidence.requisitionId)) {
+          await _database.pausePendingForRequisition(evidence.requisitionId);
+          continue;
+        }
         final message = _safeMessage(error);
         await _database.markError(
           evidence.id,
@@ -218,6 +475,16 @@ class EvidenceSyncService {
       }
     }
     for (final requisitionId in totals.keys) {
+      if (_cancelledRequisitions.contains(requisitionId)) {
+        await _notifications?.cancelJob(
+          operation: EvidenceJobOperation.upload,
+          requisitionId: requisitionId,
+        );
+        if (!_changesController.isClosed) {
+          _changesController.add(requisitionId);
+        }
+        continue;
+      }
       final total = totals[requisitionId]!;
       final completedCount = completed[requisitionId] ?? 0;
       final failedCount = failed[requisitionId] ?? 0;
@@ -228,15 +495,35 @@ class EvidenceSyncService {
         failed: failedCount,
         stage: failedCount == total
             ? EvidenceUploadStage.error
+            : failedCount > 0
+            ? EvidenceUploadStage.error
             : EvidenceUploadStage.completed,
         isActive: false,
         errorMessage: errors[requisitionId],
+      );
+      // Espera la actualización/cancelación encolada antes de permitir que el
+      // isolate de WorkManager finalice. De otro modo Android podía conservar
+      // el aviso por requisa aunque el worker global ya hubiera terminado.
+      await _notifications?.cancelJob(
+        operation: EvidenceJobOperation.upload,
+        requisitionId: requisitionId,
       );
       if (!_changesController.isClosed) {
         _changesController.add(requisitionId);
       }
     }
+    _activeUploadTotals.clear();
+    _activeEvidenceRequisitions.removeWhere(
+      (evidenceId, _) => pending.any((evidence) => evidence.id == evidenceId),
+    );
     return synchronized;
+  }
+
+  void _publishChanges(Iterable<String> requisitionIds) {
+    if (_changesController.isClosed) return;
+    for (final requisitionId in requisitionIds.toSet()) {
+      _changesController.add(requisitionId);
+    }
   }
 
   Future<void> dispose() async {
@@ -286,7 +573,10 @@ class EvidenceSyncService {
     }
   }
 
-  Future<String> _syncOne(LocalEvidenceRecord evidence) async {
+  Future<String> _syncOne(
+    LocalEvidenceRecord evidence, {
+    void Function()? onReadyToUpload,
+  }) async {
     await _keyExchange.ensureRegistered(evidence.requisitionId);
     final recipients = await _recipientsFor(evidence.requisitionId);
     final currentDeviceId = await _crypto.encryptionDeviceId;
@@ -294,18 +584,18 @@ class EvidenceSyncService {
         .where((recipient) => recipient.publicKey.isNotEmpty)
         .toList(growable: false);
     final recoveryKey = await _keyExchange.recoveryKey(evidence.requisitionId);
-    if (recoveryKey == null) {
-      throw StateError(
-        'La recuperación institucional no está configurada. La evidencia queda pendiente para evitar una pérdida de acceso.',
-      );
-    }
+    // La recuperación institucional es opcional mientras el backend no la
+    // tenga configurada. En ese caso la envoltura para el dispositivo actual
+    // y los demás dispositivos autorizados sigue siendo suficiente para
+    // registrar y subir la evidencia.
+    final recipientPublicKeys = <String>[
+      ...shareableRecipients.map((recipient) => recipient.publicKey),
+      if (recoveryKey != null) recoveryKey.publicKey,
+    ];
     final wrappedKeys = await _crypto.wrapLocalDataKeyForRecipients(
       wrappedKey: evidence.wrappedKey,
       evidenceId: evidence.id,
-      recipientPublicKeys: [
-        ...shareableRecipients.map((recipient) => recipient.publicKey),
-        recoveryKey.publicKey,
-      ],
+      recipientPublicKeys: recipientPublicKeys,
     );
     final keyEnvelopes = <Map<String, dynamic>>[];
     for (var index = 0; index < shareableRecipients.length; index++) {
@@ -320,12 +610,16 @@ class EvidenceSyncService {
         'wrappedKey': wrappedKey,
       });
     }
-    final recoveryWrappedKey = wrappedKeys[shareableRecipients.length];
-    if (recoveryWrappedKey == null) {
+    final recoveryWrappedKey =
+        recoveryKey == null || wrappedKeys.length <= shareableRecipients.length
+        ? null
+        : wrappedKeys[shareableRecipients.length];
+    if (recoveryKey != null && recoveryWrappedKey == null) {
       throw StateError(
         'No se pudo preparar la envoltura de recuperación institucional.',
       );
     }
+    onReadyToUpload?.call();
     final intent = await _http.request<dynamic>(
       '/api/v1/requisitions/${evidence.requisitionId}/evidence-intents',
       method: HttpMethod.post,
@@ -465,6 +759,11 @@ class EvidenceSyncService {
 
   String _safeMessage(Object error) {
     final message = error.toString().replaceFirst('Bad state: ', '').trim();
+    final normalized = message.toLowerCase();
+    if (normalized.contains('timeout') ||
+        normalized.contains('bloqueo de sincronización local')) {
+      return 'La sincronización local está ocupada. Se reintentará automáticamente.';
+    }
     return message.length > 512 ? message.substring(0, 512) : message;
   }
 

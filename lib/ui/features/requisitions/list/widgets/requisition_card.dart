@@ -36,6 +36,7 @@ class RequisitionCard extends StatelessWidget {
     final identifierLabel = requisition.cud == null
         ? identifier
         : 'CUD: $identifier';
+    final displayIdentifierLabel = identifierLabel.toUpperCase();
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -95,7 +96,7 @@ class RequisitionCard extends StatelessWidget {
               ),
               const SizedBox(height: AppSpace.m),
               Text(
-                identifierLabel,
+                displayIdentifierLabel,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodySmall?.copyWith(

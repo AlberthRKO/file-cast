@@ -11,6 +11,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 class RequisitionListHeader extends StatelessWidget {
   const RequisitionListHeader({
     required this.compact,
+    required this.showFilterAction,
     required this.searchController,
     required this.onQueryChanged,
     required this.onOpenFilters,
@@ -25,6 +26,7 @@ class RequisitionListHeader extends StatelessWidget {
   });
 
   final bool compact;
+  final bool showFilterAction;
   final TextEditingController searchController;
   final ValueChanged<String> onQueryChanged;
   final VoidCallback onOpenFilters;
@@ -79,26 +81,28 @@ class RequisitionListHeader extends StatelessWidget {
                           onChanged: onQueryChanged,
                         ),
                       ),
-                      const SizedBox(width: AppSpace.s),
-                      _HeaderAction(
-                        tooltip: filtersActive
-                            ? 'Modificar filtros activos'
-                            : 'Filtrar requisas',
-                        onTap: onOpenFilters,
-                        borderColor: filtersActive
-                            ? theme.colorScheme.error
-                            : theme.primaryColor,
-                        child: SvgPicture.asset(
-                          '${assetImgIcon}filterMore.svg',
-                          width: AppSize.iconM,
-                          colorFilter: ColorFilter.mode(
-                            filtersActive
-                                ? theme.colorScheme.error
-                                : theme.primaryColor,
-                            BlendMode.srcIn,
+                      if (showFilterAction) ...[
+                        const SizedBox(width: AppSpace.s),
+                        _HeaderAction(
+                          tooltip: filtersActive
+                              ? 'Modificar filtros activos'
+                              : 'Filtrar requisas',
+                          onTap: onOpenFilters,
+                          borderColor: filtersActive
+                              ? theme.colorScheme.error
+                              : theme.primaryColor,
+                          child: SvgPicture.asset(
+                            '${assetImgIcon}filterMore.svg',
+                            width: AppSize.iconM,
+                            colorFilter: ColorFilter.mode(
+                              filtersActive
+                                  ? theme.colorScheme.error
+                                  : theme.primaryColor,
+                              BlendMode.srcIn,
+                            ),
                           ),
                         ),
-                      ),
+                      ],
                       if (!compact) ...[
                         const SizedBox(width: AppSpace.s),
                         _HeaderAction(
@@ -237,7 +241,7 @@ class _SearchField extends StatelessWidget {
         style: theme.textTheme.bodyMedium,
         cursorColor: theme.primaryColor,
         decoration: InputDecoration(
-          labelText: 'Buscar por CUD',
+          labelText: 'Buscar por CUD o nombre',
           labelStyle: theme.textTheme.bodyMedium?.copyWith(
             color: theme.primaryColor.withValues(alpha: 0.55),
           ),
@@ -256,6 +260,19 @@ class _SearchField extends StatelessWidget {
             minWidth: AppSize.minTouchTarget,
             minHeight: AppSize.minTouchTarget,
           ),
+          suffixIcon: controller.text.isEmpty
+              ? null
+              : IconButton(
+                  tooltip: 'Limpiar búsqueda',
+                  onPressed: () {
+                    controller.clear();
+                    onChanged('');
+                  },
+                  icon: Icon(
+                    Icons.clear_rounded,
+                    color: theme.primaryColor,
+                  ),
+                ),
         ),
       ),
     );

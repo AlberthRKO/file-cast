@@ -2,9 +2,9 @@ package com.fiscalia.file_cast.scrcpy
 
 import android.media.MediaCodec
 import android.media.MediaFormat
+import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import java.io.File
-import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 
 /** Writes the encoded H.264 packets already received from scrcpy into MP4. */
@@ -25,54 +25,68 @@ class ScrcpyRecorder(
     private var waitingForKeyFrame = true
     private var firstPtsUs = -1L
     private var lastPtsUs = -1L
+    private var lastSampleDurationUs = 33_333L
     private var sampleCount = 0
     private val bufferInfo = MediaCodec.BufferInfo()
+    private val temporaryFile = File("${outputFile.absolutePath}.part")
 
     @Synchronized
     fun start(codecConfig: ByteArray) {
         check(!started) { "La grabación ya está activa" }
         outputFile.parentFile?.mkdirs()
-        val mediaMuxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        if (temporaryFile.exists()) temporaryFile.delete()
+        val mediaMuxer = MediaMuxer(temporaryFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         try {
             val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height)
-            val configUnits = splitAnnexB(codecConfig)
+            val configUnits = nalUnits(codecConfig)
             val sps = configUnits.lastOrNull { nalType(it) == 7 }
                 ?: throw IllegalStateException("La configuración H.264 no contiene SPS")
             val pps = configUnits.lastOrNull { nalType(it) == 8 }
                 ?: throw IllegalStateException("La configuración H.264 no contiene PPS")
-            format.setByteBuffer("csd-0", ByteBuffer.wrap(stripStartCode(sps)))
-            format.setByteBuffer("csd-1", ByteBuffer.wrap(stripStartCode(pps)))
+            // MediaCodec/MediaMuxer requiere los parameter sets AVC con el
+            // start code Annex-B. scrcpy los entrega como configuración
+            // separada; no deben escribirse después como frames del video.
+            format.setByteBuffer("csd-0", ByteBuffer.wrap(withStartCode(sps)))
+            format.setByteBuffer("csd-1", ByteBuffer.wrap(withStartCode(pps)))
             trackIndex = mediaMuxer.addTrack(format)
             mediaMuxer.start()
             muxer = mediaMuxer
             started = true
         } catch (error: Exception) {
             try { mediaMuxer.release() } catch (_: Exception) {}
-            outputFile.delete()
+            temporaryFile.delete()
             throw error
         }
     }
 
     @Synchronized
-    fun writePacket(headerValue: Long, payload: ByteArray) {
-        if (!started || (headerValue and FLAG_CONFIG) != 0L) return
+    fun writePacket(headerValue: Long, payload: ByteArray): Boolean {
+        if (!started || (headerValue and FLAG_CONFIG) != 0L) return false
         val isKeyFrame = (headerValue and FLAG_KEY_FRAME) != 0L
-        if (waitingForKeyFrame && !isKeyFrame) return
-        val avccPayload = annexBToAvcc(payload)
-        if (avccPayload.isEmpty()) return
+        if (waitingForKeyFrame && !isKeyFrame) return false
+        if (payload.isEmpty()) return false
+        val firstSample = waitingForKeyFrame
         waitingForKeyFrame = false
         val pts = headerValue and PTS_MASK
         if (firstPtsUs < 0) firstPtsUs = pts
         val normalizedPtsUs = (pts - firstPtsUs).coerceAtLeast(0)
+        if (lastPtsUs >= 0L) {
+            val duration = normalizedPtsUs - lastPtsUs
+            if (duration > 0L) lastSampleDurationUs = duration
+        }
         bufferInfo.set(
             0,
-            avccPayload.size,
+            payload.size,
             normalizedPtsUs,
             if (isKeyFrame) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0,
         )
-        muxer?.writeSampleData(trackIndex, ByteBuffer.wrap(avccPayload), bufferInfo)
+        // El payload proviene directamente del encoder usado por scrcpy. Se
+        // conserva exactamente como salió de MediaCodec; convertir Annex-B a
+        // AVCC aquí corrompe streams que el muxer espera en su forma original.
+        muxer?.writeSampleData(trackIndex, ByteBuffer.wrap(payload), bufferInfo)
         lastPtsUs = normalizedPtsUs
         sampleCount++
+        return firstSample
     }
 
     @Synchronized
@@ -83,10 +97,12 @@ class ScrcpyRecorder(
             check(started) { "El grabador no estaba iniciado" }
             val muxerToStop = checkNotNull(activeMuxer) { "MediaMuxer no estaba disponible" }
             check(sampleCount > 0) { "No se recibió un keyframe para crear el video" }
+            // Un EOS vacío permite que MediaMuxer calcule la duración del
+            // último frame. Es un marcador de contenedor, no un NAL H.264.
             bufferInfo.set(
                 0,
                 0,
-                lastPtsUs + 33_333L,
+                lastPtsUs + lastSampleDurationUs,
                 MediaCodec.BUFFER_FLAG_END_OF_STREAM,
             )
             muxerToStop.writeSampleData(trackIndex, ByteBuffer.allocate(0), bufferInfo)
@@ -98,7 +114,21 @@ class ScrcpyRecorder(
             muxer = null
             started = false
         }
+        if (failure == null && temporaryFile.isFile && temporaryFile.length() > 0L) {
+            if (outputFile.exists()) outputFile.delete()
+            if (!temporaryFile.renameTo(outputFile)) {
+                failure = IllegalStateException("No se pudo instalar el MP4 final")
+            }
+        }
+        if (failure == null) {
+            try {
+                validateFinalMp4(outputFile)
+            } catch (error: Exception) {
+                failure = error
+            }
+        }
         if (failure != null || !outputFile.isFile || outputFile.length() == 0L) {
+            temporaryFile.delete()
             outputFile.delete()
             throw IllegalStateException("No se pudo finalizar un MP4 válido", failure)
         }
@@ -110,6 +140,7 @@ class ScrcpyRecorder(
         try { muxer?.release() } catch (_: Exception) {}
         muxer = null
         started = false
+        temporaryFile.delete()
         outputFile.delete()
     }
 
@@ -137,31 +168,71 @@ class ScrcpyRecorder(
         return if (nal.isNotEmpty()) nal[0].toInt() and 0x1F else -1
     }
 
-    /**
-     * scrcpy sends H.264 in Annex-B form (start codes). MediaMuxer expects
-     * AVC/AVCC samples, where every NAL unit is prefixed by its 4-byte size.
-     */
-    private fun annexBToAvcc(data: ByteArray): ByteArray {
-        val units = splitAnnexB(data).ifEmpty {
-            if (data.isNotEmpty()) listOf(data) else emptyList()
+    private fun nalUnits(data: ByteArray): List<ByteArray> {
+        val annexBUnits = splitAnnexB(data)
+        if (annexBUnits.isNotEmpty()) {
+            return annexBUnits.map(::stripStartCode).filter { it.isNotEmpty() }
         }
-        val output = ByteArrayOutputStream(data.size + units.size * 4)
-        for (unit in units) {
-            val nal = stripStartCode(unit)
-            if (nal.isEmpty()) continue
-            output.write((nal.size ushr 24) and 0xFF)
-            output.write((nal.size ushr 16) and 0xFF)
-            output.write((nal.size ushr 8) and 0xFF)
-            output.write(nal.size and 0xFF)
-            output.write(nal)
+        val avccUnits = splitAvcc(data)
+        if (avccUnits.isNotEmpty()) return avccUnits
+        return if (data.isNotEmpty()) listOf(data) else emptyList()
+    }
+
+    private fun splitAvcc(data: ByteArray): List<ByteArray> {
+        if (data.size < 4) return emptyList()
+        val units = mutableListOf<ByteArray>()
+        var offset = 0
+        while (offset + 4 <= data.size) {
+            val length = ((data[offset].toInt() and 0xFF) shl 24) or
+                ((data[offset + 1].toInt() and 0xFF) shl 16) or
+                ((data[offset + 2].toInt() and 0xFF) shl 8) or
+                (data[offset + 3].toInt() and 0xFF)
+            offset += 4
+            if (length <= 0 || offset + length > data.size) return emptyList()
+            units += data.copyOfRange(offset, offset + length)
+            offset += length
         }
-        return output.toByteArray()
+        return if (offset == data.size && units.isNotEmpty()) units else emptyList()
     }
 
     private fun stripStartCode(unit: ByteArray): ByteArray {
-        var index = 0
-        while (index < unit.size && unit[index] == 0.toByte()) index++
-        if (index < unit.size && unit[index] == 1.toByte()) index++
-        return unit.copyOfRange(index, unit.size)
+        if (unit.size >= 4 && unit[0] == 0.toByte() && unit[1] == 0.toByte() &&
+            unit[2] == 0.toByte() && unit[3] == 1.toByte()) {
+            return unit.copyOfRange(4, unit.size)
+        }
+        if (unit.size >= 3 && unit[0] == 0.toByte() && unit[1] == 0.toByte() &&
+            unit[2] == 1.toByte()) {
+            return unit.copyOfRange(3, unit.size)
+        }
+        return unit
+    }
+
+    private fun withStartCode(unit: ByteArray): ByteArray {
+        val nal = stripStartCode(unit)
+        return byteArrayOf(0, 0, 0, 1) + nal
+    }
+
+    private fun validateFinalMp4(file: File) {
+        check(file.isFile && file.length() > 0L) { "El MP4 final está vacío" }
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(file.absolutePath)
+            check(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO) == "yes") {
+                "El MP4 final no contiene una pista de video válida"
+            }
+            val finalWidth = retriever
+                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                ?.toIntOrNull()
+                ?: 0
+            val finalHeight = retriever
+                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                ?.toIntOrNull()
+                ?: 0
+            check(finalWidth > 0 && finalHeight > 0) {
+                "El MP4 final no contiene dimensiones de video válidas"
+            }
+        } finally {
+            retriever.release()
+        }
     }
 }

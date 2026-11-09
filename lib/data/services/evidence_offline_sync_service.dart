@@ -58,12 +58,18 @@ class EvidenceOfflineSyncService {
     if (scheduleBackgroundOnFailure) {
       await _cancelScheduledBackgroundSync(requisitionId);
     }
+    // Elimina un aviso foreground que pudo quedar de un worker detenido antes
+    // de publicar su estado final. La nueva ejecución volverá a mostrar el
+    // progreso con el mismo ID estable.
+    try {
+      await _notifications?.cancelJobId('OFFLINE_SYNC:$requisitionId');
+    } on Object {
+      // La sincronización manual no depende de limpiar la notificación.
+    }
 
-    final run = _database.withSyncLock(
-      () => _syncRequisition(
-        requisitionId: requisitionId,
-        evidence: evidence,
-      ),
+    final run = _syncRequisitionSafely(
+      requisitionId: requisitionId,
+      evidence: evidence,
     );
     _activeRuns[requisitionId] = run;
     run.then<void>(
@@ -85,6 +91,45 @@ class EvidenceOfflineSyncService {
       },
     );
     return await run;
+  }
+
+  Future<EvidenceOfflineSyncResult> _syncRequisitionSafely({
+    required String requisitionId,
+    required List<RequisitionEvidence> evidence,
+  }) async {
+    try {
+      return await _syncRequisition(
+        requisitionId: requisitionId,
+        evidence: evidence,
+      );
+    } catch (error) {
+      // La recuperación offline hace red, descifrado y escritura de archivos.
+      // No debe conservar el lock global durante todo ese trabajo. Si una
+      // operación local falla antes de publicar su estado final, cerramos la
+      // notificación como error para que no quede permanente en Android.
+      final candidates = evidence
+          .where(
+            (item) =>
+                item.encrypted &&
+                item.uploadStatus?.toUpperCase() == 'AVAILABLE' &&
+                (item.contentUrl?.isNotEmpty ?? false),
+          )
+          .length;
+      if (candidates > 0) {
+        _emit(
+          requisitionId: requisitionId,
+          total: candidates,
+          completed: 0,
+          skipped: 0,
+          failed: candidates,
+          stage: EvidenceOfflineSyncStage.error,
+          isActive: false,
+          errorMessage: _safeMessage(error),
+          errors: [_safeMessage(error)],
+        );
+      }
+      rethrow;
+    }
   }
 
   Future<void> _cancelScheduledBackgroundSync(String requisitionId) async {
@@ -387,6 +432,11 @@ class EvidenceOfflineSyncService {
 
   String _safeMessage(Object error) {
     final message = error.toString().replaceFirst('Bad state: ', '').trim();
+    final normalized = message.toLowerCase();
+    if (normalized.contains('timeout') ||
+        normalized.contains('bloqueo de sincronización local')) {
+      return 'La sincronización local está ocupada. Vuelve a intentarlo en unos segundos.';
+    }
     return message.length > 256 ? message.substring(0, 256) : message;
   }
 }

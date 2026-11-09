@@ -190,6 +190,7 @@ class _RequisitionTableRow extends StatelessWidget {
     final theme = Theme.of(context);
     final identifier =
         requisition.cud ?? requisition.subjectName ?? requisition.id;
+    final displayIdentifier = identifier.toUpperCase();
 
     return ConstrainedBox(
       constraints: const BoxConstraints(minHeight: 68),
@@ -213,7 +214,7 @@ class _RequisitionTableRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    identifier,
+                    displayIdentifier,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodyMedium?.copyWith(

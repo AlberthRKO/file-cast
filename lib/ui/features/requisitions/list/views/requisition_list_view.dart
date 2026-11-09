@@ -175,6 +175,7 @@ class _RequisitionListViewState extends State<RequisitionListView> {
             children: [
               RequisitionListHeader(
                 compact: compact,
+                showFilterAction: compact,
                 identityLabel: widget.identityLabel,
                 userName: widget.userName,
                 searchController: _searchController,

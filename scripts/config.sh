@@ -48,7 +48,7 @@ get_flavor_config() {
         development)
             FLAVOR_KIND='entorno'
             FLAVOR_LABEL='[DEV] File Cast'
-            DEFAULT_BASE_URL='https://file-cast-backend.dev.mp.gob.bo'
+            DEFAULT_BASE_URL='https://0dpchkdj-3000.brs.devtunnels.ms'
             DEFAULT_AUTH_URL='https://auth.dev.mp.gob.bo'
             ;;
         staging)
