@@ -9,11 +9,35 @@ final class RequisitionSubjectSummary {
     required this.name,
     this.documentNumber,
     this.role,
+    this.personId,
+    this.caseSubjectId,
+    this.alias,
+    this.identityReserved = false,
+    this.subjectTypeColorHex,
+    this.subjectTypeLevel,
+    this.subjectTypeId,
+    this.legalSituationId,
+    this.legalEntityName,
+    this.currentSubjectState,
+    this.snapshot,
   });
 
   final String name;
   final String? documentNumber;
   final String? role;
+  final int? personId;
+  final int? caseSubjectId;
+  final String? alias;
+  final bool identityReserved;
+  final String? subjectTypeColorHex;
+  final int? subjectTypeLevel;
+  final int? subjectTypeId;
+  final int? legalSituationId;
+  final String? legalEntityName;
+  final String? currentSubjectState;
+  final Map<String, dynamic>? snapshot;
+
+  bool get canAnchor => personId != null;
 }
 
 final class RequisitionParticipantSummary {
@@ -171,6 +195,8 @@ final class RequisitionEvidence {
     required this.sizeLabel,
     required this.byteLength,
     this.isBackendRecord = false,
+    this.displayName,
+    this.linkedSubjects = const [],
     this.requisitionId,
     this.localPath,
     this.sha256,
@@ -197,6 +223,8 @@ final class RequisitionEvidence {
   final bool isBackendRecord;
   final String? requisitionId;
   final String name;
+  final String? displayName;
+  final List<RequisitionEvidenceSubject> linkedSubjects;
   final RequisitionEvidenceType type;
   final DateTime createdAt;
   final String sizeLabel;
@@ -220,6 +248,57 @@ final class RequisitionEvidence {
   final String? contentUrl;
   final String? downloadUrl;
   final String? contentSessionToken;
+
+  String get effectiveName =>
+      displayName?.trim().isNotEmpty == true ? displayName!.trim() : name;
+
+  RequisitionEvidence copyWith({String? name, String? displayName}) {
+    return RequisitionEvidence(
+      id: id,
+      isBackendRecord: isBackendRecord,
+      requisitionId: requisitionId,
+      name: name ?? this.name,
+      displayName: displayName ?? this.displayName,
+      type: type,
+      createdAt: createdAt,
+      sizeLabel: sizeLabel,
+      byteLength: byteLength,
+      localPath: localPath,
+      sha256: sha256,
+      sourcePath: sourcePath,
+      sessionId: sessionId,
+      mimeType: mimeType,
+      encrypted: encrypted,
+      encryptionAlgorithm: encryptionAlgorithm,
+      encryptionVersion: encryptionVersion,
+      plaintextByteLength: plaintextByteLength,
+      plaintextSha256: plaintextSha256,
+      aadHash: aadHash,
+      wrappedKey: wrappedKey,
+      remoteWrappedKey: remoteWrappedKey,
+      remoteWrapAlgorithm: remoteWrapAlgorithm,
+      keyVersion: keyVersion,
+      uploadStatus: uploadStatus,
+      contentUrl: contentUrl,
+      downloadUrl: downloadUrl,
+      contentSessionToken: contentSessionToken,
+      linkedSubjects: linkedSubjects,
+    );
+  }
+}
+
+final class RequisitionEvidenceSubject {
+  const RequisitionEvidenceSubject({
+    required this.personId,
+    required this.name,
+    this.documentNumber,
+    this.source,
+  });
+
+  final int personId;
+  final String name;
+  final String? documentNumber;
+  final String? source;
 }
 
 final class RequisitionDetail {
@@ -231,6 +310,7 @@ final class RequisitionDetail {
     required this.evidence,
     this.sessions = const [],
     this.subjectDetails = const [],
+    this.caseSubjects = const [],
     this.participants = const [],
     this.description,
     this.procedureAt,
@@ -246,6 +326,7 @@ final class RequisitionDetail {
   final String division;
   final List<String> subjects;
   final List<RequisitionSubjectSummary> subjectDetails;
+  final List<RequisitionSubjectSummary> caseSubjects;
   final List<RequisitionParticipantSummary> participants;
   final String sessionId;
   final List<RequisitionEvidence> evidence;

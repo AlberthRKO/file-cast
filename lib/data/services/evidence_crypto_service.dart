@@ -87,6 +87,67 @@ class EvidenceCryptoService implements EvidenceDecryptionService {
     return _wrapDataKey(await dataKey.extractBytes());
   }
 
+  /// Envuelve la DEK de una evidencia para otro dispositivo autorizado.
+  ///
+  /// La clave pública del destinatario se obtiene mediante
+  /// [encryptionPublicKey]. El envoltorio usa una clave efímera X25519 y una
+  /// clave de envoltura AES-GCM derivada con HKDF. La evidencia queda ligada
+  /// al [evidenceId] mediante el contexto usado como AAD.
+  Future<String> wrapLocalDataKeyForDevice({
+    required String wrappedKey,
+    required String evidenceId,
+    required String recipientPublicKey,
+  }) async {
+    final recipientBytes = _decodeBase64Bytes(
+      recipientPublicKey,
+      fieldName: 'clave pública del dispositivo destinatario',
+    );
+    if (recipientBytes.length != 32) {
+      throw StateError(
+        'La clave pública X25519 del dispositivo destinatario no tiene 32 bytes.',
+      );
+    }
+
+    final recipient = SimplePublicKey(
+      recipientBytes,
+      type: KeyPairType.x25519,
+    );
+    final ephemeralKeyPair = await _x25519.newKeyPair();
+    final ephemeralPublicKey = await ephemeralKeyPair.extractPublicKey();
+    final sharedSecret = await _x25519.sharedSecretKey(
+      keyPair: ephemeralKeyPair,
+      remotePublicKey: recipient,
+    );
+    final context = 'file-cast/evidence-key/$evidenceId/$formatVersion';
+    final salt = _randomBytes(32);
+    final wrappingKey = await _hkdf.deriveKey(
+      secretKey: sharedSecret,
+      nonce: salt,
+      info: utf8.encode(context),
+    );
+    final nonce = _randomBytes(_nonceLength);
+    final dataKey = await _unwrapDataKey(wrappedKey);
+    final encrypted = await _aes.encrypt(
+      await dataKey.extractBytes(),
+      secretKey: wrappingKey,
+      nonce: nonce,
+      aad: utf8.encode(context),
+    );
+
+    return _base64Url(
+      utf8.encode(
+        jsonEncode({
+          'version': formatVersion,
+          'ephemeralPublicKey': _base64Url(ephemeralPublicKey.bytes),
+          'salt': _base64Url(salt),
+          'nonce': _base64Url(nonce),
+          'ciphertext': _base64Url(encrypted.cipherText),
+          'mac': _base64Url(encrypted.mac.bytes),
+        }),
+      ),
+    );
+  }
+
   Future<void> cacheRequisitionKey({
     required String requisitionId,
     required String keyId,

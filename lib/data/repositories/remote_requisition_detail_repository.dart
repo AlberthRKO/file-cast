@@ -186,6 +186,70 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
   }
 
   @override
+  Future<RequisitionDetail> renameEvidence({
+    required String requisitionId,
+    required RequisitionEvidence evidence,
+    required String displayName,
+  }) async {
+    if (!evidence.isBackendRecord) {
+      await _database?.updateDisplayName(
+        requisitionId: requisitionId,
+        evidenceId: evidence.id,
+        displayName: displayName.trim(),
+      );
+      _updateLocalEvidence(
+        requisitionId,
+        evidence.id,
+        evidence.copyWith(displayName: displayName.trim()),
+      );
+      final cached = _cachedRemoteDetails[requisitionId];
+      return cached == null
+          ? getDetail(requisitionId)
+          : _mergeRemoteDetail(cached, requisitionId);
+    }
+    await _detailService.renameEvidence(
+      requisitionId: requisitionId,
+      evidenceId: evidence.id,
+      displayName: displayName,
+    );
+    final refreshed = await refreshDetail(requisitionId);
+    return refreshed;
+  }
+
+  @override
+  Future<RequisitionDetail> setEvidenceSubjects({
+    required String requisitionId,
+    required RequisitionEvidence evidence,
+    required List<int> personIds,
+  }) async {
+    if (!evidence.isBackendRecord) {
+      throw StateError(
+        'Los sujetos se pueden anclar cuando la evidencia existe en el servidor.',
+      );
+    }
+    await _detailService.setEvidenceSubjects(
+      requisitionId: requisitionId,
+      evidenceId: evidence.id,
+      personIds: personIds,
+    );
+    return refreshDetail(requisitionId);
+  }
+
+  void _updateLocalEvidence(
+    String requisitionId,
+    String evidenceId,
+    RequisitionEvidence updated,
+  ) {
+    _imported.update(
+      requisitionId,
+      (items) => items
+          .map((item) => item.id == evidenceId ? updated : item)
+          .toList(growable: false),
+      ifAbsent: () => const [],
+    );
+  }
+
+  @override
   Future<EvidenceOfflineSyncResult> syncEvidenceForOffline({
     required String requisitionId,
     required List<RequisitionEvidence> evidence,
@@ -384,6 +448,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       division: remote.division,
       subjects: remote.subjects,
       subjectDetails: remote.subjectDetails,
+      caseSubjects: remote.caseSubjects,
       participants: remote.participants,
       sessionId: remote.sessionId,
       evidence: evidence,
@@ -421,6 +486,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       division: detail.division,
       subjects: detail.subjects,
       subjectDetails: detail.subjectDetails,
+      caseSubjects: detail.caseSubjects,
       participants: detail.participants,
       sessionId: detail.sessionId,
       evidence: evidence,
@@ -718,6 +784,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       id: record.id,
       requisitionId: record.requisitionId,
       name: record.originalName,
+      displayName: record.displayName,
       type: type,
       createdAt: record.createdAt,
       sizeLabel: _formatSize(record.ciphertextByteLength),
@@ -753,6 +820,8 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
         isBackendRecord: true,
         requisitionId: remote.requisitionId,
         name: remote.name,
+        displayName: remote.displayName ?? persisted.displayName,
+        linkedSubjects: remote.linkedSubjects,
         type: remote.type,
         createdAt: remote.createdAt,
         sizeLabel: remote.sizeLabel,
@@ -790,6 +859,8 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       isBackendRecord: true,
       requisitionId: remote.requisitionId,
       name: remote.name,
+      displayName: remote.displayName ?? imported.displayName,
+      linkedSubjects: remote.linkedSubjects,
       type: remote.type,
       createdAt: remote.createdAt,
       sizeLabel: remote.sizeLabel,

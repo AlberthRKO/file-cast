@@ -30,6 +30,11 @@ abstract interface class AcquisitionRepository {
   });
   Future<RequisitionDetail> getRequisitionDetail(String requisitionId);
   Future<RequisitionDetail> getCachedRequisitionDetail(String requisitionId);
+  Future<RequisitionDetail> renameEvidence({
+    required String requisitionId,
+    required RequisitionEvidence evidence,
+    required String displayName,
+  });
   Future<RequisitionDetail> captureScreenshot({
     required String requisitionId,
     required String sessionId,

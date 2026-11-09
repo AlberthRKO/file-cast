@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:file_cast/core/errors/either.dart';
 import 'package:file_cast/core/network/http.dart';
 import 'package:file_cast/domain/models/requisition.dart';
@@ -56,6 +59,69 @@ class RequisitionDetailService {
     }
   }
 
+  Future<RequisitionEvidence> renameEvidence({
+    required String requisitionId,
+    required String evidenceId,
+    required String displayName,
+  }) async {
+    final result = await _http.request<RequisitionEvidence>(
+      '/api/v1/requisitions/$requisitionId/evidences/$evidenceId/name',
+      method: HttpMethod.patch,
+      headers: {
+        'Idempotency-Key':
+            'rename-evidence-$requisitionId-$evidenceId-'
+            '${crypto.sha256.convert(utf8.encode(displayName.trim())).toString().substring(0, 24)}',
+      },
+      body: {'displayName': displayName.trim()},
+      onSucces: (body) {
+        final envelope = _asMap(body);
+        final response = _asMap(envelope['response']);
+        final data = _asMap(response['data']);
+        return _parseEvidence(data, requisitionId, const []);
+      },
+    );
+    return switch (result) {
+      Left(leftValue: final error) => throw StateError(
+        error.message ?? 'No se pudo cambiar el nombre de la evidencia.',
+      ),
+      Right(rightValue: final evidence) => evidence,
+      Either() => throw StateError(
+        'Respuesta inesperada al cambiar el nombre.',
+      ),
+    };
+  }
+
+  Future<RequisitionEvidence> setEvidenceSubjects({
+    required String requisitionId,
+    required String evidenceId,
+    required List<int> personIds,
+  }) async {
+    final result = await _http.request<RequisitionEvidence>(
+      '/api/v1/requisitions/$requisitionId/evidences/$evidenceId/subjects',
+      method: HttpMethod.put,
+      headers: {
+        'Idempotency-Key': 'evidence-subjects-$requisitionId-$evidenceId',
+      },
+      body: {'personIds': personIds},
+      onSucces: (body) {
+        final envelope = _asMap(body);
+        final response = _asMap(envelope['response']);
+        final data = _asMap(response['data']);
+        return _parseEvidence(data, requisitionId, const []);
+      },
+    );
+    return switch (result) {
+      Left(leftValue: final error) => throw StateError(
+        error.message ??
+            'No se pudieron actualizar los sujetos de la evidencia.',
+      ),
+      Right(rightValue: final evidence) => evidence,
+      Either() => throw StateError(
+        'Respuesta inesperada al actualizar sujetos.',
+      ),
+    };
+  }
+
   RequisitionDetail _parseDetail(dynamic body) {
     final envelope = _asMap(body);
     final response = _asMap(envelope['response']);
@@ -70,8 +136,9 @@ class RequisitionDetailService {
     final primarySubject = _asMap(data['primarySubject']);
     final caseSnapshot = _asMap(currentCase['snapshot']);
     final requisitionId = _text(data['id']) ?? '';
+    final caseSubjects = _parseCaseSubjects(data['caseSubjects']);
     final evidence = _asList(data['evidences'])
-        .map((item) => _parseEvidence(item, requisitionId))
+        .map((item) => _parseEvidence(item, requisitionId, caseSubjects))
         .toList(growable: false);
     final sessions = _asList(
       data['sessions'],
@@ -83,11 +150,9 @@ class RequisitionDetailService {
         break;
       }
     }
-    final subjectDetails = _parseSubjectDetails(
-      data['subjects'],
-      caseSnapshot,
-      primarySubject,
-    );
+    final subjectDetails = caseSubjects.isNotEmpty
+        ? caseSubjects
+        : _parseSubjectDetails(data['subjects'], caseSnapshot, primarySubject);
     final subjects = subjectDetails
         .map((subject) => subject.name)
         .toList(growable: false);
@@ -136,6 +201,7 @@ class RequisitionDetailService {
       division: division,
       subjects: subjects,
       subjectDetails: subjectDetails,
+      caseSubjects: caseSubjects.isNotEmpty ? caseSubjects : subjectDetails,
       participants: participants,
       sessionId: currentSession?.id ?? '',
       evidence: evidence,
@@ -151,7 +217,11 @@ class RequisitionDetailService {
     );
   }
 
-  RequisitionEvidence _parseEvidence(Object? raw, String requisitionId) {
+  RequisitionEvidence _parseEvidence(
+    Object? raw,
+    String requisitionId,
+    List<RequisitionSubjectSummary> caseSubjects,
+  ) {
     final data = _asMap(raw);
     final byteLength = _int(data['byteLength']);
     final evidenceId = _text(data['id']) ?? '';
@@ -166,6 +236,11 @@ class RequisitionDetailService {
       isBackendRecord: true,
       requisitionId: requisitionId,
       name: _text(data['originalName']) ?? 'Evidencia',
+      displayName: _text(data['displayName']),
+      linkedSubjects: _parseLinkedSubjects(
+        data['linkedSubjects'],
+        caseSubjects,
+      ),
       type: _evidenceType(data['kind']),
       createdAt:
           _date(data['capturedAt']) ?? DateTime.fromMillisecondsSinceEpoch(0),
@@ -183,6 +258,70 @@ class RequisitionDetailService {
       contentUrl: contentUrl,
       downloadUrl: contentUrl,
     );
+  }
+
+  List<RequisitionEvidenceSubject> _parseLinkedSubjects(
+    Object? raw,
+    List<RequisitionSubjectSummary> caseSubjects,
+  ) {
+    final byPersonId = <int, RequisitionSubjectSummary>{
+      for (final subject in caseSubjects)
+        if (subject.personId != null) subject.personId!: subject,
+    };
+    return _asList(raw)
+        .map((value) {
+          final item = _asMap(value);
+          final personId = _intOrNull(item['personId']);
+          if (personId == null) return null;
+          final subject = byPersonId[personId];
+          return RequisitionEvidenceSubject(
+            personId: personId,
+            name: subject?.name ?? 'Persona $personId',
+            documentNumber: subject?.documentNumber,
+            source: _text(item['source']),
+          );
+        })
+        .whereType<RequisitionEvidenceSubject>()
+        .toList(growable: false);
+  }
+
+  List<RequisitionSubjectSummary> _parseCaseSubjects(Object? raw) {
+    return _asList(raw)
+        .map((value) {
+          final item = _asMap(value);
+          final person = _asMap(item['person']);
+          final entity = _asMap(
+            item['legalEntity'] ?? item['legalEntitySnapshot'],
+          );
+          final personId = _intOrNull(item['personId']);
+          final name =
+              _text(item['personFullName']) ??
+              _text(person['nombreCompleto']) ??
+              _text(entity['razonSocial']) ??
+              _text(entity['nombre']) ??
+              'Sujeto procesal';
+          return RequisitionSubjectSummary(
+            name: name,
+            documentNumber:
+                _text(item['personDocumentNumber']) ?? _text(person['ci']),
+            role: _text(item['subjectTypeName']),
+            personId: personId,
+            caseSubjectId: _intOrNull(item['caseSubjectId']),
+            alias: _text(item['alias']),
+            identityReserved: item['identityReserved'] == true,
+            subjectTypeColorHex: _text(item['subjectTypeColorHex']),
+            subjectTypeLevel: _intOrNull(item['subjectTypeLevel']),
+            subjectTypeId: _intOrNull(item['subjectTypeId']),
+            legalSituationId: _intOrNull(item['legalSituationId']),
+            legalEntityName:
+                _text(entity['razonSocial']) ?? _text(entity['nombre']),
+            currentSubjectState: _text(item['currentSubjectState']),
+            snapshot: item['snapshot'] is Map<String, dynamic>
+                ? item['snapshot'] as Map<String, dynamic>
+                : null,
+          );
+        })
+        .toList(growable: false);
   }
 
   RequisitionAcquisitionSession _parseSession(Object? raw) {

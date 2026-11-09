@@ -207,6 +207,23 @@ class MirrorViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
+  Future<String?> renameEvidence(
+    RequisitionEvidence evidence,
+    String displayName,
+  ) async {
+    try {
+      _detail = await _repository.renameEvidence(
+        requisitionId: requisitionId,
+        evidence: evidence,
+        displayName: displayName,
+      );
+      _safeNotify();
+      return null;
+    } catch (error) {
+      return _userFacingError(error);
+    }
+  }
+
   Future<void> toggleRecording() async {
     if (_recordingPhase == AcquisitionRecordingPhase.starting ||
         _recordingPhase == AcquisitionRecordingPhase.saving) {

@@ -34,6 +34,7 @@ final class EcosystemCaseSummary {
     required this.division,
     required this.subjects,
     required this.officials,
+    this.caseSubjects = const [],
   });
 
   final int id;
@@ -42,6 +43,41 @@ final class EcosystemCaseSummary {
   final String division;
   final List<String> subjects;
   final List<String> officials;
+  final List<EcosystemSubjectSummary> caseSubjects;
+}
+
+final class EcosystemSubjectSummary {
+  const EcosystemSubjectSummary({
+    required this.name,
+    this.personId,
+    this.caseSubjectId,
+    this.documentNumber,
+    this.alias,
+    this.role,
+    this.subjectTypeColorHex,
+    this.subjectTypeId,
+    this.subjectTypeLevel,
+    this.legalSituationId,
+    this.identityReserved = false,
+    this.legalEntityName,
+    this.snapshot,
+  });
+
+  final String name;
+  final int? personId;
+  final int? caseSubjectId;
+  final String? documentNumber;
+  final String? alias;
+  final String? role;
+  final String? subjectTypeColorHex;
+  final int? subjectTypeId;
+  final int? subjectTypeLevel;
+  final int? legalSituationId;
+  final bool identityReserved;
+  final String? legalEntityName;
+  final Map<String, dynamic>? snapshot;
+
+  bool get canAnchor => personId != null;
 }
 
 final class PersonSummary {
@@ -60,6 +96,8 @@ final class PersonSummary {
   final DateTime? birthDate;
   final String? address;
   final String? phone;
+
+  int get segipPersonaId => id;
 }
 
 final class CreateRequisitionDraft {

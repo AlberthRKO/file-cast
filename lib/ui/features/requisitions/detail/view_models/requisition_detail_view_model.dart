@@ -629,6 +629,50 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     }
   }
 
+  Future<String?> renameEvidence(
+    RequisitionEvidence evidence,
+    String displayName,
+  ) async {
+    if (_disposed) return 'El detalle de la requisa ya no está disponible.';
+    final value = displayName.trim();
+    if (value.isEmpty || value.length > 255) return 'El nombre no es válido.';
+    try {
+      _detail = await _repository.renameEvidence(
+        requisitionId: requisitionId,
+        evidence: evidence,
+        displayName: value,
+      );
+      _safeNotify();
+      return null;
+    } catch (error) {
+      return _messageFromError(
+        error,
+        fallback: 'No se pudo cambiar el nombre de la evidencia.',
+      );
+    }
+  }
+
+  Future<String?> setEvidenceSubjects(
+    RequisitionEvidence evidence,
+    List<int> personIds,
+  ) async {
+    if (_disposed) return 'El detalle de la requisa ya no está disponible.';
+    try {
+      _detail = await _repository.setEvidenceSubjects(
+        requisitionId: requisitionId,
+        evidence: evidence,
+        personIds: personIds,
+      );
+      _safeNotify();
+      return null;
+    } catch (error) {
+      return _messageFromError(
+        error,
+        fallback: 'No se pudieron actualizar los sujetos de la evidencia.',
+      );
+    }
+  }
+
   void syncEvidenceForOffline() {
     if (_isOfflineSyncing || _disposed) return;
     final evidence = _detail?.evidence;
@@ -1001,6 +1045,10 @@ class RequisitionDetailViewModel extends ChangeNotifier {
           'y vuelve a intentar; la evidencia remota no se eliminó.';
     }
     return message.isEmpty ? fallback : message;
+  }
+
+  void _safeNotify() {
+    if (!_disposed) notifyListeners();
   }
 
   String _formatSize(int bytes) {

@@ -8,6 +8,7 @@ final class EcosystemCaseDto {
     required this.division,
     required this.subjects,
     required this.officials,
+    required this.caseSubjects,
   });
 
   factory EcosystemCaseDto.fromJson(Map<String, dynamic> json) {
@@ -38,6 +39,7 @@ final class EcosystemCaseDto {
           .map(_subjectLabel)
           .where((value) => value.isNotEmpty)
           .toList(growable: false),
+      caseSubjects: people.map(_subjectSummary).toList(growable: false),
       officials: officials
           .map(_officialLabel)
           .where((value) => value.isNotEmpty)
@@ -51,6 +53,7 @@ final class EcosystemCaseDto {
   final String division;
   final List<String> subjects;
   final List<String> officials;
+  final List<EcosystemSubjectSummary> caseSubjects;
 
   EcosystemCaseSummary toDomain() {
     return EcosystemCaseSummary(
@@ -60,6 +63,7 @@ final class EcosystemCaseDto {
       division: division,
       subjects: subjects,
       officials: officials,
+      caseSubjects: caseSubjects,
     );
   }
 
@@ -93,6 +97,32 @@ final class EcosystemCaseDto {
           _asString(subject['segundoApellido']),
         ].whereType<String>().join(' ').trim();
     return name.isNotEmpty ? name : alias ?? _asString(map['fullName']) ?? '';
+  }
+
+  static EcosystemSubjectSummary _subjectSummary(Object? value) {
+    final map = _asMap(value);
+    final person = _asMap(map['suprPersona']);
+    final entity = _asMap(map['suprEntidadJuridica']);
+    final type = _asMap(map['suprTipoSujeto']);
+    return EcosystemSubjectSummary(
+      name: _subjectLabel(value).ifEmpty('Sujeto procesal'),
+      personId: _asNullableInt(person['id']),
+      caseSubjectId: _asNullableInt(map['id']),
+      documentNumber:
+          _asString(person['ci']) ?? _asString(person['numeroDocumento']),
+      alias: _asString(map['alias']),
+      role: _nestedName(type),
+      subjectTypeColorHex: _asString(type['colorHex']),
+      subjectTypeId: _asNullableInt(type['id']),
+      subjectTypeLevel: _asNullableInt(type['nivel'] ?? type['level']),
+      legalSituationId: _asNullableInt(
+        map['situacionJuridicaId'] ?? map['legalSituationId'],
+      ),
+      identityReserved: map['reservaIdentidad'] == true,
+      legalEntityName:
+          _asString(entity['razonSocial']) ?? _asString(entity['nombre']),
+      snapshot: map,
+    );
   }
 
   static String _officialLabel(Object? value) {
@@ -204,4 +234,9 @@ String? _asString(Object? value) {
 int _asInt(Object? value) {
   if (value is int) return value;
   return int.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+int? _asNullableInt(Object? value) {
+  final parsed = _asInt(value);
+  return parsed > 0 ? parsed : null;
 }

@@ -446,6 +446,7 @@ class EvidenceOfflineSyncService {
           requisitionId: evidence.requisitionId!,
           sessionId: evidence.sessionId ?? '',
           originalName: evidence.name,
+          displayName: evidence.displayName,
           mimeType: evidence.mimeType ?? 'application/octet-stream',
           type: _backendKind(evidence.type),
           acquisitionMethod: 'RECOVERED_OFFLINE',

@@ -130,7 +130,7 @@ class RequisitionCreationService {
         },
       if (personSummary != null)
         'subject': {
-          if (personSummary.id > 0) 'externalPersonId': personSummary.id,
+          if (personSummary.id > 0) 'personId': personSummary.id,
           'documentNumber': personSummary.ci,
           'fullName': personSummary.name,
           if (personSummary.birthDate != null)

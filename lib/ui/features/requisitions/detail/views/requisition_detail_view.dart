@@ -224,6 +224,11 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
                         isUploadingEvidence: viewModel.isUploadingEvidence,
                         onUploadEvidence: (evidence) =>
                             _uploadEvidence(context, evidence),
+                        onRenameEvidence: (evidence) =>
+                            _renameEvidence(context, evidence),
+                        onAnchorEvidence: (evidence) =>
+                            _anchorEvidence(context, evidence),
+                        showSubjectInfo: detail.requisition.cud != null,
                       ),
                     ],
                   ],
@@ -462,6 +467,67 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
       evidence.isBackendRecord
           ? 'La evidencia pendiente fue eliminada del servidor y del dispositivo.'
           : 'La evidencia pendiente fue eliminada del dispositivo.',
+    );
+  }
+
+  Future<void> _renameEvidence(
+    BuildContext context,
+    RequisitionEvidence evidence,
+  ) async {
+    final name = await showAppModalBottomSheet<String>(
+      context: context,
+      maxWidth: AppSize.formMaxWidth,
+      builder: (_) => _RenameEvidenceSheet(evidence: evidence),
+    );
+    if (!context.mounted || name == null) return;
+    final error = await viewModel.renameEvidence(evidence, name);
+    if (!context.mounted) return;
+    if (error != null) {
+      await showAppErrorBottomSheet(context, error);
+      return;
+    }
+    await showAppSuccessBottomSheet(
+      context,
+      'Nombre de evidencia actualizado.',
+    );
+  }
+
+  Future<void> _anchorEvidence(
+    BuildContext context,
+    RequisitionEvidence evidence,
+  ) async {
+    final subjectsByPersonId = <int, RequisitionSubjectSummary>{};
+    for (final subject in detail.caseSubjects) {
+      final personId = subject.personId;
+      if (personId != null)
+        subjectsByPersonId.putIfAbsent(personId, () => subject);
+    }
+    final subjects = subjectsByPersonId.values.toList(growable: false);
+    if (subjects.isEmpty) {
+      await showAppErrorBottomSheet(
+        context,
+        'El CUD no contiene sujetos con personaId utilizable para anclar.',
+      );
+      return;
+    }
+    final selected = await showAppModalBottomSheet<List<int>>(
+      context: context,
+      maxWidth: AppSize.formMaxWidth,
+      builder: (_) => _EvidenceSubjectSheet(
+        evidence: evidence,
+        subjects: subjects,
+      ),
+    );
+    if (!context.mounted || selected == null) return;
+    final error = await viewModel.setEvidenceSubjects(evidence, selected);
+    if (!context.mounted) return;
+    if (error != null) {
+      await showAppErrorBottomSheet(context, error);
+      return;
+    }
+    await showAppSuccessBottomSheet(
+      context,
+      'Sujetos de la evidencia actualizados.',
     );
   }
 
@@ -1803,20 +1869,41 @@ class _PeoplePair extends StatelessWidget {
 }
 
 class _DisplayPerson {
-  const _DisplayPerson({required this.name, this.secondary});
+  const _DisplayPerson({required this.name, this.secondary, this.details});
 
   final String name;
   final String? secondary;
+  final String? details;
 }
 
 List<_DisplayPerson> _subjectPeople(RequisitionDetail detail) {
   if (detail.subjectDetails.isNotEmpty) {
     return detail.subjectDetails
         .map(
-          (subject) => _DisplayPerson(
-            name: subject.name,
-            secondary: subject.documentNumber ?? subject.role,
-          ),
+          (subject) {
+            final details = <String>[
+              if (subject.role != null && subject.documentNumber != null)
+                'Rol: ${subject.role}',
+              if (subject.personId != null) 'personaId: ${subject.personId}',
+              if (subject.caseSubjectId != null)
+                'Sujeto del caso: ${subject.caseSubjectId}',
+              if (subject.subjectTypeId != null && subject.role == null)
+                'Tipo de sujeto: ${subject.subjectTypeId}',
+              if (subject.legalSituationId != null)
+                'Situación jurídica: ${subject.legalSituationId}',
+              if (subject.alias?.isNotEmpty == true) 'Alias: ${subject.alias}',
+              if (subject.legalEntityName?.isNotEmpty == true)
+                'Entidad: ${subject.legalEntityName}',
+              if (subject.identityReserved) 'Identidad reservada',
+              if (subject.currentSubjectState?.isNotEmpty == true)
+                'Estado: ${subject.currentSubjectState}',
+            ];
+            return _DisplayPerson(
+              name: subject.name,
+              secondary: subject.documentNumber ?? subject.role,
+              details: details.isEmpty ? null : details.join(' · '),
+            );
+          },
         )
         .toList(growable: false);
   }
@@ -1893,9 +1980,16 @@ class _PeopleSheet extends StatelessWidget {
                           ),
                         ),
                         title: Text(person.name),
-                        subtitle: person.secondary == null
+                        subtitle:
+                            person.secondary == null && person.details == null
                             ? null
-                            : Text(person.secondary!),
+                            : Text(
+                                [
+                                  if (person.secondary != null)
+                                    person.secondary!,
+                                  if (person.details != null) person.details!,
+                                ].join('\n'),
+                              ),
                       );
                     },
                   ),
@@ -2559,6 +2653,9 @@ class _EvidenceSection extends StatelessWidget {
     required this.canUploadEvidence,
     required this.isUploadingEvidence,
     required this.onUploadEvidence,
+    required this.onRenameEvidence,
+    required this.onAnchorEvidence,
+    required this.showSubjectInfo,
   });
 
   final EvidenceCategorySummary summary;
@@ -2570,6 +2667,9 @@ class _EvidenceSection extends StatelessWidget {
   final bool Function(RequisitionEvidence) canUploadEvidence;
   final bool Function(RequisitionEvidence) isUploadingEvidence;
   final ValueChanged<RequisitionEvidence> onUploadEvidence;
+  final ValueChanged<RequisitionEvidence> onRenameEvidence;
+  final ValueChanged<RequisitionEvidence> onAnchorEvidence;
+  final bool showSubjectInfo;
 
   @override
   Widget build(BuildContext context) {
@@ -2611,7 +2711,7 @@ class _EvidenceSection extends StatelessWidget {
                   crossAxisCount: columns,
                   crossAxisSpacing: AppSpace.s,
                   mainAxisSpacing: AppSpace.s,
-                  mainAxisExtent: 68,
+                  mainAxisExtent: showSubjectInfo ? 88 : 68,
                 ),
                 itemBuilder: (context, index) => _EvidencePreview(
                   key: ValueKey(visible[index].id),
@@ -2624,6 +2724,11 @@ class _EvidenceSection extends StatelessWidget {
                   onUpload: canUploadEvidence(visible[index])
                       ? () => onUploadEvidence(visible[index])
                       : null,
+                  onRename: () => onRenameEvidence(visible[index]),
+                  onAnchor: showSubjectInfo && visible[index].isBackendRecord
+                      ? () => onAnchorEvidence(visible[index])
+                      : null,
+                  showSubjectInfo: showSubjectInfo,
                   isDeleting: isDeletingEvidence(visible[index]),
                   isUploading: isUploadingEvidence(visible[index]),
                 ),
@@ -2650,6 +2755,9 @@ class _EvidenceSection extends StatelessWidget {
       canUploadEvidence: canUploadEvidence,
       isUploadingEvidence: isUploadingEvidence,
       onUploadEvidence: onUploadEvidence,
+      onRenameEvidence: onRenameEvidence,
+      onAnchorEvidence: onAnchorEvidence,
+      showSubjectInfo: showSubjectInfo,
     ),
   );
 }
@@ -2661,6 +2769,9 @@ class _EvidencePreview extends StatelessWidget {
     required this.onOpen,
     this.onDelete,
     this.onUpload,
+    this.onRename,
+    this.onAnchor,
+    this.showSubjectInfo = false,
     this.isDeleting = false,
     this.isUploading = false,
     super.key,
@@ -2670,6 +2781,9 @@ class _EvidencePreview extends StatelessWidget {
   final VoidCallback onOpen;
   final VoidCallback? onDelete;
   final VoidCallback? onUpload;
+  final VoidCallback? onRename;
+  final VoidCallback? onAnchor;
+  final bool showSubjectInfo;
   final bool isDeleting;
   final bool isUploading;
 
@@ -2744,7 +2858,7 @@ class _EvidencePreview extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    evidence.name,
+                    evidence.effectiveName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.labelLarge?.copyWith(
@@ -2773,6 +2887,19 @@ class _EvidencePreview extends StatelessWidget {
                       ),
                     ],
                   ),
+                  if (showSubjectInfo) ...[
+                    const SizedBox(height: AppSpace.xxs),
+                    Text(
+                      evidence.linkedSubjects.isEmpty
+                          ? 'Sin sujetos anclados'
+                          : 'Sujetos: ${evidence.linkedSubjects.map((subject) => subject.name).join(', ')}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.primary,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -2791,11 +2918,15 @@ class _EvidencePreview extends StatelessWidget {
             ),
             if (onDelete != null ||
                 onUpload != null ||
+                onRename != null ||
+                onAnchor != null ||
                 isDeleting ||
                 isUploading)
               _EvidenceActionsMenu(
                 onUpload: onUpload,
                 onDelete: onDelete,
+                onRename: onRename,
+                onAnchor: onAnchor,
                 isBusy: isDeleting || isUploading,
               ),
           ],
@@ -2805,17 +2936,21 @@ class _EvidencePreview extends StatelessWidget {
   }
 }
 
-enum _EvidenceAction { upload, delete }
+enum _EvidenceAction { upload, rename, anchor, delete }
 
 class _EvidenceActionsMenu extends StatelessWidget {
   const _EvidenceActionsMenu({
     required this.onUpload,
     required this.onDelete,
+    required this.onRename,
+    required this.onAnchor,
     required this.isBusy,
   });
 
   final VoidCallback? onUpload;
   final VoidCallback? onDelete;
+  final VoidCallback? onRename;
+  final VoidCallback? onAnchor;
   final bool isBusy;
 
   @override
@@ -2859,6 +2994,24 @@ class _EvidenceActionsMenu extends StatelessWidget {
                 color: theme.colorScheme.primary,
               ),
             ),
+          if (onRename != null)
+            DropdownMenuItem<_EvidenceAction>(
+              value: _EvidenceAction.rename,
+              child: _EvidenceActionRow(
+                icon: Icons.edit_outlined,
+                label: 'Cambiar nombre',
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
+          if (onAnchor != null)
+            DropdownMenuItem<_EvidenceAction>(
+              value: _EvidenceAction.anchor,
+              child: _EvidenceActionRow(
+                icon: Icons.link_outlined,
+                label: 'Anclar a sujetos',
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
           if (onDelete != null)
             DropdownMenuItem<_EvidenceAction>(
               value: _EvidenceAction.delete,
@@ -2875,6 +3028,10 @@ class _EvidenceActionsMenu extends StatelessWidget {
               onUpload?.call();
             case _EvidenceAction.delete:
               onDelete?.call();
+            case _EvidenceAction.rename:
+              onRename?.call();
+            case _EvidenceAction.anchor:
+              onAnchor?.call();
             case null:
               return;
           }
@@ -2978,6 +3135,9 @@ class _AllEvidenceSheet extends StatelessWidget {
     required this.canUploadEvidence,
     required this.isUploadingEvidence,
     required this.onUploadEvidence,
+    required this.onRenameEvidence,
+    required this.onAnchorEvidence,
+    required this.showSubjectInfo,
   });
   final String title;
   final String subtitle;
@@ -2990,6 +3150,9 @@ class _AllEvidenceSheet extends StatelessWidget {
   final bool Function(RequisitionEvidence) canUploadEvidence;
   final bool Function(RequisitionEvidence) isUploadingEvidence;
   final ValueChanged<RequisitionEvidence> onUploadEvidence;
+  final ValueChanged<RequisitionEvidence> onRenameEvidence;
+  final ValueChanged<RequisitionEvidence> onAnchorEvidence;
+  final bool showSubjectInfo;
 
   @override
   Widget build(BuildContext context) {
@@ -3031,7 +3194,7 @@ class _AllEvidenceSheet extends StatelessWidget {
                           crossAxisCount: columns,
                           crossAxisSpacing: AppSpace.s,
                           mainAxisSpacing: AppSpace.s,
-                          mainAxisExtent: 68,
+                          mainAxisExtent: showSubjectInfo ? 88 : 68,
                         ),
                         itemBuilder: (context, index) => _EvidencePreview(
                           key: ValueKey(evidence[index].id),
@@ -3053,6 +3216,22 @@ class _AllEvidenceSheet extends StatelessWidget {
                                   );
                                 }
                               : null,
+                          onRename: () {
+                            Navigator.of(context).pop();
+                            WidgetsBinding.instance.addPostFrameCallback(
+                              (_) => onRenameEvidence(evidence[index]),
+                            );
+                          },
+                          onAnchor:
+                              showSubjectInfo && evidence[index].isBackendRecord
+                              ? () {
+                                  Navigator.of(context).pop();
+                                  WidgetsBinding.instance.addPostFrameCallback(
+                                    (_) => onAnchorEvidence(evidence[index]),
+                                  );
+                                }
+                              : null,
+                          showSubjectInfo: showSubjectInfo,
                           isDeleting: isDeletingEvidence(evidence[index]),
                           isUploading: isUploadingEvidence(evidence[index]),
                           onOpen: () {
@@ -3065,6 +3244,177 @@ class _AllEvidenceSheet extends StatelessWidget {
                       );
                     },
                   ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RenameEvidenceSheet extends StatefulWidget {
+  const _RenameEvidenceSheet({required this.evidence});
+
+  final RequisitionEvidence evidence;
+
+  @override
+  State<_RenameEvidenceSheet> createState() => _RenameEvidenceSheetState();
+}
+
+class _RenameEvidenceSheetState extends State<_RenameEvidenceSheet> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.evidence.effectiveName,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        AppSpace.m,
+        AppSpace.m,
+        AppSpace.m,
+        AppSpace.m + MediaQuery.viewInsetsOf(context).bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Cambiar nombre', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: AppSpace.s),
+          Text(
+            'Este cambio solo modifica el nombre visible, no el archivo original.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: AppSpace.m),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            maxLength: 255,
+            decoration: const InputDecoration(labelText: 'Nombre de evidencia'),
+            onSubmitted: (_) => _save(),
+          ),
+          const SizedBox(height: AppSpace.s),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancelar'),
+              ),
+              const SizedBox(width: AppSpace.s),
+              FilledButton(onPressed: _save, child: const Text('Guardar')),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _save() {
+    final value = _controller.text.trim();
+    if (value.isEmpty) return;
+    Navigator.of(context).pop(value);
+  }
+}
+
+class _EvidenceSubjectSheet extends StatefulWidget {
+  const _EvidenceSubjectSheet({required this.evidence, required this.subjects});
+
+  final RequisitionEvidence evidence;
+  final List<RequisitionSubjectSummary> subjects;
+
+  @override
+  State<_EvidenceSubjectSheet> createState() => _EvidenceSubjectSheetState();
+}
+
+class _EvidenceSubjectSheetState extends State<_EvidenceSubjectSheet> {
+  late final Set<int> _selected = {
+    for (final subject in widget.evidence.linkedSubjects) subject.personId,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpace.m,
+          AppSpace.m,
+          AppSpace.m,
+          AppSpace.s,
+        ),
+        child: LayoutBuilder(
+          builder: (context, constraints) => ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: constraints.maxHeight.clamp(280.0, 620.0).toDouble(),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Anclar evidencia a sujetos',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: AppSpace.xs),
+                Text(
+                  widget.evidence.effectiveName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: AppSpace.s),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: widget.subjects.length,
+                    itemBuilder: (context, index) {
+                      final subject = widget.subjects[index];
+                      final personId = subject.personId!;
+                      return CheckboxListTile(
+                        value: _selected.contains(personId),
+                        onChanged: (value) => setState(() {
+                          if (value == true) {
+                            _selected.add(personId);
+                          } else {
+                            _selected.remove(personId);
+                          }
+                        }),
+                        title: Text(subject.name),
+                        subtitle: Text(
+                          [
+                            if (subject.documentNumber != null)
+                              'CI ${subject.documentNumber}',
+                            if (subject.role != null) subject.role!,
+                            'personaId $personId',
+                          ].join(' · '),
+                        ),
+                        controlAffinity: ListTileControlAffinity.leading,
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: AppSpace.s),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Cancelar'),
+                    ),
+                    const SizedBox(width: AppSpace.s),
+                    FilledButton(
+                      onPressed: () =>
+                          Navigator.of(context).pop(_selected.toList()),
+                      child: const Text('Anclar'),
+                    ),
+                  ],
                 ),
               ],
             ),

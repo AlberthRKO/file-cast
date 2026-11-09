@@ -592,6 +592,8 @@ class EvidenceSyncService {
         'id': evidence.id,
         'sessionId': evidence.sessionId,
         'originalName': evidence.originalName,
+        if (evidence.displayName?.trim().isNotEmpty == true)
+          'displayName': evidence.displayName!.trim(),
         'mimeType': evidence.mimeType,
         'extension': 'fce',
         'byteLength': evidence.ciphertextByteLength,

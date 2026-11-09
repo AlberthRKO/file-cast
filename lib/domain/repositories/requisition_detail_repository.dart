@@ -19,6 +19,16 @@ abstract interface class RequisitionDetailRepository {
     required String evidenceId,
   });
   Future<void> cancelPendingEvidenceSync({required String requisitionId});
+  Future<RequisitionDetail> renameEvidence({
+    required String requisitionId,
+    required RequisitionEvidence evidence,
+    required String displayName,
+  });
+  Future<RequisitionDetail> setEvidenceSubjects({
+    required String requisitionId,
+    required RequisitionEvidence evidence,
+    required List<int> personIds,
+  });
   Future<EvidenceOfflineSyncResult> syncEvidenceForOffline({
     required String requisitionId,
     required List<RequisitionEvidence> evidence,

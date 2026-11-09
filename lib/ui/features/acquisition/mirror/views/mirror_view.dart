@@ -5,6 +5,8 @@ import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
 import 'package:file_cast/domain/services/evidence_decryption_service.dart';
 import 'package:file_cast/ui/core/navigation/route_args/mirror_route_args.dart';
+import 'package:file_cast/ui/core/feedback/app_feedback.dart';
+import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:file_cast/ui/core/widgets/evidence_sync_badge.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/view_models/mirror_view_model.dart';
@@ -508,6 +510,8 @@ class _EvidencePane extends StatelessWidget {
                       child: _EvidenceCard(
                         key: ValueKey(evidence[index].id),
                         evidence: evidence[index],
+                        onRename: () =>
+                            _renameEvidence(context, evidence[index]),
                       ),
                     ),
                   )
@@ -523,6 +527,7 @@ class _EvidencePane extends StatelessWidget {
                     itemBuilder: (_, index) => _EvidenceCard(
                       key: ValueKey(evidence[index].id),
                       evidence: evidence[index],
+                      onRename: () => _renameEvidence(context, evidence[index]),
                     ),
                   ),
           ),
@@ -530,11 +535,33 @@ class _EvidencePane extends StatelessWidget {
       ),
     );
   }
+
+  Future<void> _renameEvidence(
+    BuildContext context,
+    RequisitionEvidence evidence,
+  ) async {
+    final name = await showAppModalBottomSheet<String>(
+      context: context,
+      maxWidth: AppSize.formMaxWidth,
+      builder: (_) => _MirrorRenameSheet(evidence: evidence),
+    );
+    if (!context.mounted || name == null) return;
+    final error = await viewModel.renameEvidence(evidence, name);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(error ?? 'Nombre de evidencia actualizado.')),
+    );
+  }
 }
 
 class _EvidenceCard extends StatelessWidget {
-  const _EvidenceCard({required this.evidence, super.key});
+  const _EvidenceCard({
+    required this.evidence,
+    required this.onRename,
+    super.key,
+  });
   final RequisitionEvidence evidence;
+  final VoidCallback onRename;
 
   @override
   Widget build(BuildContext context) {
@@ -575,11 +602,27 @@ class _EvidenceCard extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    evidence.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontSize: 11),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          evidence.effectiveName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: onRename,
+                        tooltip: 'Cambiar nombre',
+                        visualDensity: VisualDensity.compact,
+                        color: Colors.white,
+                        icon: const Icon(Icons.edit_outlined, size: 16),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: AppSpace.xs),
                   EvidenceSyncBadge(
@@ -594,6 +637,68 @@ class _EvidenceCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _MirrorRenameSheet extends StatefulWidget {
+  const _MirrorRenameSheet({required this.evidence});
+
+  final RequisitionEvidence evidence;
+
+  @override
+  State<_MirrorRenameSheet> createState() => _MirrorRenameSheetState();
+}
+
+class _MirrorRenameSheetState extends State<_MirrorRenameSheet> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.evidence.effectiveName,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: EdgeInsets.fromLTRB(
+      AppSpace.m,
+      AppSpace.m,
+      AppSpace.m,
+      AppSpace.m + MediaQuery.viewInsetsOf(context).bottom,
+    ),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Cambiar nombre', style: Theme.of(context).textTheme.titleLarge),
+        const SizedBox(height: AppSpace.s),
+        TextField(
+          controller: _controller,
+          autofocus: true,
+          maxLength: 255,
+          decoration: const InputDecoration(labelText: 'Nombre de evidencia'),
+        ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancelar'),
+            ),
+            const SizedBox(width: AppSpace.s),
+            FilledButton(
+              onPressed: () {
+                final value = _controller.text.trim();
+                if (value.isNotEmpty) Navigator.of(context).pop(value);
+              },
+              child: const Text('Guardar'),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
 }
 
 class _ConnectionChip extends StatelessWidget {

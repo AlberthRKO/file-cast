@@ -94,6 +94,17 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
       _detailRepository.getCachedDetail(requisitionId);
 
   @override
+  Future<RequisitionDetail> renameEvidence({
+    required String requisitionId,
+    required RequisitionEvidence evidence,
+    required String displayName,
+  }) => _detailRepository.renameEvidence(
+    requisitionId: requisitionId,
+    evidence: evidence,
+    displayName: displayName,
+  );
+
+  @override
   Future<RequisitionDetail> captureScreenshot({
     required String requisitionId,
     required String sessionId,

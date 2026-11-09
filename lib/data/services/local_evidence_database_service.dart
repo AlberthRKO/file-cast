@@ -59,7 +59,7 @@ class LocalEvidenceDatabaseService {
       return await openDatabase(
         path,
         password: key,
-        version: 5,
+        version: 6,
         onCreate: (db, _) async {
           await db.execute('''
             CREATE TABLE evidencias_locales (
@@ -67,6 +67,7 @@ class LocalEvidenceDatabaseService {
               requisa_id TEXT NOT NULL,
               sesion_id TEXT NOT NULL,
               nombre_original TEXT NOT NULL,
+              nombre_mostrado TEXT,
               mime_type TEXT NOT NULL,
               tipo TEXT NOT NULL,
               metodo_adquisicion TEXT NOT NULL,
@@ -143,6 +144,14 @@ class LocalEvidenceDatabaseService {
             column: 'reintento_automatico',
             definition: 'INTEGER NOT NULL DEFAULT 1',
           );
+          if (oldVersion < 6) {
+            await _ensureColumn(
+              db,
+              table: 'evidencias_locales',
+              column: 'nombre_mostrado',
+              definition: 'TEXT',
+            );
+          }
         },
       );
     } on Object catch (error, stackTrace) {
@@ -244,6 +253,23 @@ class LocalEvidenceDatabaseService {
         whereArgs: [evidence.id],
       );
     });
+  }
+
+  Future<void> updateDisplayName({
+    required String requisitionId,
+    required String evidenceId,
+    required String displayName,
+  }) async {
+    final db = await database;
+    await db.update(
+      'evidencias_locales',
+      {
+        'nombre_mostrado': displayName,
+        'actualizado_at': DateTime.now().toUtc().toIso8601String(),
+      },
+      where: 'id = ? AND requisa_id = ?',
+      whereArgs: [evidenceId, requisitionId],
+    );
   }
 
   Future<String> persistentEncryptedPath(String evidenceId) async {
@@ -757,12 +783,14 @@ final class LocalEvidenceRecord {
     required this.createdAt,
     this.sourcePath,
     this.msFileId,
+    this.displayName,
   });
 
   final String id;
   final String requisitionId;
   final String sessionId;
   final String originalName;
+  final String? displayName;
   final String mimeType;
   final String type;
   final String acquisitionMethod;
@@ -787,6 +815,7 @@ final class LocalEvidenceRecord {
     'requisa_id': requisitionId,
     'sesion_id': sessionId,
     'nombre_original': originalName,
+    'nombre_mostrado': displayName,
     'mime_type': mimeType,
     'tipo': type,
     'metodo_adquisicion': acquisitionMethod,
@@ -814,6 +843,7 @@ final class LocalEvidenceRecord {
       requisitionId: map['requisa_id']! as String,
       sessionId: map['sesion_id']! as String,
       originalName: map['nombre_original']! as String,
+      displayName: map['nombre_mostrado'] as String?,
       mimeType: map['mime_type']! as String,
       type: map['tipo']! as String,
       acquisitionMethod: map['metodo_adquisicion']! as String,
