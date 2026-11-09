@@ -8,8 +8,8 @@ import 'package:file_cast/data/services/evidence_key_exchange_service.dart';
 import 'package:file_cast/data/services/evidence_offline_sync_service.dart';
 import 'package:file_cast/data/services/evidence_sync_service.dart';
 import 'package:file_cast/data/services/local_evidence_database_service.dart';
-import 'package:file_cast/domain/models/evidence_offline_sync.dart';
 import 'package:file_cast/data/services/requisition_detail_service.dart';
+import 'package:file_cast/domain/models/evidence_offline_sync.dart';
 import 'package:file_cast/domain/models/evidence_upload_progress.dart';
 import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
@@ -189,6 +189,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
   Future<EvidenceOfflineSyncResult> syncEvidenceForOffline({
     required String requisitionId,
     required List<RequisitionEvidence> evidence,
+    EvidenceOfflineSyncScope scope = EvidenceOfflineSyncScope.requisition,
   }) async {
     final service = _offlineSyncService;
     if (service == null) {
@@ -199,6 +200,8 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     final result = await service.syncRequisition(
       requisitionId: requisitionId,
       evidence: evidence,
+      scope: scope,
+      showSystemProgress: scope == EvidenceOfflineSyncScope.requisition,
     );
     return result;
   }

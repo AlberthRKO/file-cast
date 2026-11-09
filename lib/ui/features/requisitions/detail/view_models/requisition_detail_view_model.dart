@@ -291,6 +291,10 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     _offlineSyncProgressSubscription ??= _repository.offlineSyncProgress.listen(
       (progress) {
         if (progress.requisitionId != requisitionId || _disposed) return;
+        if (progress.scope == EvidenceOfflineSyncScope.selectedEvidence) {
+          if (!progress.isActive) unawaited(_reloadSilently());
+          return;
+        }
         _offlineSyncProgress = progress;
         _offlineSyncError = progress.errorMessage;
         _offlineSyncErrors = progress.errors;
@@ -686,37 +690,37 @@ class RequisitionDetailViewModel extends ChangeNotifier {
       await Future<void>.delayed(Duration.zero);
       if (_disposed) return _previewService.prepare(evidenceForPreview);
 
-      _isOfflineSyncing = true;
-      _waitingForOfflineReload = true;
-      _offlineSyncProgress = null;
-      _offlineSyncError = null;
-      _offlineSyncErrors = const [];
-      notifyListeners();
+      EvidenceOfflineSyncResult result;
       try {
-        final result = await _repository.syncEvidenceForOffline(
+        result = await _repository.syncEvidenceForOffline(
           requisitionId: requisitionId,
           evidence: [evidence],
+          scope: EvidenceOfflineSyncScope.selectedEvidence,
         );
-        if (result.hasFailures) {
-          _offlineSyncErrors = result.errors;
-          _offlineSyncError = result.errors.isEmpty
-              ? 'La evidencia se verá en modo temporal y no quedó guardada offline.'
-              : result.errors.first;
-          _errorMessage = _offlineSyncError;
-        }
         await _reloadSilently();
       } catch (error) {
-        _offlineSyncError = _messageFromError(
-          error,
-          fallback:
-              'La evidencia se verá en modo temporal y no quedó guardada offline.',
+        throw StateError(
+          _messageFromError(
+            error,
+            fallback:
+                'No se pudo descargar la evidencia. Puedes intentarlo nuevamente.',
+          ),
         );
-        _offlineSyncErrors = [_offlineSyncError!];
-        _errorMessage = _offlineSyncError;
-      } finally {
-        _waitingForOfflineReload = false;
-        _isOfflineSyncing = false;
-        if (!_disposed) notifyListeners();
+      }
+      if (result.hasFailures) {
+        final reason = result.errors.isEmpty
+            ? 'No se pudo descargar la evidencia.'
+            : result.errors.first;
+        final backgroundMessage = result.backgroundRetryScheduled
+            ? ' La descarga continuará en segundo plano y recibirás un aviso cuando termine.'
+            : ' Puedes intentarlo nuevamente.';
+        throw StateError('$reason$backgroundMessage');
+      }
+
+      if (_disposed) {
+        throw StateError(
+          'La vista previa se cerró antes de completar la descarga.',
+        );
       }
 
       for (final item in _detail?.evidence ?? const <RequisitionEvidence>[]) {
@@ -724,6 +728,12 @@ class RequisitionDetailViewModel extends ChangeNotifier {
           evidenceForPreview = item;
           break;
         }
+      }
+      if (_needsOfflineRecovery(evidenceForPreview)) {
+        throw StateError(
+          'La copia local todavía no está disponible. '
+          'Puedes intentarlo nuevamente.',
+        );
       }
     }
     return _previewService.prepare(evidenceForPreview);

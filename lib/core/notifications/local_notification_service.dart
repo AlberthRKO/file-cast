@@ -75,6 +75,10 @@ class LocalNotificationService {
   static const channelName = 'Sincronización de evidencias';
   static const channelDescription =
       'Progreso de subida y preparación offline de evidencias.';
+  static const resultChannelId = 'file_cast_evidence_results';
+  static const resultChannelName = 'Resultados de evidencias';
+  static const resultChannelDescription =
+      'Confirma cuando una sincronización de evidencias termina.';
   static const notificationType = 'evidence_sync';
 
   final FlutterLocalNotificationsPlugin _plugin;
@@ -132,6 +136,17 @@ class LocalNotificationService {
         playSound: false,
         enableVibration: false,
         showBadge: false,
+      ),
+    );
+    await android?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        resultChannelId,
+        resultChannelName,
+        description: resultChannelDescription,
+        importance: Importance.defaultImportance,
+        playSound: false,
+        enableVibration: false,
+        showBadge: true,
       ),
     );
     final launchDetails = await _plugin.getNotificationAppLaunchDetails();
@@ -201,6 +216,55 @@ class LocalNotificationService {
       completed: completed,
       skipped: skipped,
       failed: failed,
+    );
+  }
+
+  Future<void> showOfflineCompletion({
+    required String requisitionId,
+    required int total,
+    required int available,
+    required bool selectedEvidenceOnly,
+  }) async {
+    if (kIsWeb || total <= 0) return;
+    await initialize(requestPermissions: false);
+    final title = selectedEvidenceOnly
+        ? 'Evidencia disponible offline'
+        : 'Sincronización offline completada';
+    final body = selectedEvidenceOnly
+        ? 'La evidencia solicitada ya puede abrirse sin conexión.'
+        : '$available de $total evidencias quedaron disponibles sin conexión.';
+    final jobId = 'OFFLINE_SYNC:$requisitionId';
+    final payload = LocalNotificationPayload(
+      type: notificationType,
+      operation: EvidenceJobOperation.offlineSync,
+      requisitionId: requisitionId,
+      jobId: jobId,
+    );
+    await _plugin.show(
+      stableId('OFFLINE_SYNC_RESULT:$requisitionId'),
+      title,
+      body,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          resultChannelId,
+          resultChannelName,
+          channelDescription: resultChannelDescription,
+          importance: Importance.defaultImportance,
+          priority: Priority.defaultPriority,
+          ongoing: false,
+          autoCancel: true,
+          playSound: false,
+          enableVibration: false,
+          icon: '@mipmap/ic_launcher',
+          category: AndroidNotificationCategory.status,
+        ),
+        iOS: DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: false,
+        ),
+      ),
+      payload: payload.toJson(),
     );
   }
 

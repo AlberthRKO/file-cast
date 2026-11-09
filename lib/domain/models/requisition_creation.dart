@@ -64,6 +64,7 @@ final class PersonSummary {
 
 final class CreateRequisitionDraft {
   const CreateRequisitionDraft({
+    required this.id,
     required this.mode,
     required this.procedureAt,
     required this.location,
@@ -71,6 +72,7 @@ final class CreateRequisitionDraft {
     this.personSummary,
   });
 
+  final String id;
   final RequisitionRegistrationMode mode;
   final DateTime procedureAt;
   final GeoPoint location;

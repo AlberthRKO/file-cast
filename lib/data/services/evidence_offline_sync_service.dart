@@ -48,9 +48,75 @@ class EvidenceOfflineSyncService {
     required String requisitionId,
     required List<RequisitionEvidence> evidence,
     bool scheduleBackgroundOnFailure = true,
-  }) async {
+    EvidenceOfflineSyncScope scope = EvidenceOfflineSyncScope.requisition,
+    bool showSystemProgress = true,
+  }) {
+    // Las solicitudes de una misma requisa se serializan, pero cada una
+    // conserva su alcance. Devolver directamente la ejecución activa hacía
+    // que un preview individual pudiera recibir el resultado de un lote (o
+    // que el lote terminara procesando solamente una evidencia).
     final active = _activeRuns[requisitionId];
-    if (active != null) return await active;
+    if (active != null) {
+      return _waitForActiveRun(
+        active: active,
+        requisitionId: requisitionId,
+        evidence: evidence,
+        scheduleBackgroundOnFailure: scheduleBackgroundOnFailure,
+        scope: scope,
+        showSystemProgress: showSystemProgress,
+      );
+    }
+
+    late final Future<EvidenceOfflineSyncResult> run;
+    run = _runSyncRequest(
+      requisitionId: requisitionId,
+      evidence: evidence,
+      scheduleBackgroundOnFailure: scheduleBackgroundOnFailure,
+      scope: scope,
+      showSystemProgress: showSystemProgress,
+    );
+    _activeRuns[requisitionId] = run;
+    return run.whenComplete(() {
+      if (identical(_activeRuns[requisitionId], run)) {
+        _activeRuns.remove(requisitionId);
+      }
+    });
+  }
+
+  Future<EvidenceOfflineSyncResult> _waitForActiveRun({
+    required Future<EvidenceOfflineSyncResult> active,
+    required String requisitionId,
+    required List<RequisitionEvidence> evidence,
+    required bool scheduleBackgroundOnFailure,
+    required EvidenceOfflineSyncScope scope,
+    required bool showSystemProgress,
+  }) async {
+    try {
+      await active;
+    } on Object {
+      // El siguiente intento sigue siendo válido aunque el anterior falle.
+    }
+    return syncRequisition(
+      requisitionId: requisitionId,
+      evidence: evidence,
+      scheduleBackgroundOnFailure: scheduleBackgroundOnFailure,
+      scope: scope,
+      showSystemProgress: showSystemProgress,
+    );
+  }
+
+  Future<EvidenceOfflineSyncResult> _runSyncRequest({
+    required String requisitionId,
+    required List<RequisitionEvidence> evidence,
+    required bool scheduleBackgroundOnFailure,
+    required EvidenceOfflineSyncScope scope,
+    required bool showSystemProgress,
+  }) async {
+    final requestedEvidenceIds = evidence
+        .where(_isOfflineCandidate)
+        .map((item) => item.id)
+        .toSet()
+        .toList(growable: false);
 
     // Una ejecución manual toma el control de la requisa. Si el intento
     // anterior registró un worker de WorkManager, cancelarlo evita que ambos
@@ -67,54 +133,67 @@ class EvidenceOfflineSyncService {
       // La sincronización manual no depende de limpiar la notificación.
     }
 
-    final run = _syncRequisitionSafely(
+    final operation = _syncRequisitionSafely(
       requisitionId: requisitionId,
       evidence: evidence,
+      scope: scope,
+      showSystemProgress: showSystemProgress,
     );
-    _activeRuns[requisitionId] = run;
-    run.then<void>(
-      (result) {
-        if (identical(_activeRuns[requisitionId], run)) {
-          _activeRuns.remove(requisitionId);
-        }
-        if (scheduleBackgroundOnFailure && _hasRetryableFailures(result)) {
-          unawaited(_scheduleBackgroundSync(requisitionId));
-        }
-      },
-      onError: (Object _, StackTrace _) {
-        if (identical(_activeRuns[requisitionId], run)) {
-          _activeRuns.remove(requisitionId);
-        }
-        if (scheduleBackgroundOnFailure) {
-          unawaited(_scheduleBackgroundSync(requisitionId));
-        }
-      },
-    );
-    return await run;
+    try {
+      final result = await operation;
+      final shouldSchedule =
+          scheduleBackgroundOnFailure && _hasRetryableFailures(result);
+      final scheduled = shouldSchedule
+          ? await _scheduleBackgroundSync(
+              requisitionId,
+              scope: scope,
+              evidenceIds: requestedEvidenceIds,
+            )
+          : false;
+      return EvidenceOfflineSyncResult(
+        total: result.total,
+        completed: result.completed,
+        skipped: result.skipped,
+        failed: result.failed,
+        errors: result.errors,
+        backgroundRetryScheduled: scheduled,
+      );
+    } catch (error) {
+      final scheduled = scheduleBackgroundOnFailure
+          ? await _scheduleBackgroundSync(
+              requisitionId,
+              scope: scope,
+              evidenceIds: requestedEvidenceIds,
+            )
+          : false;
+      if (scheduled) {
+        throw StateError(
+          '${_safeMessage(error)} La descarga continuará en segundo plano.',
+        );
+      }
+      rethrow;
+    }
   }
 
   Future<EvidenceOfflineSyncResult> _syncRequisitionSafely({
     required String requisitionId,
     required List<RequisitionEvidence> evidence,
+    required EvidenceOfflineSyncScope scope,
+    required bool showSystemProgress,
   }) async {
     try {
       return await _syncRequisition(
         requisitionId: requisitionId,
         evidence: evidence,
+        scope: scope,
+        showSystemProgress: showSystemProgress,
       );
     } catch (error) {
       // La recuperación offline hace red, descifrado y escritura de archivos.
       // No debe conservar el lock global durante todo ese trabajo. Si una
       // operación local falla antes de publicar su estado final, cerramos la
       // notificación como error para que no quede permanente en Android.
-      final candidates = evidence
-          .where(
-            (item) =>
-                item.encrypted &&
-                item.uploadStatus?.toUpperCase() == 'AVAILABLE' &&
-                (item.contentUrl?.isNotEmpty ?? false),
-          )
-          .length;
+      final candidates = evidence.where(_isOfflineCandidate).length;
       if (candidates > 0) {
         _emit(
           requisitionId: requisitionId,
@@ -126,6 +205,8 @@ class EvidenceOfflineSyncService {
           isActive: false,
           errorMessage: _safeMessage(error),
           errors: [_safeMessage(error)],
+          scope: scope,
+          showSystemProgress: showSystemProgress,
         );
       }
       rethrow;
@@ -141,14 +222,32 @@ class EvidenceOfflineSyncService {
     }
   }
 
-  Future<void> _scheduleBackgroundSync(String requisitionId) async {
+  Future<bool> _scheduleBackgroundSync(
+    String requisitionId, {
+    required EvidenceOfflineSyncScope scope,
+    required List<String> evidenceIds,
+  }) async {
     try {
-      await _backgroundScheduler?.scheduleOfflineSync(requisitionId);
+      final scheduler = _backgroundScheduler;
+      if (scheduler == null) return false;
+      await scheduler.scheduleOfflineSync(
+        requisitionId,
+        evidenceIds: scope == EvidenceOfflineSyncScope.selectedEvidence
+            ? evidenceIds
+            : const [],
+      );
+      return true;
     } on Object {
       // La ejecución iniciada por la UI sigue siendo válida aunque el sistema
       // no permita registrar un worker en esta plataforma.
+      return false;
     }
   }
+
+  bool _isOfflineCandidate(RequisitionEvidence item) =>
+      item.encrypted &&
+      item.uploadStatus?.toUpperCase() == 'AVAILABLE' &&
+      (item.contentUrl?.isNotEmpty ?? false);
 
   bool _hasRetryableFailures(EvidenceOfflineSyncResult result) {
     return result.errors.any((error) {
@@ -161,14 +260,11 @@ class EvidenceOfflineSyncService {
   Future<EvidenceOfflineSyncResult> _syncRequisition({
     required String requisitionId,
     required List<RequisitionEvidence> evidence,
+    required EvidenceOfflineSyncScope scope,
+    required bool showSystemProgress,
   }) async {
     final candidates = evidence
-        .where(
-          (item) =>
-              item.encrypted &&
-              item.uploadStatus?.toUpperCase() == 'AVAILABLE' &&
-              (item.contentUrl?.isNotEmpty ?? false),
-        )
+        .where(_isOfflineCandidate)
         .toList(growable: false);
     final local = await _database.forRequisition(requisitionId);
     final localById = {for (final item in local) item.id: item};
@@ -188,6 +284,8 @@ class EvidenceOfflineSyncService {
           ? EvidenceOfflineSyncStage.completed
           : EvidenceOfflineSyncStage.preparing,
       isActive: total > 0,
+      scope: scope,
+      showSystemProgress: showSystemProgress,
     );
 
     for (final item in candidates) {
@@ -200,6 +298,8 @@ class EvidenceOfflineSyncService {
         stage: EvidenceOfflineSyncStage.downloading,
         isActive: true,
         currentFileName: item.name,
+        scope: scope,
+        showSystemProgress: showSystemProgress,
       );
       try {
         final persisted = localById[item.id];
@@ -229,6 +329,8 @@ class EvidenceOfflineSyncService {
       isActive: false,
       errorMessage: errors.isEmpty ? null : errors.first,
       errors: List.unmodifiable(errors),
+      scope: scope,
+      showSystemProgress: showSystemProgress,
     );
     return EvidenceOfflineSyncResult(
       total: total,
@@ -389,6 +491,8 @@ class EvidenceOfflineSyncService {
     String? currentFileName,
     String? errorMessage,
     List<String> errors = const [],
+    EvidenceOfflineSyncScope scope = EvidenceOfflineSyncScope.requisition,
+    bool showSystemProgress = true,
   }) {
     if (!_progressController.isClosed) {
       _progressController.add(
@@ -403,11 +507,12 @@ class EvidenceOfflineSyncService {
           currentFileName: currentFileName,
           errorMessage: errorMessage,
           errors: errors,
+          scope: scope,
         ),
       );
     }
     final notifications = _notifications;
-    if (notifications != null) {
+    if (showSystemProgress && notifications != null) {
       unawaited(
         notifications
             .showOfflineProgress(

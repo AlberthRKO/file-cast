@@ -45,6 +45,7 @@ final class CreateRequisitionState {
 
   bool get canSubmit =>
       !isSubmitting &&
+      createdResult == null &&
       !isCapturingLocation &&
       procedureAt != null &&
       location != null &&

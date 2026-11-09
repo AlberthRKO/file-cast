@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
@@ -199,6 +200,18 @@ class Http {
         'exceptionMessage': e.toString(),
         // 'stacktrace': s.toString(),
       };
+      if (e is TimeoutException) {
+        logs = {
+          ...logs,
+          'exception': 'TimeoutException',
+        };
+        return Either.left(
+          ErrorModel(
+            message:
+                'El servidor tardó demasiado en responder. Vuelve a intentarlo.',
+          ),
+        );
+      }
       if (e is SocketException || e is ClientException) {
         logs = {
           ...logs,

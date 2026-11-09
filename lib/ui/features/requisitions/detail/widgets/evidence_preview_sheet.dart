@@ -29,16 +29,22 @@ class EvidencePreviewSheet extends StatefulWidget {
 }
 
 class _EvidencePreviewSheetState extends State<EvidencePreviewSheet> {
-  late final Future<PreparedEvidencePreview> _previewFuture;
+  late Future<PreparedEvidencePreview> _previewFuture;
   PreparedEvidencePreview? _preview;
+  int _preparationGeneration = 0;
 
   @override
   void initState() {
     super.initState();
-    _previewFuture = widget.prepare();
-    _previewFuture.then<void>(
+    _previewFuture = _startPreparation();
+  }
+
+  Future<PreparedEvidencePreview> _startPreparation() {
+    final generation = ++_preparationGeneration;
+    final future = widget.prepare();
+    future.then<void>(
       (preview) {
-        if (mounted) {
+        if (mounted && generation == _preparationGeneration) {
           _preview = preview;
         } else {
           unawaited(widget.disposePreview(preview));
@@ -46,10 +52,20 @@ class _EvidencePreviewSheetState extends State<EvidencePreviewSheet> {
       },
       onError: (Object _, StackTrace __) {},
     );
+    return future;
+  }
+
+  void _retryPreparation() {
+    final previous = _preview;
+    _preview = null;
+    if (previous != null) unawaited(widget.disposePreview(previous));
+    final future = _startPreparation();
+    setState(() => _previewFuture = future);
   }
 
   @override
   void dispose() {
+    _preparationGeneration += 1;
     final preview = _preview;
     if (preview != null) unawaited(widget.disposePreview(preview));
     super.dispose();
@@ -96,6 +112,7 @@ class _EvidencePreviewSheetState extends State<EvidencePreviewSheet> {
                         if (snapshot.hasError || !snapshot.hasData) {
                           return _PreviewError(
                             message: _previewErrorMessage(snapshot.error),
+                            onRetry: _retryPreparation,
                           );
                         }
                         _preview ??= snapshot.data;
@@ -307,17 +324,48 @@ class _PreviewLoading extends StatelessWidget {
 }
 
 class _PreviewError extends StatelessWidget {
-  const _PreviewError({required this.message});
+  const _PreviewError({required this.message, this.onRetry});
 
   final String message;
+  final VoidCallback? onRetry;
 
   @override
-  Widget build(BuildContext context) => Center(
-    child: Padding(
-      padding: const EdgeInsets.all(AppSpace.l),
-      child: Text(message, textAlign: TextAlign.center),
-    ),
-  );
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(AppSpace.l),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: AppSize.messageMaxWidth),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.error_outline_rounded,
+                size: AppSize.minTouchTarget,
+                color: theme.colorScheme.error,
+              ),
+              const SizedBox(height: AppSpace.m),
+              Text(message, textAlign: TextAlign.center),
+              if (onRetry != null) ...[
+                const SizedBox(height: AppSpace.l),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    minHeight: AppSize.minTouchTarget,
+                  ),
+                  child: FilledButton.icon(
+                    onPressed: onRetry,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Reintentar ahora'),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _PreviewSheetHandle extends StatelessWidget {

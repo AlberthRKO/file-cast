@@ -1,5 +1,7 @@
 enum EvidenceOfflineSyncStage { preparing, downloading, completed, error }
 
+enum EvidenceOfflineSyncScope { requisition, selectedEvidence }
+
 final class EvidenceOfflineSyncProgress {
   const EvidenceOfflineSyncProgress({
     required this.requisitionId,
@@ -9,6 +11,7 @@ final class EvidenceOfflineSyncProgress {
     required this.failed,
     required this.stage,
     required this.isActive,
+    this.scope = EvidenceOfflineSyncScope.requisition,
     this.currentFileName,
     this.errorMessage,
     this.errors = const [],
@@ -21,6 +24,7 @@ final class EvidenceOfflineSyncProgress {
   final int failed;
   final EvidenceOfflineSyncStage stage;
   final bool isActive;
+  final EvidenceOfflineSyncScope scope;
   final String? currentFileName;
   final String? errorMessage;
   final List<String> errors;
@@ -40,6 +44,7 @@ final class EvidenceOfflineSyncResult {
     required this.skipped,
     required this.failed,
     this.errors = const [],
+    this.backgroundRetryScheduled = false,
   });
 
   final int total;
@@ -47,6 +52,7 @@ final class EvidenceOfflineSyncResult {
   final int skipped;
   final int failed;
   final List<String> errors;
+  final bool backgroundRetryScheduled;
 
   bool get hasFailures => failed > 0;
   int get available => completed + skipped;

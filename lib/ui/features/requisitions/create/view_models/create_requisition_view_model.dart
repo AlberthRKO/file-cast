@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
@@ -14,6 +15,7 @@ class CreateRequisitionViewModel extends ChangeNotifier {
         RequisitionRegistrationMode.existingCud,
   }) : _repository = repository,
        _locationService = locationService,
+       _creationId = _uuid(),
        _state = CreateRequisitionState(
          mode: initialMode,
          procedureAt: DateTime.now(),
@@ -21,6 +23,7 @@ class CreateRequisitionViewModel extends ChangeNotifier {
 
   final RequisitionCreationRepository _repository;
   final LocationService _locationService;
+  final String _creationId;
   Timer? _caseDebounce;
   int _caseSearchToken = 0;
   int _personSearchToken = 0;
@@ -226,7 +229,7 @@ class CreateRequisitionViewModel extends ChangeNotifier {
   }
 
   Future<void> submit() async {
-    if (_state.isSubmitting) return;
+    if (_state.isSubmitting || _state.createdResult != null) return;
     final cudError =
         _state.mode == RequisitionRegistrationMode.existingCud &&
             _state.selectedCase == null
@@ -272,6 +275,7 @@ class CreateRequisitionViewModel extends ChangeNotifier {
     try {
       final result = await _repository.createDraft(
         CreateRequisitionDraft(
+          id: _creationId,
           mode: _state.mode,
           caseSummary: _state.selectedCase,
           personSummary: _state.selectedPerson,
@@ -309,5 +313,18 @@ class CreateRequisitionViewModel extends ChangeNotifier {
   String _messageFromError(Object error) {
     final message = error.toString().replaceFirst('Bad state: ', '').trim();
     return message.isEmpty ? 'No se pudo registrar la requisa.' : message;
+  }
+
+  static String _uuid() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    final hex = bytes
+        .map((value) => value.toRadixString(16).padLeft(2, '0'))
+        .join();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
+        '${hex.substring(12, 16)}-${hex.substring(16, 20)}-'
+        '${hex.substring(20)}';
   }
 }

@@ -22,6 +22,7 @@ abstract interface class RequisitionDetailRepository {
   Future<EvidenceOfflineSyncResult> syncEvidenceForOffline({
     required String requisitionId,
     required List<RequisitionEvidence> evidence,
+    EvidenceOfflineSyncScope scope = EvidenceOfflineSyncScope.requisition,
   });
   Future<List<ImportedEvidenceDraft>?> pickEvidence({
     required bool imagesOnly,

@@ -12,6 +12,7 @@ import 'package:file_cast/data/services/evidence_offline_sync_service.dart';
 import 'package:file_cast/data/services/evidence_sync_service.dart';
 import 'package:file_cast/data/services/local_evidence_database_service.dart';
 import 'package:file_cast/data/services/requisition_detail_service.dart';
+import 'package:file_cast/domain/models/evidence_offline_sync.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -20,6 +21,19 @@ import 'package:workmanager/workmanager.dart';
 const _evidenceTaskName = 'file_cast_evidence_sync';
 const _uploadUniqueName = 'file_cast_evidence_upload';
 const _offlineUniquePrefix = 'file_cast_evidence_offline_';
+
+String _offlineTag(String requisitionId) =>
+    '$_offlineUniquePrefix${requisitionId}_tag';
+
+String _offlineUniqueName(
+  String requisitionId,
+  List<String> evidenceIds,
+) {
+  if (evidenceIds.isEmpty) return '$_offlineUniquePrefix$requisitionId';
+  final normalized = [...evidenceIds]..sort();
+  final scope = LocalNotificationService.stableId(normalized.join(','));
+  return '$_offlineUniquePrefix${requisitionId}_$scope';
+}
 
 /// Programa trabajos que sobreviven al cierre normal y al reinicio del
 /// proceso. El sistema operativo sigue decidiendo cuándo ejecutarlos; no se
@@ -73,20 +87,26 @@ class EvidenceBackgroundSyncService {
     );
   }
 
-  Future<void> scheduleOfflineSync(String requisitionId) async {
+  Future<void> scheduleOfflineSync(
+    String requisitionId, {
+    List<String> evidenceIds = const [],
+  }) async {
     if (requisitionId.trim().isEmpty) return;
     await initializeDispatcher();
     if (!_supportsBackgroundTasks) return;
     await Workmanager().registerOneOffTask(
-      '$_offlineUniquePrefix$requisitionId',
+      _offlineUniqueName(requisitionId, evidenceIds),
       _evidenceTaskName,
       inputData: {
         'operation': 'OFFLINE_SYNC',
         'jobId': 'OFFLINE_SYNC:$requisitionId',
         'requisitionId': requisitionId,
+        if (evidenceIds.isNotEmpty)
+          'evidenceIds': ([...evidenceIds]..sort()).join(','),
         'baseUrl': baseUrl,
         'authBaseUrl': authBaseUrl,
       },
+      tag: _offlineTag(requisitionId),
       constraints: Constraints(networkType: NetworkType.connected),
       existingWorkPolicy: ExistingWorkPolicy.keep,
       backoffPolicy: BackoffPolicy.exponential,
@@ -100,11 +120,23 @@ class EvidenceBackgroundSyncService {
     );
   }
 
-  Future<void> cancelOfflineSync(String requisitionId) async {
+  Future<void> cancelOfflineSync(
+    String requisitionId, {
+    List<String> evidenceIds = const [],
+  }) async {
     await initializeDispatcher();
     if (!_supportsBackgroundTasks) return;
+    if (evidenceIds.isEmpty) {
+      await Workmanager().cancelByTag(_offlineTag(requisitionId));
+      // Compatibilidad con trabajos registrados antes de que existiera el
+      // tag por requisa. El nombre general se conserva en el flujo nuevo.
+      await Workmanager().cancelByUniqueName(
+        '$_offlineUniquePrefix$requisitionId',
+      );
+      return;
+    }
     await Workmanager().cancelByUniqueName(
-      '$_offlineUniquePrefix$requisitionId',
+      _offlineUniqueName(requisitionId, evidenceIds),
     );
   }
 
@@ -152,6 +184,11 @@ void evidenceBackgroundCallbackDispatcher() {
     final notifications = LocalNotificationService();
     await notifications.initialize(requestPermissions: false);
     final requisitionId = inputData?['requisitionId'] as String?;
+    final requestedEvidenceIds = (inputData?['evidenceIds'] as String?)
+        ?.split(',')
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet();
     final secureStorage = SecureStorageService(const FlutterSecureStorage());
     final auth = AuthSessionService(
       client: http.Client(),
@@ -192,6 +229,14 @@ void evidenceBackgroundCallbackDispatcher() {
         final detail = await RequisitionDetailService(http: client).getDetail(
           requisitionId,
         );
+        final selectedEvidence =
+            requestedEvidenceIds == null || requestedEvidenceIds.isEmpty
+            ? detail.evidence
+            : detail.evidence
+                  .where((item) => requestedEvidenceIds.contains(item.id))
+                  .toList(growable: false);
+        final selectedEvidenceOnly =
+            requestedEvidenceIds != null && requestedEvidenceIds.isNotEmpty;
         final offline = EvidenceOfflineSyncService(
           http: client,
           database: database,
@@ -201,9 +246,20 @@ void evidenceBackgroundCallbackDispatcher() {
         );
         final result = await offline.syncRequisition(
           requisitionId: requisitionId,
-          evidence: detail.evidence,
+          evidence: selectedEvidence,
           scheduleBackgroundOnFailure: false,
+          scope: selectedEvidenceOnly
+              ? EvidenceOfflineSyncScope.selectedEvidence
+              : EvidenceOfflineSyncScope.requisition,
         );
+        if (!result.hasFailures && result.total > 0) {
+          await notifications.showOfflineCompletion(
+            requisitionId: requisitionId,
+            total: result.total,
+            available: result.available,
+            selectedEvidenceOnly: selectedEvidenceOnly,
+          );
+        }
         return !result.hasFailures;
       }
 
