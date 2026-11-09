@@ -223,6 +223,9 @@ class RequisitionDetailViewModel extends ChangeNotifier {
           _detail?.requisition.status == RequisitionStatus.inProgress);
 
   String participantName(RequisitionParticipantSummary participant) {
+    if (participant.fullName?.trim().isNotEmpty ?? false) {
+      return participant.fullName!.trim();
+    }
     if (currentActorId == participant.actorId &&
         (currentActorName?.trim().isNotEmpty ?? false)) {
       return currentActorName!.trim();

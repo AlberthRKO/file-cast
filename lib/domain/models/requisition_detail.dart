@@ -20,10 +20,14 @@ final class RequisitionParticipantSummary {
   const RequisitionParticipantSummary({
     required this.actorId,
     required this.role,
+    this.fullName,
+    this.documentNumber,
   });
 
   final String actorId;
   final String role;
+  final String? fullName;
+  final String? documentNumber;
 }
 
 enum RequisitionParticipantRole { editor, viewer }

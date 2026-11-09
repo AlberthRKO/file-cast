@@ -1,14 +1,11 @@
-import 'dart:convert';
-
-import 'package:crypto/crypto.dart' as crypto;
 import 'package:file_cast/core/errors/either.dart';
 import 'package:file_cast/core/network/http.dart';
 import 'package:file_cast/data/models/error_model.dart';
 import 'package:file_cast/data/services/evidence_crypto_service.dart';
 
-/// Coordina el registro de la clave pública del dispositivo y la entrega de
-/// envolturas de DEK. El contenido sigue cifrado en ms-files-v2; la recuperación
-/// institucional solo reenvuelve la DEK en el backend/KMS autorizado.
+/// Registra la clave pública del dispositivo y prepara una única clave
+/// simétrica por requisa. Cada evidencia solo envuelve su DEK con esa clave,
+/// por lo que el costo de subir no crece con la cantidad de dispositivos.
 class EvidenceKeyExchangeService {
   EvidenceKeyExchangeService({
     required Http http,
@@ -19,9 +16,10 @@ class EvidenceKeyExchangeService {
   final Http _http;
   final EvidenceCryptoService _crypto;
   final Set<String> _registeredForRequisitions = <String>{};
-  final Map<String, String> _roleByRequisition = <String, String>{};
-  final Map<String, EvidenceRecoveryKey> _recoveryKeyByRequisition =
-      <String, EvidenceRecoveryKey>{};
+  final Map<String, RequisitionKeyEnvelope> _keysByRequisition =
+      <String, RequisitionKeyEnvelope>{};
+  final Map<String, Future<RequisitionKeyEnvelope>> _keyRequests =
+      <String, Future<RequisitionKeyEnvelope>>{};
 
   Future<String> get deviceId => _crypto.encryptionDeviceId;
 
@@ -34,134 +32,88 @@ class EvidenceKeyExchangeService {
       headers: {'Idempotency-Key': deviceId},
       body: {
         'deviceId': deviceId,
-        'platform': _platform,
+        'platform': 'FLUTTER',
         'encryptionPublicKey': await _crypto.encryptionPublicKey(),
         'encryptionKeyAlgorithm': EvidenceCryptoService.deviceKeyAlgorithm,
         'encryptionKeyVersion': EvidenceCryptoService.formatVersion,
       },
       onSucces: (body) => body,
     );
-    final response = _successBody(
-      result,
-      'No se pudo registrar el dispositivo de cifrado.',
-    );
-    final data = _asMap(_asMap(response)['response'])['data'];
-    final role = _asMap(data)['role'];
-    if (role is String) _roleByRequisition[requisitionId] = role;
-    final recovery = _asMap(_asMap(data)['recoveryKey']);
-    final recoveryKey = EvidenceRecoveryKey.fromMap(recovery);
-    if (recoveryKey != null) {
-      _recoveryKeyByRequisition[requisitionId] = recoveryKey;
-    }
+    _successBody(result, 'No se pudo registrar el dispositivo de cifrado.');
     _registeredForRequisitions.add(requisitionId);
   }
 
-  bool canShareKeys(String requisitionId) =>
-      _roleByRequisition[requisitionId] == 'OWNER' ||
-      _roleByRequisition[requisitionId] == 'EDITOR';
-
-  Future<EvidenceRecoveryKey?> recoveryKey(String requisitionId) async {
-    await ensureRegistered(requisitionId);
-    return _recoveryKeyByRequisition[requisitionId];
+  Future<RequisitionKeyEnvelope> requisitionKey(String requisitionId) async {
+    final cached = _keysByRequisition[requisitionId];
+    if (cached != null) return cached;
+    final inFlight = _keyRequests[requisitionId];
+    if (inFlight != null) return inFlight;
+    final request = _loadRequisitionKey(requisitionId);
+    _keyRequests[requisitionId] = request;
+    try {
+      return await request;
+    } finally {
+      if (identical(_keyRequests[requisitionId], request)) {
+        _keyRequests.remove(requisitionId);
+      }
+    }
   }
 
-  Future<List<EvidenceEncryptionRecipient>> recipients(
+  Future<RequisitionKeyEnvelope> _loadRequisitionKey(
     String requisitionId,
   ) async {
     await ensureRegistered(requisitionId);
+    final deviceId = await _crypto.encryptionDeviceId;
     final result = await _http.request<dynamic>(
-      '/api/v1/requisitions/$requisitionId/encryption/recipients',
+      '/api/v1/requisitions/$requisitionId/encryption/requisition-key',
+      queryParameters: {'deviceId': deviceId},
       onSucces: (body) => body,
     );
-    final body = _successBody(
+    final response = _successBody(
       result,
-      'No se pudieron obtener los dispositivos autorizados.',
+      'No se pudo obtener la clave de la requisa.',
     );
-    final data = _asMap(_asMap(body)['response'])['data'];
-    if (data is! List) return const [];
-    return data
-        .whereType<Map>()
-        .map((item) => EvidenceEncryptionRecipient.fromMap(item))
-        .where((item) => item.deviceId.isNotEmpty && item.publicKey.isNotEmpty)
-        .toList(growable: false);
+    final envelope = RequisitionKeyEnvelope.fromMap(_responseData(response));
+    if (envelope.recipientId != deviceId) {
+      throw const FormatException(
+        'La clave de requisa no corresponde al dispositivo actual.',
+      );
+    }
+    await _crypto.cacheRequisitionKey(
+      requisitionId: requisitionId,
+      keyId: envelope.keyId,
+      keyVersion: envelope.keyVersion,
+      wrappedKey: envelope.wrappedKey,
+    );
+    _keysByRequisition[requisitionId] = envelope;
+    return envelope;
   }
 
-  Future<String?> getEnvelope({
+  Future<EvidenceKeyEnvelope?> getEnvelope({
     required String requisitionId,
     required String evidenceId,
   }) async {
-    await ensureRegistered(requisitionId);
+    final requisitionEnvelope = await requisitionKey(requisitionId);
     final deviceId = await _crypto.encryptionDeviceId;
     final result = await _http.request<dynamic>(
       '/api/v1/requisitions/$requisitionId/evidences/$evidenceId/key-envelope',
       queryParameters: {'deviceId': deviceId},
       onSucces: (body) => body,
     );
-    final body = _successBody(
+    final response = _successBody(
       result,
       'No se pudo obtener la clave de la evidencia.',
     );
-    final data = _asMap(_asMap(body)['response'])['data'];
-    final envelope = _asMap(data);
-    final wrappedKey = envelope['wrappedKey'];
-    return wrappedKey is String && wrappedKey.isNotEmpty ? wrappedKey : null;
-  }
-
-  Future<void> addEnvelope({
-    required String requisitionId,
-    required String evidenceId,
-    required String recipientId,
-    required String wrappedKey,
-    int keyVersion = EvidenceCryptoService.formatVersion,
-  }) async {
-    final result = await _http.request<dynamic>(
-      '/api/v1/requisitions/$requisitionId/evidences/$evidenceId/key-envelopes',
-      method: HttpMethod.post,
-      headers: {
-        'Idempotency-Key': _envelopeIdempotencyKey(
-          evidenceId: evidenceId,
-          recipientId: recipientId,
-          wrappedKey: wrappedKey,
-        ),
-      },
-      body: {
-        'recipientType': 'DEVICE',
-        'recipientId': recipientId,
-        'wrapAlgorithm': EvidenceCryptoService.deviceKeyAlgorithm,
-        'keyVersion': keyVersion,
-        'wrappedKey': wrappedKey,
-      },
-      onSucces: (body) => body,
-    );
-    _throwIfError(result, 'No se pudo compartir la clave de la evidencia.');
-  }
-
-  Future<void> addRecoveryEnvelope({
-    required String requisitionId,
-    required String evidenceId,
-    required EvidenceRecoveryKey recoveryKey,
-    required String wrappedKey,
-  }) async {
-    final result = await _http.request<dynamic>(
-      '/api/v1/requisitions/$requisitionId/evidences/$evidenceId/key-envelopes',
-      method: HttpMethod.post,
-      headers: {
-        'Idempotency-Key': _envelopeIdempotencyKey(
-          evidenceId: evidenceId,
-          recipientId: recoveryKey.keyId,
-          wrappedKey: wrappedKey,
-        ),
-      },
-      body: {
-        'recipientType': 'RECOVERY',
-        'recipientId': recoveryKey.keyId,
-        'wrapAlgorithm': recoveryKey.algorithm,
-        'keyVersion': recoveryKey.version,
-        'wrappedKey': wrappedKey,
-      },
-      onSucces: (body) => body,
-    );
-    _throwIfError(result, 'No se pudo guardar la clave de recuperación.');
+    final data = _responseData(response);
+    if (data.isEmpty) return null;
+    final envelope = EvidenceKeyEnvelope.fromMap(data);
+    if (envelope.requisitionKeyId != requisitionEnvelope.keyId ||
+        envelope.requisitionKeyVersion != requisitionEnvelope.keyVersion) {
+      throw StateError(
+        'La evidencia usa una versión de clave de requisa no disponible.',
+      );
+    }
+    return envelope;
   }
 
   Object? _successBody(Either<ErrorModel, dynamic> result, String message) {
@@ -174,85 +126,91 @@ class EvidenceKeyExchangeService {
     };
   }
 
-  void _throwIfError(Either<ErrorModel, dynamic> result, String message) {
-    _successBody(result, message);
-  }
-
-  String _envelopeIdempotencyKey({
-    required String evidenceId,
-    required String recipientId,
-    required String wrappedKey,
-  }) {
-    final fingerprint = crypto.sha256
-        .convert(utf8.encode(wrappedKey))
-        .toString()
-        .substring(0, 24);
-    return '$evidenceId-$recipientId-$fingerprint';
+  Map<String, dynamic> _responseData(Object? body) {
+    final response = _asMap(_asMap(body)['response']);
+    return _asMap(response['data']);
   }
 
   Map<String, dynamic> _asMap(Object? value) =>
       value is Map ? Map<String, dynamic>.from(value) : const {};
-
-  String get _platform {
-    // El backend usa este campo para diagnóstico; la clave criptográfica no
-    // depende de la plataforma.
-    return 'FLUTTER';
-  }
 }
 
-final class EvidenceEncryptionRecipient {
-  const EvidenceEncryptionRecipient({
-    required this.actorId,
-    required this.deviceId,
-    required this.publicKey,
+final class RequisitionKeyEnvelope {
+  const RequisitionKeyEnvelope({
+    required this.keyId,
     required this.keyVersion,
+    required this.algorithm,
+    required this.recipientId,
+    required this.wrappedKey,
   });
 
-  final String actorId;
-  final String deviceId;
-  final String publicKey;
+  final String keyId;
   final int keyVersion;
+  final String algorithm;
+  final String recipientId;
+  final String wrappedKey;
 
-  factory EvidenceEncryptionRecipient.fromMap(Map value) {
-    return EvidenceEncryptionRecipient(
-      actorId: value['actorId']?.toString() ?? '',
-      deviceId: value['deviceId']?.toString() ?? '',
-      publicKey: value['encryptionPublicKey']?.toString() ?? '',
-      keyVersion:
-          int.tryParse(value['encryptionKeyVersion']?.toString() ?? '') ?? 1,
+  factory RequisitionKeyEnvelope.fromMap(Map value) {
+    final keyId = value['requisitionKeyId']?.toString() ?? '';
+    final keyVersion =
+        int.tryParse(value['requisitionKeyVersion']?.toString() ?? '') ?? 0;
+    final algorithm = value['requisitionKeyAlgorithm']?.toString() ?? '';
+    final recipientType = value['recipientType']?.toString() ?? '';
+    final recipientId = value['recipientId']?.toString() ?? '';
+    final wrapAlgorithm = value['wrapAlgorithm']?.toString() ?? '';
+    final wrappedKey = value['wrappedKey']?.toString() ?? '';
+    if (keyId.isEmpty ||
+        keyVersion <= 0 ||
+        algorithm != EvidenceCryptoService.requisitionKeyAlgorithm ||
+        recipientType != 'DEVICE' ||
+        recipientId.isEmpty ||
+        wrapAlgorithm != EvidenceCryptoService.deviceKeyAlgorithm ||
+        wrappedKey.isEmpty) {
+      throw const FormatException(
+        'La API devolvió una clave de requisa incompleta.',
+      );
+    }
+    return RequisitionKeyEnvelope(
+      keyId: keyId,
+      keyVersion: keyVersion,
+      algorithm: algorithm,
+      recipientId: recipientId,
+      wrappedKey: wrappedKey,
     );
   }
 }
 
-final class EvidenceRecoveryKey {
-  const EvidenceRecoveryKey({
-    required this.keyId,
-    required this.publicKey,
-    required this.algorithm,
-    required this.version,
+final class EvidenceKeyEnvelope {
+  const EvidenceKeyEnvelope({
+    required this.requisitionKeyId,
+    required this.requisitionKeyVersion,
+    required this.wrapAlgorithm,
+    required this.wrappedKey,
   });
 
-  final String keyId;
-  final String publicKey;
-  final String algorithm;
-  final int version;
+  final String requisitionKeyId;
+  final int requisitionKeyVersion;
+  final String wrapAlgorithm;
+  final String wrappedKey;
 
-  static EvidenceRecoveryKey? fromMap(Map value) {
-    final keyId = value['keyId']?.toString() ?? '';
-    final publicKey = value['publicKey']?.toString() ?? '';
-    final algorithm = value['algorithm']?.toString() ?? '';
-    final version = int.tryParse(value['version']?.toString() ?? '');
+  factory EvidenceKeyEnvelope.fromMap(Map value) {
+    final keyId = value['recipientId']?.toString() ?? '';
+    final keyVersion = int.tryParse(value['keyVersion']?.toString() ?? '') ?? 0;
+    final wrapAlgorithm = value['wrapAlgorithm']?.toString() ?? '';
+    final wrappedKey = value['wrappedKey']?.toString() ?? '';
     if (keyId.isEmpty ||
-        publicKey.isEmpty ||
-        algorithm.isEmpty ||
-        version == null) {
-      return null;
+        keyVersion <= 0 ||
+        wrapAlgorithm != EvidenceCryptoService.requisitionKeyWrapAlgorithm ||
+        wrappedKey.isEmpty) {
+      throw const FormatException(
+        'La API devolvió una envoltura de evidencia incompleta.',
+      );
     }
-    return EvidenceRecoveryKey(
-      keyId: keyId,
-      publicKey: publicKey,
-      algorithm: algorithm,
-      version: version,
+    return EvidenceKeyEnvelope(
+      requisitionKeyId: keyId,
+      requisitionKeyVersion: keyVersion,
+      wrapAlgorithm: wrapAlgorithm,
+      wrappedKey: wrappedKey,
     );
   }
 }

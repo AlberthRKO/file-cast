@@ -308,76 +308,16 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
 
   Future<void> _sharePersistedKeys(
     String requisitionId,
-    RequisitionDetail remote,
+    RequisitionDetail _,
   ) async {
     final keyExchange = _keyExchange;
-    final crypto = _cryptoService;
-    final database = _database;
-    if (keyExchange == null || crypto == null || database == null) return;
+    if (keyExchange == null) return;
     try {
-      // El registro del dispositivo es necesario para reparar envolturas,
-      // pero no para renderizar el detalle remoto. Esta tarea ya corre fuera
-      // del flujo de carga de la pantalla.
-      await keyExchange.ensureRegistered(requisitionId);
+      // Calienta fuera del render la única clave de requisa. Ya no se
+      // recorren evidencias ni dispositivos para reparar envolturas una a una.
+      await keyExchange.requisitionKey(requisitionId);
     } on Object {
       return;
-    }
-    if (!keyExchange.canShareKeys(requisitionId)) return;
-    final local = await _localEvidenceSafely(requisitionId);
-    if (local.isEmpty) return;
-    final remoteById = {
-      for (final evidence in remote.evidence)
-        if (evidence.encrypted && evidence.id.isNotEmpty) evidence.id: evidence,
-    };
-    final pendingKeyShares = local
-        .where((localEvidence) {
-          final remoteEvidence = remoteById[localEvidence.id];
-          return remoteEvidence?.uploadStatus?.toUpperCase() == 'AVAILABLE' &&
-              localEvidence.state.toUpperCase() != 'SINCRONIZADA';
-        })
-        .toList(growable: false);
-    if (pendingKeyShares.isEmpty) return;
-    try {
-      final recipients = await keyExchange.recipients(requisitionId);
-      final recoveryKey = await keyExchange.recoveryKey(requisitionId);
-      final deviceRecipients = recipients
-          .where((recipient) => recipient.publicKey.isNotEmpty)
-          .toList(growable: false);
-      for (final localEvidence in pendingKeyShares) {
-        final wrappedKeys = await crypto.wrapLocalDataKeyForRecipients(
-          wrappedKey: localEvidence.wrappedKey,
-          evidenceId: localEvidence.id,
-          recipientPublicKeys: [
-            if (recoveryKey != null) recoveryKey.publicKey,
-            ...deviceRecipients.map((recipient) => recipient.publicKey),
-          ],
-        );
-        var wrappedKeyIndex = 0;
-        if (recoveryKey != null) {
-          final recoveryWrappedKey = wrappedKeys[wrappedKeyIndex++];
-          if (recoveryWrappedKey != null) {
-            await keyExchange.addRecoveryEnvelope(
-              requisitionId: requisitionId,
-              evidenceId: localEvidence.id,
-              recoveryKey: recoveryKey,
-              wrappedKey: recoveryWrappedKey,
-            );
-          }
-        }
-        for (final recipient in deviceRecipients) {
-          final wrappedKey = wrappedKeys[wrappedKeyIndex++];
-          if (wrappedKey == null) continue;
-          await keyExchange.addEnvelope(
-            requisitionId: requisitionId,
-            evidenceId: localEvidence.id,
-            recipientId: recipient.deviceId,
-            wrappedKey: wrappedKey,
-            keyVersion: recipient.keyVersion,
-          );
-        }
-      }
-    } on Object {
-      // La galería no debe quedar bloqueada por una reparación de envolturas.
     }
   }
 

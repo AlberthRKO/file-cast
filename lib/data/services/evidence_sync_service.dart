@@ -42,8 +42,6 @@ class EvidenceSyncService {
   final StreamController<EvidenceUploadProgress> _progressController =
       StreamController<EvidenceUploadProgress>.broadcast();
   final Random _random = Random.secure();
-  final Map<String, List<EvidenceEncryptionRecipient>>
-  _recipientsByRequisition = <String, List<EvidenceEncryptionRecipient>>{};
   final Map<String, int> _activeUploadTotals = <String, int>{};
   final Map<String, String> _activeEvidenceRequisitions = <String, String>{};
   final Set<String> _cancelledRequisitions = <String>{};
@@ -143,7 +141,6 @@ class EvidenceSyncService {
     run.then<void>(
       (_) {
         var queuedRunStarted = false;
-        _recipientsByRequisition.clear();
         if (identical(_activeRun, run)) {
           _activeRun = null;
           _cancelledRequisitions.clear();
@@ -153,7 +150,6 @@ class EvidenceSyncService {
       },
       onError: (Object _, StackTrace __) {
         var queuedRunStarted = false;
-        _recipientsByRequisition.clear();
         if (identical(_activeRun, run)) {
           _activeRun = null;
           _cancelledRequisitions.clear();
@@ -577,48 +573,16 @@ class EvidenceSyncService {
     LocalEvidenceRecord evidence, {
     void Function()? onReadyToUpload,
   }) async {
-    await _keyExchange.ensureRegistered(evidence.requisitionId);
-    final recipients = await _recipientsFor(evidence.requisitionId);
-    final currentDeviceId = await _crypto.encryptionDeviceId;
-    final shareableRecipients = recipients
-        .where((recipient) => recipient.publicKey.isNotEmpty)
-        .toList(growable: false);
-    final recoveryKey = await _keyExchange.recoveryKey(evidence.requisitionId);
-    // La recuperación institucional es opcional mientras el backend no la
-    // tenga configurada. En ese caso la envoltura para el dispositivo actual
-    // y los demás dispositivos autorizados sigue siendo suficiente para
-    // registrar y subir la evidencia.
-    final recipientPublicKeys = <String>[
-      ...shareableRecipients.map((recipient) => recipient.publicKey),
-      if (recoveryKey != null) recoveryKey.publicKey,
-    ];
-    final wrappedKeys = await _crypto.wrapLocalDataKeyForRecipients(
+    final requisitionKey = await _keyExchange.requisitionKey(
+      evidence.requisitionId,
+    );
+    final requisitionWrappedKey = await _crypto.wrapLocalDataKeyForRequisition(
       wrappedKey: evidence.wrappedKey,
       evidenceId: evidence.id,
-      recipientPublicKeys: recipientPublicKeys,
+      requisitionId: evidence.requisitionId,
+      requisitionKeyId: requisitionKey.keyId,
+      requisitionKeyVersion: requisitionKey.keyVersion,
     );
-    final keyEnvelopes = <Map<String, dynamic>>[];
-    for (var index = 0; index < shareableRecipients.length; index++) {
-      final wrappedKey = wrappedKeys[index];
-      if (wrappedKey == null) continue;
-      final recipient = shareableRecipients[index];
-      keyEnvelopes.add({
-        'recipientType': 'DEVICE',
-        'recipientId': recipient.deviceId,
-        'wrapAlgorithm': EvidenceCryptoService.deviceKeyAlgorithm,
-        'keyVersion': recipient.keyVersion,
-        'wrappedKey': wrappedKey,
-      });
-    }
-    final recoveryWrappedKey =
-        recoveryKey == null || wrappedKeys.length <= shareableRecipients.length
-        ? null
-        : wrappedKeys[shareableRecipients.length];
-    if (recoveryKey != null && recoveryWrappedKey == null) {
-      throw StateError(
-        'No se pudo preparar la envoltura de recuperación institucional.',
-      );
-    }
     onReadyToUpload?.call();
     final intent = await _http.request<dynamic>(
       '/api/v1/requisitions/${evidence.requisitionId}/evidence-intents',
@@ -639,24 +603,13 @@ class EvidenceSyncService {
         'plaintextSha256': evidence.plaintextSha256,
         'ciphertextSha256': evidence.ciphertextSha256,
         'aadHash': evidence.aadHash,
-        if (keyEnvelopes.isNotEmpty)
-          'keyEnvelopes': keyEnvelopes
-        else
-          'keyEnvelope': {
-            'recipientType': 'DEVICE',
-            'recipientId': currentDeviceId,
-            'wrapAlgorithm': EvidenceCryptoService.localKeyWrapAlgorithm,
-            'keyVersion': evidence.keyVersion,
-            'wrappedKey': evidence.wrappedKey,
-          },
-        if (recoveryKey != null && recoveryWrappedKey != null)
-          'recoveryEnvelope': {
-            'recipientType': 'RECOVERY',
-            'recipientId': recoveryKey.keyId,
-            'wrapAlgorithm': recoveryKey.algorithm,
-            'keyVersion': recoveryKey.version,
-            'wrappedKey': recoveryWrappedKey,
-          },
+        'keyEnvelope': {
+          'recipientType': 'REQUISITION_KEY',
+          'recipientId': requisitionKey.keyId,
+          'wrapAlgorithm': EvidenceCryptoService.requisitionKeyWrapAlgorithm,
+          'keyVersion': requisitionKey.keyVersion,
+          'wrappedKey': requisitionWrappedKey,
+        },
         'kind': evidence.type,
         'acquisitionMethod': evidence.acquisitionMethod,
         'sourcePath': evidence.sourcePath,
@@ -716,17 +669,7 @@ class EvidenceSyncService {
     return remoteId;
   }
 
-  Future<List<EvidenceEncryptionRecipient>> _recipientsFor(
-    String requisitionId,
-  ) async {
-    final cached = _recipientsByRequisition[requisitionId];
-    if (cached != null) return cached;
-    final recipients = await _keyExchange.recipients(requisitionId);
-    _recipientsByRequisition[requisitionId] = recipients;
-    return recipients;
-  }
-
-  /// Las envolturas X25519 se generan con aleatoriedad. Si se reutiliza la
+  /// Las envolturas AES-GCM se generan con aleatoriedad. Si se reutiliza la
   /// misma clave de idempotencia después de un fallo de upload, el body de la
   /// intención cambia y el backend correctamente lo rechaza como conflicto.
   /// La evidencia se mantiene idempotente por su id y hash en el backend, por

@@ -45,15 +45,12 @@ class RemoteEvidencePreviewService implements EvidencePreviewService {
       if (resolvedWrappedKey == null || resolvedWrappedKey.isEmpty) {
         final requisitionId = evidence.requisitionId;
         if (requisitionId != null && requisitionId.isNotEmpty) {
-          resolvedWrappedKey = await _keyExchange.getEnvelope(
+          resolvedWrappedKey = await _localWrappedKey(
             requisitionId: requisitionId,
             evidenceId: evidence.id,
           );
           if (resolvedWrappedKey != null && resolvedWrappedKey.isNotEmpty) {
-            // El endpoint devuelve la envoltura del dispositivo actual, no
-            // la envoltura local de la bóveda que solo existía en el teléfono
-            // anterior.
-            resolvedWrapAlgorithm = EvidenceCryptoService.deviceKeyAlgorithm;
+            resolvedWrapAlgorithm = EvidenceCryptoService.localKeyWrapAlgorithm;
           }
         }
       }
@@ -86,12 +83,13 @@ class RemoteEvidencePreviewService implements EvidencePreviewService {
         if (resolvedWrappedKey == null || resolvedWrappedKey.isEmpty) {
           final requisitionId = evidence.requisitionId;
           if (requisitionId != null && requisitionId.isNotEmpty) {
-            resolvedWrappedKey = await _keyExchange.getEnvelope(
+            resolvedWrappedKey = await _localWrappedKey(
               requisitionId: requisitionId,
               evidenceId: evidence.id,
             );
             if (resolvedWrappedKey != null && resolvedWrappedKey.isNotEmpty) {
-              resolvedWrapAlgorithm = EvidenceCryptoService.deviceKeyAlgorithm;
+              resolvedWrapAlgorithm =
+                  EvidenceCryptoService.localKeyWrapAlgorithm;
             }
           }
         }
@@ -131,6 +129,24 @@ class RemoteEvidencePreviewService implements EvidencePreviewService {
       if (isTemporary) await _deleteTemporary(path!);
       rethrow;
     }
+  }
+
+  Future<String?> _localWrappedKey({
+    required String requisitionId,
+    required String evidenceId,
+  }) async {
+    final envelope = await _keyExchange.getEnvelope(
+      requisitionId: requisitionId,
+      evidenceId: evidenceId,
+    );
+    if (envelope == null) return null;
+    return _crypto.rewrapRequisitionDataKeyForLocalVault(
+      wrappedKey: envelope.wrappedKey,
+      evidenceId: evidenceId,
+      requisitionId: requisitionId,
+      requisitionKeyId: envelope.requisitionKeyId,
+      requisitionKeyVersion: envelope.requisitionKeyVersion,
+    );
   }
 
   @override

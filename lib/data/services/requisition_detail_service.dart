@@ -154,10 +154,15 @@ class RequisitionDetailService {
   RequisitionEvidence _parseEvidence(Object? raw, String requisitionId) {
     final data = _asMap(raw);
     final byteLength = _int(data['byteLength']);
-    final urls = _asMap(data['urls']);
-    final keyEnvelope = _asMap(data['keyEnvelope']);
+    final evidenceId = _text(data['id']) ?? '';
+    final uploadStatus = _text(data['uploadStatus']);
+    final isAvailable = uploadStatus?.toUpperCase() == 'AVAILABLE';
+    final contentUrl = isAvailable && evidenceId.isNotEmpty
+        ? '/api/v1/requisitions/${Uri.encodeComponent(requisitionId)}'
+              '/evidences/${Uri.encodeComponent(evidenceId)}/content'
+        : null;
     return RequisitionEvidence(
-      id: _text(data['id']) ?? '',
+      id: evidenceId,
       isBackendRecord: true,
       requisitionId: requisitionId,
       name: _text(data['originalName']) ?? 'Evidencia',
@@ -174,12 +179,9 @@ class RequisitionDetailService {
       encryptionVersion: _intOrNull(data['encryptionVersion']),
       plaintextByteLength: _intOrNull(data['plaintextByteLength']),
       plaintextSha256: _text(data['plaintextSha256']),
-      uploadStatus: _text(data['uploadStatus']),
-      contentUrl: _text(urls['content']),
-      downloadUrl: _text(urls['download']),
-      contentSessionToken: _text(urls['sessionToken']),
-      remoteWrappedKey: _text(keyEnvelope['wrappedKey']),
-      remoteWrapAlgorithm: _text(keyEnvelope['wrapAlgorithm']),
+      uploadStatus: uploadStatus,
+      contentUrl: contentUrl,
+      downloadUrl: contentUrl,
     );
   }
 
@@ -254,6 +256,8 @@ class RequisitionDetailService {
           RequisitionParticipantSummary(
             actorId: actorId,
             role: _text(item['role']) ?? 'PARTICIPANTE',
+            fullName: _text(item['fullName']),
+            documentNumber: _text(item['documentNumber']),
           ),
         );
       }

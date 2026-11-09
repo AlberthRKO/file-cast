@@ -264,13 +264,13 @@ class EvidenceOfflineSyncService {
     if (url == null || url.isEmpty) {
       throw StateError('La evidencia no tiene una ruta de contenido.');
     }
-    final deviceWrappedKey = await _keyExchange.getEnvelope(
+    final remoteEnvelope = await _keyExchange.getEnvelope(
       requisitionId: evidence.requisitionId!,
       evidenceId: evidence.id,
     );
-    if (deviceWrappedKey == null || deviceWrappedKey.isEmpty) {
+    if (remoteEnvelope == null) {
       throw StateError(
-        'No existe una envoltura de clave para este dispositivo.',
+        'No existe una envoltura de clave para esta evidencia.',
       );
     }
 
@@ -305,9 +305,12 @@ class EvidenceOfflineSyncService {
       throw StateError('La evidencia no tiene metadatos de descifrado.');
     }
 
-    final localWrappedKey = await _crypto.rewrapDeviceKeyForLocalVault(
-      wrappedKey: deviceWrappedKey,
+    final localWrappedKey = await _crypto.rewrapRequisitionDataKeyForLocalVault(
+      wrappedKey: remoteEnvelope.wrappedKey,
       evidenceId: evidence.id,
+      requisitionId: evidence.requisitionId!,
+      requisitionKeyId: remoteEnvelope.requisitionKeyId,
+      requisitionKeyVersion: remoteEnvelope.requisitionKeyVersion,
     );
     final targetPath = await _database.persistentEncryptedPath(evidence.id);
     final temporaryPath = '$targetPath.part';
