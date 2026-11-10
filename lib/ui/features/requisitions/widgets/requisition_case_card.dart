@@ -8,9 +8,9 @@ class RequisitionCaseCard extends StatelessWidget {
     required this.cud,
     required this.caseType,
     required this.division,
-    required this.subjectCount,
-    this.statusLabel = 'Vinculado',
+    required this.statusLabel,
     this.identifierLabel = 'CUD',
+    this.onViewSubjects,
     this.onRemove,
     super.key,
   });
@@ -18,9 +18,9 @@ class RequisitionCaseCard extends StatelessWidget {
   final String cud;
   final String caseType;
   final String division;
-  final int subjectCount;
   final String statusLabel;
   final String identifierLabel;
+  final VoidCallback? onViewSubjects;
   final VoidCallback? onRemove;
 
   @override
@@ -81,6 +81,10 @@ class RequisitionCaseCard extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (onViewSubjects != null) ...[
+                      const SizedBox(width: AppSpace.xs),
+                      _CaseSubjectsButton(onPressed: onViewSubjects!),
+                    ],
                   ],
                 ),
                 const SizedBox(height: AppSpace.s),
@@ -90,37 +94,10 @@ class RequisitionCaseCard extends StatelessWidget {
                   value: caseType,
                 ),
                 const SizedBox(height: AppSpace.xs),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final compact = constraints.maxWidth < 380;
-                    final divisionLine = _DetailLine(
-                      asset: 'assets/images/icons/marca.svg',
-                      label: 'Tipo:',
-                      value: division,
-                    );
-                    final subjectLine = _DetailLine(
-                      asset: 'assets/images/icons/users.svg',
-                      label: 'Sujetos:',
-                      value: '$subjectCount',
-                    );
-                    if (compact) {
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          divisionLine,
-                          const SizedBox(height: AppSpace.xs),
-                          subjectLine,
-                        ],
-                      );
-                    }
-                    return Row(
-                      children: [
-                        Expanded(child: divisionLine),
-                        const SizedBox(width: AppSpace.s),
-                        Flexible(child: subjectLine),
-                      ],
-                    );
-                  },
+                _DetailLine(
+                  asset: 'assets/images/icons/marca.svg',
+                  label: 'Tipo:',
+                  value: division,
                 ),
               ],
             ),
@@ -153,6 +130,47 @@ class RequisitionCaseCard extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+class _CaseSubjectsButton extends StatelessWidget {
+  const _CaseSubjectsButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return IconButton(
+      tooltip: 'Ver sujetos del caso',
+      onPressed: onPressed,
+      style: IconButton.styleFrom(
+        minimumSize: const Size.square(AppSize.minTouchTarget),
+        maximumSize: const Size.square(AppSize.minTouchTarget),
+        padding: EdgeInsets.zero,
+        shape: const CircleBorder(),
+        side: BorderSide.none,
+      ),
+      constraints: const BoxConstraints(
+        minWidth: AppSize.minTouchTarget,
+        minHeight: AppSize.minTouchTarget,
+      ),
+      icon: Container(
+        width: AppSize.iconL + AppSpace.s,
+        height: AppSize.iconL + AppSpace.s,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: primary.withValues(alpha: .1),
+        ),
+        alignment: Alignment.center,
+        child: SvgPicture.asset(
+          'assets/images/icons/users.svg',
+          width: AppSize.iconS,
+          height: AppSize.iconS,
+          colorFilter: ColorFilter.mode(primary, BlendMode.srcIn),
+        ),
+      ),
     );
   }
 }

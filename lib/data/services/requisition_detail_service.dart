@@ -132,11 +132,22 @@ class RequisitionDetailService {
       );
     }
 
-    final currentCase = _asMap(data['currentCase']);
-    final primarySubject = _asMap(data['primarySubject']);
+    final context = _asMap(data['context']);
+    final currentCase = _asMap(context['case']).isNotEmpty
+        ? _asMap(context['case'])
+        : _asMap(data['currentCase']);
+    final primarySubject = _asMap(context['person']).isNotEmpty
+        ? _asMap(context['person'])
+        : _asMap(data['primarySubject']);
     final caseSnapshot = _asMap(currentCase['snapshot']);
     final requisitionId = _text(data['id']) ?? '';
-    final caseSubjects = _parseCaseSubjects(data['caseSubjects']);
+    final caseSubjects = _parseCaseSubjects(
+      currentCase['subjects'] ?? data['caseSubjects'],
+    );
+    final caseInfo = _parseCaseInfo(currentCase, caseSubjects);
+    final personInfo = caseInfo == null
+        ? _parsePersonInfo(primarySubject)
+        : null;
     final evidence = _asList(data['evidences'])
         .map((item) => _parseEvidence(item, requisitionId, caseSubjects))
         .toList(growable: false);
@@ -157,15 +168,19 @@ class RequisitionDetailService {
         .map((subject) => subject.name)
         .toList(growable: false);
     final participants = _parseParticipants(data['accesses']);
-    final cud = _text(currentCase['cud']);
+    final cud = caseInfo?.cud ?? _text(currentCase['cud']);
     final description = _text(data['description']);
     final caseName =
+        caseInfo?.primaryCrime?.name ??
+        caseInfo?.complaintType ??
         _text(caseSnapshot['type']) ??
         description ??
         (cud == null ? 'Requisa por persona' : 'Caso vinculado');
     final division =
+        caseInfo?.division ??
         _text(caseSnapshot['division']) ??
-        _text(primarySubject['subjectRole']) ??
+        personInfo?.role ??
+        _text(primarySubject['subjectRole'] ?? primarySubject['role']) ??
         'Sin división registrada';
     final evidenceCounts = _asMap(data['evidenceCounts']);
     final imageCount = _int(
@@ -196,13 +211,15 @@ class RequisitionDetailService {
           (item) => item.uploadStatus == 'AVAILABLE',
         ),
         cud: cud,
-        subjectName: _text(primarySubject['fullName']),
+        subjectName: personInfo?.fullName ?? _text(primarySubject['fullName']),
       ),
       division: division,
       subjects: subjects,
       subjectDetails: subjectDetails,
       caseSubjects: caseSubjects.isNotEmpty ? caseSubjects : subjectDetails,
       participants: participants,
+      caseInfo: caseInfo,
+      personInfo: personInfo,
       sessionId: currentSession?.id ?? '',
       evidence: evidence,
       sessions: sessions,
@@ -276,8 +293,16 @@ class RequisitionDetailService {
           final subject = byPersonId[personId];
           return RequisitionEvidenceSubject(
             personId: personId,
-            name: subject?.name ?? 'Persona $personId',
-            documentNumber: subject?.documentNumber,
+            name:
+                _text(item['fullName']) ?? subject?.name ?? 'Persona $personId',
+            documentNumber:
+                _text(item['documentNumber']) ?? subject?.documentNumber,
+            caseSubjectId:
+                _intOrNull(item['caseSubjectId']) ?? subject?.caseSubjectId,
+            subjectTypeName: _text(item['subjectTypeName']) ?? subject?.role,
+            subjectTypeColorHex:
+                _text(item['subjectTypeColorHex']) ??
+                subject?.subjectTypeColorHex,
             source: _text(item['source']),
           );
         })
@@ -290,38 +315,145 @@ class RequisitionDetailService {
         .map((value) {
           final item = _asMap(value);
           final person = _asMap(item['person']);
+          final subjectType = _asMap(item['subjectType']);
           final entity = _asMap(
             item['legalEntity'] ?? item['legalEntitySnapshot'],
           );
           final personId = _intOrNull(item['personId']);
           final name =
+              _text(item['fullName']) ??
               _text(item['personFullName']) ??
               _text(person['nombreCompleto']) ??
+              _text(item['legalEntityName']) ??
               _text(entity['razonSocial']) ??
               _text(entity['nombre']) ??
               'Sujeto procesal';
           return RequisitionSubjectSummary(
             name: name,
             documentNumber:
-                _text(item['personDocumentNumber']) ?? _text(person['ci']),
-            role: _text(item['subjectTypeName']),
+                _text(item['documentNumber']) ??
+                _text(item['personDocumentNumber']) ??
+                _text(person['ci']),
+            role: _text(subjectType['name']) ?? _text(item['subjectTypeName']),
             personId: personId,
             caseSubjectId: _intOrNull(item['caseSubjectId']),
             alias: _text(item['alias']),
             identityReserved: item['identityReserved'] == true,
-            subjectTypeColorHex: _text(item['subjectTypeColorHex']),
-            subjectTypeLevel: _intOrNull(item['subjectTypeLevel']),
-            subjectTypeId: _intOrNull(item['subjectTypeId']),
+            subjectTypeColorHex:
+                _text(subjectType['colorHex']) ??
+                _text(item['subjectTypeColorHex']),
+            subjectTypeLevel:
+                _intOrNull(subjectType['level']) ??
+                _intOrNull(item['subjectTypeLevel']),
+            subjectTypeId:
+                _intOrNull(subjectType['id']) ??
+                _intOrNull(item['subjectTypeId']),
             legalSituationId: _intOrNull(item['legalSituationId']),
             legalEntityName:
-                _text(entity['razonSocial']) ?? _text(entity['nombre']),
-            currentSubjectState: _text(item['currentSubjectState']),
+                _text(item['legalEntityName']) ??
+                _text(entity['razonSocial']) ??
+                _text(entity['nombre']),
+            currentSubjectState:
+                _text(item['currentState']) ??
+                _text(item['currentSubjectState']),
             snapshot: item['snapshot'] is Map<String, dynamic>
                 ? item['snapshot'] as Map<String, dynamic>
                 : null,
           );
         })
         .toList(growable: false);
+  }
+
+  RequisitionCaseInfo? _parseCaseInfo(
+    Map<String, dynamic> data,
+    List<RequisitionSubjectSummary> subjects,
+  ) {
+    final cud = _text(data['cud']);
+    if (data.isEmpty || cud == null) return null;
+    final state = _asMap(data['state']);
+    final stage = _asMap(data['stage']);
+    final complaintType = _asMap(data['complaintType']);
+    final division = _asMap(data['division']);
+    final fact = _asMap(data['fact']);
+    final crimes = _asList(data['crimes'])
+        .map((raw) {
+          final item = _asMap(raw);
+          final name = _text(item['name']);
+          if (name == null) return null;
+          final priority = _asMap(item['priority']);
+          return RequisitionCaseCrime(
+            id: _intOrNull(item['id']),
+            name: name,
+            isPrimary: item['isPrimary'] == true,
+            priorityName: _text(priority['name']),
+            priorityColorHex: _text(priority['colorHex']),
+          );
+        })
+        .whereType<RequisitionCaseCrime>()
+        .toList(growable: false);
+    final officials = _asList(data['officials'])
+        .map((raw) {
+          final item = _asMap(raw);
+          final fullName = _text(item['fullName']);
+          if (fullName == null) return null;
+          return RequisitionCaseOfficial(
+            id: _intOrNull(item['id']),
+            personId: _intOrNull(item['personId']),
+            fullName: fullName,
+            documentNumber: _text(item['documentNumber']),
+            position: _text(item['position']),
+            divisionName: _text(item['divisionName']),
+            isPrimary: item['isPrimary'] == true,
+          );
+        })
+        .whereType<RequisitionCaseOfficial>()
+        .toList(growable: false);
+    return RequisitionCaseInfo(
+      linkId: _text(data['linkId'] ?? data['id']) ?? '',
+      externalCaseId: _intOrNull(data['externalCaseId']),
+      cud: cud,
+      linkedAt:
+          _date(data['linkedAt']) ?? DateTime.fromMillisecondsSinceEpoch(0),
+      status: _text(state['name']),
+      stage: _text(stage['name']),
+      complaintType: _text(complaintType['name']),
+      division: _text(division['name']),
+      divisionMunicipality: _text(division['municipality']),
+      divisionDepartment: _text(division['department']),
+      crimes: crimes,
+      factAt: _date(fact['occurredAt']),
+      factAddress: _text(fact['address']),
+      factMunicipality: _text(fact['municipality']),
+      factZone: _text(fact['zone']),
+      factLatitude: _double(fact['latitude']),
+      factLongitude: _double(fact['longitude']),
+      story: _text(fact['story']),
+      isReserved: data['isReserved'] == true,
+      involvesMinors: data['involvesMinors'] == true,
+      isArchived: data['isArchived'] == true,
+      subjects: subjects,
+      officials: officials,
+    );
+  }
+
+  RequisitionPersonInfo? _parsePersonInfo(Map<String, dynamic> data) {
+    final fullName = _text(data['fullName']);
+    final documentNumber = _text(data['documentNumber']);
+    if (data.isEmpty || fullName == null || documentNumber == null) return null;
+    return RequisitionPersonInfo(
+      requisitionSubjectId:
+          _text(
+            data['requisitionSubjectId'] ?? data['id'],
+          ) ??
+          '',
+      personId: _intOrNull(data['personId'] ?? data['externalPersonId']),
+      documentNumber: documentNumber,
+      fullName: fullName,
+      birthDate: _date(data['birthDate']),
+      address: _text(data['address']),
+      phone: _text(data['phone']),
+      role: _text(data['role'] ?? data['subjectRole']),
+    );
   }
 
   RequisitionAcquisitionSession _parseSession(Object? raw) {

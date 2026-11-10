@@ -32,6 +32,7 @@ final class EcosystemCaseSummary {
     required this.cud,
     required this.type,
     required this.division,
+    required this.status,
     required this.subjects,
     required this.officials,
     this.caseSubjects = const [],
@@ -41,6 +42,7 @@ final class EcosystemCaseSummary {
   final String cud;
   final String type;
   final String division;
+  final String status;
   final List<String> subjects;
   final List<String> officials;
   final List<EcosystemSubjectSummary> caseSubjects;

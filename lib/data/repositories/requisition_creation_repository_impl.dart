@@ -46,6 +46,7 @@ class RequisitionCreationRepositoryImpl
         cud: cud,
         type: 'Denuncia verbal',
         division: 'FELCC - Delitos contra la propiedad',
+        status: 'Abierto',
         subjects: const ['Persona vinculada al expediente'],
         officials: const ['Fiscal asignado principal'],
       ),

@@ -19,6 +19,7 @@ import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:file_cast/ui/core/widgets/app_action_button.dart';
 import 'package:file_cast/ui/core/widgets/app_form_input_icon.dart';
 import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
+import 'package:file_cast/ui/core/widgets/evidence_rename_sheet.dart';
 import 'package:file_cast/ui/core/widgets/evidence_thumbnail.dart';
 import 'package:file_cast/ui/core/widgets/evidence_sync_badge.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
@@ -26,9 +27,12 @@ import 'package:file_cast/ui/features/requisitions/detail/view_models/requisitio
 import 'package:file_cast/ui/features/requisitions/detail/widgets/evidence_preview_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/detail/widgets/import_evidence_preview_dialog.dart';
 import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_location_viewer.dart';
+import 'package:file_cast/ui/features/requisitions/widgets/case_subjects_sheet.dart';
+import 'package:file_cast/ui/features/requisitions/widgets/requisition_case_card.dart';
 import 'package:file_cast/ui/features/requisitions/widgets/requisition_person_selection_card.dart';
 import 'package:file_cast/ui/features/requisitions/widgets/requisition_section_card.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
@@ -356,16 +360,19 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
     }
   }
 
-  Future<void> _showSubjects(BuildContext context) =>
-      showAppModalBottomSheet<void>(
-        context: context,
-        useSafeArea: true,
-        maxWidth: 560,
-        builder: (_) => _PeopleSheet(
-          title: 'Sujetos del caso',
-          people: _subjectPeople(detail),
-        ),
-      );
+  Future<void> _showSubjects(BuildContext context) {
+    final subjects = detail.caseSubjects.isNotEmpty
+        ? detail.caseSubjects
+        : detail.subjectDetails;
+    return showAppModalBottomSheet<void>(
+      context: context,
+      maxWidth: 560,
+      builder: (_) => CaseSubjectsSheet.fromRequisition(
+        subjects: subjects,
+        fallbackNames: detail.subjects,
+      ),
+    );
+  }
 
   Future<void> _showParticipants(BuildContext context) =>
       showAppModalBottomSheet<void>(
@@ -477,7 +484,10 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
     final name = await showAppModalBottomSheet<String>(
       context: context,
       maxWidth: AppSize.formMaxWidth,
-      builder: (_) => _RenameEvidenceSheet(evidence: evidence),
+      builder: (_) => EvidenceRenameSheet(
+        currentName: evidence.effectiveName,
+        originalName: evidence.name,
+      ),
     );
     if (!context.mounted || name == null) return;
     final error = await viewModel.renameEvidence(evidence, name);
@@ -513,9 +523,14 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
     final selected = await showAppModalBottomSheet<List<int>>(
       context: context,
       maxWidth: AppSize.formMaxWidth,
-      builder: (_) => _EvidenceSubjectSheet(
-        evidence: evidence,
+      builder: (_) => CaseSubjectsSheet.fromRequisition(
         subjects: subjects,
+        title: 'Anclar evidencia a sujetos',
+        subtitle: evidence.effectiveName,
+        selectionEnabled: true,
+        initialSelectedPersonIds: {
+          for (final subject in evidence.linkedSubjects) subject.personId,
+        },
       ),
     );
     if (!context.mounted || selected == null) return;
@@ -548,6 +563,7 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
   }
 
   Future<void> _showCaseLink(BuildContext context) async {
+    viewModel.updateCaseLinkQuery('');
     final linked = await showAppModalBottomSheet<EcosystemCaseSummary>(
       context: context,
       enableDrag: false,
@@ -814,6 +830,8 @@ class _RequisitionSummaryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final requisition = detail.requisition;
+    final caseInfo = detail.caseInfo;
+    final personInfo = detail.personInfo;
     final hasCase = requisition.cud?.trim().isNotEmpty ?? false;
     final subjects = _subjectPeople(detail);
     final participants = detail.participants
@@ -876,7 +894,9 @@ class _RequisitionSummaryCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: AppSpace.s),
-            _StatusBadge(status: _statusLabel(requisition.status)),
+            _StatusBadge(
+              status: caseInfo?.status ?? _statusLabel(requisition.status),
+            ),
           ],
         ),
         if (detail.description?.isNotEmpty ?? false) ...[
@@ -900,20 +920,124 @@ class _RequisitionSummaryCard extends StatelessWidget {
             ).format(detail.procedureAt!),
           ),
         ],
+        if (hasCase) ...[
+          const SizedBox(height: AppSpace.s),
+          _SummaryLine(
+            asset: 'assets/images/icons/sync.svg',
+            label: 'Estado de la requisa',
+            value: _statusLabel(requisition.status),
+          ),
+        ],
         const SizedBox(height: AppSpace.s),
         if (hasCase) ...[
           _SummaryPair(
             left: _SummaryLine(
               asset: 'assets/images/icons/contrato.svg',
               label: 'Delito',
-              value: requisition.caseName,
+              value: [
+                caseInfo?.primaryCrime?.name ?? requisition.caseName,
+                caseInfo?.primaryCrime?.priorityName,
+              ].whereType<String>().join(' · '),
             ),
             right: _SummaryLine(
               asset: 'assets/images/icons/marca.svg',
               label: 'Tipo',
-              value: detail.division,
+              value: caseInfo?.complaintType ?? 'Sin tipo registrado',
             ),
           ),
+          if ((caseInfo?.division?.isNotEmpty ?? false) ||
+              (caseInfo?.stage?.isNotEmpty ?? false)) ...[
+            const SizedBox(height: AppSpace.s),
+            _SummaryPair(
+              left: _SummaryLine(
+                asset: 'assets/images/icons/marca.svg',
+                label: 'División',
+                value: caseInfo?.division ?? detail.division,
+              ),
+              right: _SummaryLine(
+                asset: 'assets/images/icons/contrato.svg',
+                label: 'Etapa',
+                value: caseInfo?.stage ?? 'Sin etapa registrada',
+              ),
+            ),
+          ],
+          if (caseInfo?.factAt != null ||
+              (caseInfo?.factAddress?.isNotEmpty ?? false)) ...[
+            const SizedBox(height: AppSpace.s),
+            _SummaryPair(
+              left: _SummaryLine(
+                asset: 'assets/images/icons/calendarDay.svg',
+                label: 'Fecha del hecho',
+                value: caseInfo?.factAt == null
+                    ? 'Sin fecha registrada'
+                    : DateFormat(
+                        'dd/MM/yyyy HH:mm',
+                      ).format(caseInfo!.factAt!),
+              ),
+              right: _SummaryLine(
+                asset: 'assets/images/icons/marca.svg',
+                label: 'Lugar del hecho',
+                value:
+                    [
+                          caseInfo?.factAddress,
+                          caseInfo?.factMunicipality,
+                          caseInfo?.factZone,
+                        ]
+                        .whereType<String>()
+                        .where((value) => value.isNotEmpty)
+                        .join(', '),
+              ),
+            ),
+          ],
+          if (caseInfo?.story?.isNotEmpty ?? false) ...[
+            const SizedBox(height: AppSpace.s),
+            Text(
+              caseInfo!.story!,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+          if (caseInfo?.officials.isNotEmpty ?? false) ...[
+            const SizedBox(height: AppSpace.s),
+            _SummaryLine(
+              asset: 'assets/images/icons/users.svg',
+              label: caseInfo!.officials.length == 1
+                  ? 'Funcionario del caso'
+                  : 'Funcionarios del caso',
+              value: caseInfo!.officials
+                  .map((official) => official.fullName)
+                  .join(', '),
+            ),
+          ],
+        ],
+        if (!hasCase && personInfo != null) ...[
+          if (personInfo.birthDate != null) ...[
+            const SizedBox(height: AppSpace.s),
+            _SummaryLine(
+              asset: 'assets/images/icons/calendarDay.svg',
+              label: 'Fecha de nacimiento',
+              value: DateFormat('dd/MM/yyyy').format(personInfo.birthDate!),
+            ),
+          ],
+          if ((personInfo.address?.isNotEmpty ?? false) ||
+              (personInfo.phone?.isNotEmpty ?? false)) ...[
+            const SizedBox(height: AppSpace.s),
+            _SummaryPair(
+              left: _SummaryLine(
+                asset: 'assets/images/icons/marca.svg',
+                label: 'Dirección',
+                value: personInfo.address ?? 'Sin dirección registrada',
+              ),
+              right: _SummaryLine(
+                asset: 'assets/images/icons/users.svg',
+                label: 'Teléfono',
+                value: personInfo.phone ?? 'Sin teléfono registrado',
+              ),
+            ),
+          ],
         ],
         if (hasCase && subjects.isNotEmpty && participants.isNotEmpty) ...[
           const SizedBox(height: AppSpace.s),
@@ -2373,17 +2497,34 @@ class _CaseLinkSheet extends StatefulWidget {
 
 class _CaseLinkSheetState extends State<_CaseLinkSheet> {
   late final FocusNode _focusNode;
+  late final TextEditingController _controller;
 
   @override
   void initState() {
     super.initState();
     _focusNode = FocusNode(debugLabel: 'detail-case-link-search');
+    _controller = TextEditingController(
+      text: widget.viewModel.caseLinkQuery,
+    );
   }
 
   @override
   void dispose() {
     _focusNode.dispose();
+    _controller.dispose();
     super.dispose();
+  }
+
+  Future<void> _search() async {
+    if (!_focusNode.hasFocus) {
+      _focusNode.requestFocus();
+      await Future<void>.delayed(Duration.zero);
+    }
+    await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+    await widget.viewModel.searchCaseLinkCandidates();
+    if (mounted) {
+      await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+    }
   }
 
   @override
@@ -2393,19 +2534,10 @@ class _CaseLinkSheetState extends State<_CaseLinkSheet> {
       builder: (context, _) {
         final viewModel = widget.viewModel;
         final theme = Theme.of(context);
-        final suggestions = viewModel.caseLinkResults
-            .map(
-              (item) => SearchFieldListItem<EcosystemCaseSummary>(
-                item.cud,
-                item: item,
-                child: ListTile(
-                  dense: true,
-                  title: Text(item.cud),
-                  subtitle: Text('${item.type} - ${item.division}'),
-                ),
-              ),
-            )
-            .toList(growable: false);
+        final selectedCase = viewModel.selectedCaseLinkCandidate;
+        final maxVisibleSuggestions = MediaQuery.sizeOf(context).height < 480
+            ? 2
+            : 4;
         return Material(
           color: theme.cardColor,
           borderRadius: const BorderRadius.vertical(
@@ -2425,8 +2557,6 @@ class _CaseLinkSheetState extends State<_CaseLinkSheet> {
                   maxHeight: MediaQuery.sizeOf(context).height * .9,
                 ),
                 child: SingleChildScrollView(
-                  keyboardDismissBehavior:
-                      ScrollViewKeyboardDismissBehavior.onDrag,
                   padding: EdgeInsets.fromLTRB(
                     AppSpace.m,
                     AppSpace.s,
@@ -2452,25 +2582,21 @@ class _CaseLinkSheetState extends State<_CaseLinkSheet> {
                         ],
                       ),
                       Text(
-                        'Busca el caso del ecosistema para asociarlo a esta requisa por persona.',
+                        'Ingresa el CUD, presiona Buscar y selecciona el caso para asociarlo a esta requisa por persona.',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
                       const SizedBox(height: AppSpace.m),
-                      SearchField<EcosystemCaseSummary>(
-                        focusNode: _focusNode,
-                        suggestionAction: SuggestionAction.unfocus,
-                        searchStyle: theme.textTheme.bodyLarge,
-                        suggestionStyle: theme.textTheme.bodyMedium,
-                        itemHeight: 76,
-                        suggestionsDecoration: SuggestionDecoration(
-                          color: theme.cardColor,
-                          borderRadius: BorderRadius.circular(AppRadius.s),
-                        ),
-                        onSearchTextChanged: (query) {
-                          widget.viewModel.updateCaseLinkQuery(query);
-                          return widget.viewModel.caseLinkResults
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final compact = constraints.maxWidth < 420;
+                          final canSearch =
+                              viewModel.selectedCaseLinkCandidate == null &&
+                              viewModel.caseLinkQuery.trim().length >= 4 &&
+                              viewModel.caseLinkSearchPhase !=
+                                  CaseLinkSearchPhase.loading;
+                          final suggestions = viewModel.caseLinkResults
                               .map(
                                 (item) =>
                                     SearchFieldListItem<EcosystemCaseSummary>(
@@ -2485,23 +2611,98 @@ class _CaseLinkSheetState extends State<_CaseLinkSheet> {
                                       ),
                                     ),
                               )
-                              .toList();
+                              .toList(growable: false);
+                          final field = Expanded(
+                            child: SearchField<EcosystemCaseSummary>(
+                              controller: _controller,
+                              focusNode: _focusNode,
+                              suggestionState: Suggestion.hidden,
+                              suggestionDirection: SuggestionDirection.down,
+                              maxSuggestionsInViewPort: maxVisibleSuggestions,
+                              itemHeight: 76,
+                              suggestions: suggestions,
+                              suggestionsDecoration: SuggestionDecoration(
+                                color: theme.cardColor,
+                                elevation: 6,
+                                border: Border.all(
+                                  color: theme.colorScheme.outline.withValues(
+                                    alpha: .18,
+                                  ),
+                                ),
+                                borderRadius: BorderRadius.circular(
+                                  AppRadius.s,
+                                ),
+                              ),
+                              onSearchTextChanged: (query) {
+                                widget.viewModel.updateCaseLinkQuery(query);
+                                return const <
+                                  SearchFieldListItem<EcosystemCaseSummary>
+                                >[];
+                              },
+                              onSuggestionTap: (suggestion) {
+                                final item = suggestion.item;
+                                if (item == null) return;
+                                WidgetsBinding.instance.addPostFrameCallback((
+                                  _,
+                                ) {
+                                  if (mounted) {
+                                    widget.viewModel.selectCaseLinkCandidate(
+                                      item,
+                                    );
+                                  }
+                                });
+                              },
+                              textInputAction: TextInputAction.search,
+                              onSubmit: (_) {
+                                if (canSearch) _search();
+                              },
+                              searchStyle: theme.textTheme.bodyLarge,
+                              suggestionStyle: theme.textTheme.bodyMedium,
+                              searchInputDecoration: InputDecoration(
+                                labelText: 'Buscar por número de CUD',
+                                prefixIcon: const AppFormInputIcon(
+                                  asset: 'assets/images/icons/search.svg',
+                                ),
+                                errorText: viewModel.caseLinkError,
+                              ),
+                            ),
+                          );
+                          final searchButton = compact
+                              ? IconButton.filledTonal(
+                                  tooltip: 'Buscar CUD',
+                                  onPressed: canSearch ? _search : null,
+                                  icon: const Icon(Icons.search_rounded),
+                                )
+                              : FilledButton.icon(
+                                  onPressed: canSearch ? _search : null,
+                                  icon: const Icon(Icons.search_rounded),
+                                  label: const Text('Buscar'),
+                                );
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              field,
+                              const SizedBox(width: AppSpace.s),
+                              searchButton,
+                            ],
+                          );
                         },
-                        suggestions: suggestions,
-                        onSuggestionTap: (suggestion) {
-                          final item = suggestion.item;
-                          if (item == null) return;
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (mounted) _link(item);
-                          });
+                      ),
+                      ListenableBuilder(
+                        listenable: _focusNode,
+                        builder: (context, _) {
+                          if (!_focusNode.hasFocus ||
+                              selectedCase != null ||
+                              viewModel.caseLinkResults.isEmpty) {
+                            return const SizedBox.shrink();
+                          }
+                          final visibleCount =
+                              viewModel.caseLinkResults.length >
+                                  maxVisibleSuggestions
+                              ? maxVisibleSuggestions
+                              : viewModel.caseLinkResults.length;
+                          return SizedBox(height: visibleCount * 76.0);
                         },
-                        searchInputDecoration: InputDecoration(
-                          labelText: 'Buscar por número de CUD',
-                          prefixIcon: const AppFormInputIcon(
-                            asset: 'assets/images/icons/search.svg',
-                          ),
-                          errorText: viewModel.caseLinkError,
-                        ),
                       ),
                       if (viewModel.caseLinkSearchPhase ==
                           CaseLinkSearchPhase.loading)
@@ -2518,11 +2719,49 @@ class _CaseLinkSheetState extends State<_CaseLinkSheet> {
                             style: theme.textTheme.bodySmall,
                           ),
                         ),
-                      if (viewModel.isLinkingCase)
-                        const Padding(
-                          padding: EdgeInsets.only(top: AppSpace.m),
-                          child: Center(child: CircularProgressIndicator()),
+                      if (selectedCase != null) ...[
+                        const SizedBox(height: AppSpace.m),
+                        RequisitionCaseCard(
+                          cud: selectedCase.cud,
+                          caseType: selectedCase.type,
+                          division: selectedCase.division,
+                          statusLabel: selectedCase.status,
+                          onViewSubjects: () => showAppModalBottomSheet<void>(
+                            context: context,
+                            maxWidth: 560,
+                            builder: (_) => CaseSubjectsSheet.fromEcosystem(
+                              subjects: selectedCase.caseSubjects,
+                              fallbackNames: selectedCase.subjects,
+                            ),
+                          ),
+                          onRemove: () {
+                            _controller.clear();
+                            widget.viewModel.updateCaseLinkQuery('');
+                          },
                         ),
+                        const SizedBox(height: AppSpace.m),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: viewModel.isLinkingCase
+                                ? null
+                                : () => _link(selectedCase),
+                            icon: viewModel.isLinkingCase
+                                ? const SizedBox.square(
+                                    dimension: AppSize.iconS,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.link_rounded),
+                            label: Text(
+                              viewModel.isLinkingCase
+                                  ? 'Vinculando…'
+                                  : 'Vincular al CUD',
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -3244,177 +3483,6 @@ class _AllEvidenceSheet extends StatelessWidget {
                       );
                     },
                   ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _RenameEvidenceSheet extends StatefulWidget {
-  const _RenameEvidenceSheet({required this.evidence});
-
-  final RequisitionEvidence evidence;
-
-  @override
-  State<_RenameEvidenceSheet> createState() => _RenameEvidenceSheetState();
-}
-
-class _RenameEvidenceSheetState extends State<_RenameEvidenceSheet> {
-  late final TextEditingController _controller = TextEditingController(
-    text: widget.evidence.effectiveName,
-  );
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        AppSpace.m,
-        AppSpace.m,
-        AppSpace.m,
-        AppSpace.m + MediaQuery.viewInsetsOf(context).bottom,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('Cambiar nombre', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: AppSpace.s),
-          Text(
-            'Este cambio solo modifica el nombre visible, no el archivo original.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: AppSpace.m),
-          TextField(
-            controller: _controller,
-            autofocus: true,
-            maxLength: 255,
-            decoration: const InputDecoration(labelText: 'Nombre de evidencia'),
-            onSubmitted: (_) => _save(),
-          ),
-          const SizedBox(height: AppSpace.s),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Cancelar'),
-              ),
-              const SizedBox(width: AppSpace.s),
-              FilledButton(onPressed: _save, child: const Text('Guardar')),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _save() {
-    final value = _controller.text.trim();
-    if (value.isEmpty) return;
-    Navigator.of(context).pop(value);
-  }
-}
-
-class _EvidenceSubjectSheet extends StatefulWidget {
-  const _EvidenceSubjectSheet({required this.evidence, required this.subjects});
-
-  final RequisitionEvidence evidence;
-  final List<RequisitionSubjectSummary> subjects;
-
-  @override
-  State<_EvidenceSubjectSheet> createState() => _EvidenceSubjectSheetState();
-}
-
-class _EvidenceSubjectSheetState extends State<_EvidenceSubjectSheet> {
-  late final Set<int> _selected = {
-    for (final subject in widget.evidence.linkedSubjects) subject.personId,
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(
-          AppSpace.m,
-          AppSpace.m,
-          AppSpace.m,
-          AppSpace.s,
-        ),
-        child: LayoutBuilder(
-          builder: (context, constraints) => ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: constraints.maxHeight.clamp(280.0, 620.0).toDouble(),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'Anclar evidencia a sujetos',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: AppSpace.xs),
-                Text(
-                  widget.evidence.effectiveName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: AppSpace.s),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: widget.subjects.length,
-                    itemBuilder: (context, index) {
-                      final subject = widget.subjects[index];
-                      final personId = subject.personId!;
-                      return CheckboxListTile(
-                        value: _selected.contains(personId),
-                        onChanged: (value) => setState(() {
-                          if (value == true) {
-                            _selected.add(personId);
-                          } else {
-                            _selected.remove(personId);
-                          }
-                        }),
-                        title: Text(subject.name),
-                        subtitle: Text(
-                          [
-                            if (subject.documentNumber != null)
-                              'CI ${subject.documentNumber}',
-                            if (subject.role != null) subject.role!,
-                            'personaId $personId',
-                          ].join(' · '),
-                        ),
-                        controlAffinity: ListTileControlAffinity.leading,
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: AppSpace.s),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('Cancelar'),
-                    ),
-                    const SizedBox(width: AppSpace.s),
-                    FilledButton(
-                      onPressed: () =>
-                          Navigator.of(context).pop(_selected.toList()),
-                      child: const Text('Anclar'),
-                    ),
-                  ],
                 ),
               ],
             ),

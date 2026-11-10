@@ -8,6 +8,7 @@ import 'package:file_cast/ui/core/navigation/route_args/mirror_route_args.dart';
 import 'package:file_cast/ui/core/feedback/app_feedback.dart';
 import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
+import 'package:file_cast/ui/core/widgets/evidence_rename_sheet.dart';
 import 'package:file_cast/ui/core/widgets/evidence_sync_badge.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/view_models/mirror_view_model.dart';
 import 'package:file_cast/ui/core/widgets/evidence_thumbnail.dart';
@@ -543,7 +544,10 @@ class _EvidencePane extends StatelessWidget {
     final name = await showAppModalBottomSheet<String>(
       context: context,
       maxWidth: AppSize.formMaxWidth,
-      builder: (_) => _MirrorRenameSheet(evidence: evidence),
+      builder: (_) => EvidenceRenameSheet(
+        currentName: evidence.effectiveName,
+        originalName: evidence.name,
+      ),
     );
     if (!context.mounted || name == null) return;
     final error = await viewModel.renameEvidence(evidence, name);
@@ -637,68 +641,6 @@ class _EvidenceCard extends StatelessWidget {
       ),
     );
   }
-}
-
-class _MirrorRenameSheet extends StatefulWidget {
-  const _MirrorRenameSheet({required this.evidence});
-
-  final RequisitionEvidence evidence;
-
-  @override
-  State<_MirrorRenameSheet> createState() => _MirrorRenameSheetState();
-}
-
-class _MirrorRenameSheetState extends State<_MirrorRenameSheet> {
-  late final TextEditingController _controller = TextEditingController(
-    text: widget.evidence.effectiveName,
-  );
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: EdgeInsets.fromLTRB(
-      AppSpace.m,
-      AppSpace.m,
-      AppSpace.m,
-      AppSpace.m + MediaQuery.viewInsetsOf(context).bottom,
-    ),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text('Cambiar nombre', style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: AppSpace.s),
-        TextField(
-          controller: _controller,
-          autofocus: true,
-          maxLength: 255,
-          decoration: const InputDecoration(labelText: 'Nombre de evidencia'),
-        ),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancelar'),
-            ),
-            const SizedBox(width: AppSpace.s),
-            FilledButton(
-              onPressed: () {
-                final value = _controller.text.trim();
-                if (value.isNotEmpty) Navigator.of(context).pop(value);
-              },
-              child: const Text('Guardar'),
-            ),
-          ],
-        ),
-      ],
-    ),
-  );
 }
 
 class _ConnectionChip extends StatelessWidget {

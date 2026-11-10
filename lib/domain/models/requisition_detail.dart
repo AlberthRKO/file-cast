@@ -54,6 +54,123 @@ final class RequisitionParticipantSummary {
   final String? documentNumber;
 }
 
+final class RequisitionCaseCrime {
+  const RequisitionCaseCrime({
+    required this.name,
+    required this.isPrimary,
+    this.id,
+    this.priorityName,
+    this.priorityColorHex,
+  });
+
+  final int? id;
+  final String name;
+  final bool isPrimary;
+  final String? priorityName;
+  final String? priorityColorHex;
+}
+
+final class RequisitionCaseOfficial {
+  const RequisitionCaseOfficial({
+    required this.fullName,
+    required this.isPrimary,
+    this.id,
+    this.personId,
+    this.documentNumber,
+    this.position,
+    this.divisionName,
+  });
+
+  final int? id;
+  final int? personId;
+  final String fullName;
+  final String? documentNumber;
+  final String? position;
+  final String? divisionName;
+  final bool isPrimary;
+}
+
+final class RequisitionCaseInfo {
+  const RequisitionCaseInfo({
+    required this.linkId,
+    required this.cud,
+    required this.linkedAt,
+    required this.subjects,
+    required this.crimes,
+    required this.officials,
+    this.externalCaseId,
+    this.status,
+    this.stage,
+    this.complaintType,
+    this.division,
+    this.divisionMunicipality,
+    this.divisionDepartment,
+    this.factAt,
+    this.factAddress,
+    this.factMunicipality,
+    this.factZone,
+    this.factLatitude,
+    this.factLongitude,
+    this.story,
+    this.isReserved = false,
+    this.involvesMinors = false,
+    this.isArchived = false,
+  });
+
+  final String linkId;
+  final int? externalCaseId;
+  final String cud;
+  final DateTime linkedAt;
+  final String? status;
+  final String? stage;
+  final String? complaintType;
+  final String? division;
+  final String? divisionMunicipality;
+  final String? divisionDepartment;
+  final List<RequisitionCaseCrime> crimes;
+  final DateTime? factAt;
+  final String? factAddress;
+  final String? factMunicipality;
+  final String? factZone;
+  final double? factLatitude;
+  final double? factLongitude;
+  final String? story;
+  final bool isReserved;
+  final bool involvesMinors;
+  final bool isArchived;
+  final List<RequisitionSubjectSummary> subjects;
+  final List<RequisitionCaseOfficial> officials;
+
+  RequisitionCaseCrime? get primaryCrime {
+    for (final crime in crimes) {
+      if (crime.isPrimary) return crime;
+    }
+    return crimes.isEmpty ? null : crimes.first;
+  }
+}
+
+final class RequisitionPersonInfo {
+  const RequisitionPersonInfo({
+    required this.requisitionSubjectId,
+    required this.documentNumber,
+    required this.fullName,
+    this.personId,
+    this.birthDate,
+    this.address,
+    this.phone,
+    this.role,
+  });
+
+  final String requisitionSubjectId;
+  final int? personId;
+  final String documentNumber;
+  final String fullName;
+  final DateTime? birthDate;
+  final String? address;
+  final String? phone;
+  final String? role;
+}
+
 enum RequisitionParticipantRole { editor, viewer }
 
 extension RequisitionParticipantRoleApi on RequisitionParticipantRole {
@@ -292,12 +409,18 @@ final class RequisitionEvidenceSubject {
     required this.personId,
     required this.name,
     this.documentNumber,
+    this.caseSubjectId,
+    this.subjectTypeName,
+    this.subjectTypeColorHex,
     this.source,
   });
 
   final int personId;
   final String name;
   final String? documentNumber;
+  final int? caseSubjectId;
+  final String? subjectTypeName;
+  final String? subjectTypeColorHex;
   final String? source;
 }
 
@@ -312,6 +435,8 @@ final class RequisitionDetail {
     this.subjectDetails = const [],
     this.caseSubjects = const [],
     this.participants = const [],
+    this.caseInfo,
+    this.personInfo,
     this.description,
     this.procedureAt,
     this.locationLabel,
@@ -328,6 +453,8 @@ final class RequisitionDetail {
   final List<RequisitionSubjectSummary> subjectDetails;
   final List<RequisitionSubjectSummary> caseSubjects;
   final List<RequisitionParticipantSummary> participants;
+  final RequisitionCaseInfo? caseInfo;
+  final RequisitionPersonInfo? personInfo;
   final String sessionId;
   final List<RequisitionEvidence> evidence;
   final List<RequisitionAcquisitionSession> sessions;

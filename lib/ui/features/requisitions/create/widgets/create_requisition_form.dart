@@ -6,10 +6,12 @@ import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/create/view_models/create_requisition_state.dart';
 import 'package:file_cast/ui/features/requisitions/create/view_models/create_requisition_view_model.dart';
 import 'package:file_cast/ui/features/requisitions/create/widgets/requisition_location_picker.dart';
+import 'package:file_cast/ui/features/requisitions/widgets/case_subjects_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/widgets/requisition_case_card.dart';
 import 'package:file_cast/ui/features/requisitions/widgets/requisition_person_selection_card.dart';
 import 'package:file_cast/ui/features/requisitions/widgets/requisition_section_card.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:intl/intl.dart';
 import 'package:searchfield/searchfield.dart';
@@ -33,6 +35,7 @@ class CreateRequisitionForm extends StatefulWidget {
 class _CreateRequisitionFormState extends State<CreateRequisitionForm> {
   late final FocusNode _cudFocusNode;
   late final FocusNode _personFocusNode;
+  late final TextEditingController _cudController;
   late final TextEditingController _personController;
 
   @override
@@ -40,6 +43,7 @@ class _CreateRequisitionFormState extends State<CreateRequisitionForm> {
     super.initState();
     _cudFocusNode = FocusNode(debugLabel: 'requisition-cud-search');
     _personFocusNode = FocusNode(debugLabel: 'requisition-person-search');
+    _cudController = TextEditingController();
     _personController = TextEditingController();
   }
 
@@ -47,19 +51,32 @@ class _CreateRequisitionFormState extends State<CreateRequisitionForm> {
   void dispose() {
     _cudFocusNode.dispose();
     _personFocusNode.dispose();
+    _cudController.dispose();
     _personController.dispose();
     super.dispose();
   }
 
   void _changeMode(RequisitionRegistrationMode mode) {
-    // SearchField 0.9.x owns an OverlayEntry. Close its focus/overlay before
-    // replacing the corresponding tab subtree, otherwise the package may try
-    // to remove the same entry again from dispose().
+    // Cierra el teclado antes de reemplazar el formulario de cada modo.
     _cudFocusNode.unfocus();
     _personFocusNode.unfocus();
+    _cudController.clear();
+    _personController.clear();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) widget.viewModel.setMode(mode);
     });
+  }
+
+  Future<void> _searchCud() async {
+    if (!_cudFocusNode.hasFocus) {
+      _cudFocusNode.requestFocus();
+      await Future<void>.delayed(Duration.zero);
+    }
+    await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+    await widget.viewModel.searchCases();
+    if (mounted) {
+      await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+    }
   }
 
   @override
@@ -84,7 +101,9 @@ class _CreateRequisitionFormState extends State<CreateRequisitionForm> {
                 _ExistingCudSection(
                   state: state,
                   focusNode: _cudFocusNode,
+                  controller: _cudController,
                   onQueryChanged: widget.viewModel.updateCudQuery,
+                  onSearch: _searchCud,
                   onSelected: widget.viewModel.selectCase,
                 )
               else
@@ -369,17 +388,24 @@ class _ExistingCudSection extends StatelessWidget {
   const _ExistingCudSection({
     required this.state,
     required this.focusNode,
+    required this.controller,
     required this.onQueryChanged,
+    required this.onSearch,
     required this.onSelected,
   });
 
   final CreateRequisitionState state;
   final FocusNode focusNode;
+  final TextEditingController controller;
   final ValueChanged<String> onQueryChanged;
+  final VoidCallback onSearch;
   final ValueChanged<EcosystemCaseSummary> onSelected;
 
   @override
   Widget build(BuildContext context) {
+    final maxVisibleSuggestions = MediaQuery.sizeOf(context).height < 480
+        ? 2
+        : 4;
     return RequisitionSectionCard(
       icon: Icons.folder_rounded,
       title: 'Casos del ecosistema',
@@ -388,34 +414,14 @@ class _ExistingCudSection extends StatelessWidget {
         children: [
           const _RequiredLabel(label: 'Numero de CUD'),
           const SizedBox(height: AppSpace.s),
-          if (state.selectedCase == null)
-            SearchField<EcosystemCaseSummary>(
-              focusNode: focusNode,
-              suggestionAction: SuggestionAction.unfocus,
-              searchStyle: Theme.of(context).textTheme.bodyLarge,
-              suggestionStyle: Theme.of(context).textTheme.bodyMedium,
-              itemHeight: 76,
-              suggestionsDecoration: SuggestionDecoration(
-                color: Theme.of(context).cardColor,
-                borderRadius: BorderRadius.circular(AppRadius.s),
-              ),
-              onSearchTextChanged: (query) {
-                onQueryChanged(query);
-                return state.caseResults
-                    .map(
-                      (item) => SearchFieldListItem<EcosystemCaseSummary>(
-                        item.cud,
-                        item: item,
-                        child: ListTile(
-                          dense: true,
-                          title: Text(item.cud),
-                          subtitle: Text('${item.type} - ${item.division}'),
-                        ),
-                      ),
-                    )
-                    .toList();
-              },
-              suggestions: state.caseResults
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 420;
+              final canSearch =
+                  state.selectedCase == null &&
+                  state.cudQuery.trim().length >= 4 &&
+                  state.caseSearchPhase != AsyncPhase.loading;
+              final suggestions = state.caseResults
                   .map(
                     (item) => SearchFieldListItem<EcosystemCaseSummary>(
                       item.cud,
@@ -427,28 +433,94 @@ class _ExistingCudSection extends StatelessWidget {
                       ),
                     ),
                   )
-                  .toList(),
-              onSuggestionTap: (suggestion) {
-                final item = suggestion.item;
-                if (item == null) return;
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (context.mounted) onSelected(item);
-                });
-              },
-              searchInputDecoration: InputDecoration(
-                labelText: 'Buscar por Nro de caso, caratula o imputado...',
-                labelStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.primary.withValues(
-                    alpha: .5,
+                  .toList(growable: false);
+              final field = Expanded(
+                child: SearchField<EcosystemCaseSummary>(
+                  controller: controller,
+                  focusNode: focusNode,
+                  suggestionState: Suggestion.hidden,
+                  suggestionDirection: SuggestionDirection.down,
+                  maxSuggestionsInViewPort: maxVisibleSuggestions,
+                  itemHeight: 76,
+                  suggestions: suggestions,
+                  suggestionsDecoration: SuggestionDecoration(
+                    color: Theme.of(context).cardColor,
+                    elevation: 6,
+                    border: Border.all(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.outline.withValues(alpha: .18),
+                    ),
+                    borderRadius: BorderRadius.circular(AppRadius.s),
                   ),
-                  height: 1,
+                  onSearchTextChanged: (query) {
+                    onQueryChanged(query);
+                    return const <SearchFieldListItem<EcosystemCaseSummary>>[];
+                  },
+                  onSubmit: (_) {
+                    if (canSearch) onSearch();
+                  },
+                  onSuggestionTap: (suggestion) {
+                    final item = suggestion.item;
+                    if (item == null) return;
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (context.mounted) onSelected(item);
+                    });
+                  },
+                  textInputAction: TextInputAction.search,
+                  searchStyle: Theme.of(context).textTheme.bodyLarge,
+                  suggestionStyle: Theme.of(context).textTheme.bodyMedium,
+                  searchInputDecoration: InputDecoration(
+                    labelText: 'Buscar por Nro de caso, caratula o imputado...',
+                    labelStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.primary.withValues(alpha: .5),
+                      height: 1,
+                    ),
+                    prefixIcon: const AppFormInputIcon(
+                      asset: 'assets/images/icons/search.svg',
+                    ),
+                    errorText: state.cudError,
+                  ),
                 ),
-                prefixIcon: const AppFormInputIcon(
-                  asset: 'assets/images/icons/search.svg',
-                ),
-                errorText: state.cudError,
-              ),
-            ),
+              );
+              final searchButton = compact
+                  ? IconButton.filledTonal(
+                      tooltip: 'Buscar CUD',
+                      onPressed: canSearch ? onSearch : null,
+                      icon: const Icon(Icons.search_rounded),
+                    )
+                  : FilledButton.icon(
+                      onPressed: canSearch ? onSearch : null,
+                      icon: const Icon(Icons.search_rounded),
+                      label: const Text('Buscar'),
+                    );
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  field,
+                  const SizedBox(width: AppSpace.s),
+                  searchButton,
+                ],
+              );
+            },
+          ),
+          ListenableBuilder(
+            listenable: focusNode,
+            builder: (context, _) {
+              if (!focusNode.hasFocus ||
+                  state.selectedCase != null ||
+                  state.caseResults.isEmpty) {
+                return const SizedBox.shrink();
+              }
+              final visibleCount =
+                  state.caseResults.length > maxVisibleSuggestions
+                  ? maxVisibleSuggestions
+                  : state.caseResults.length;
+              return SizedBox(height: visibleCount * 76.0);
+            },
+          ),
           if (state.selectedCase == null &&
               state.caseSearchPhase == AsyncPhase.loading)
             const LinearProgressIndicator(),
@@ -456,13 +528,16 @@ class _ExistingCudSection extends StatelessWidget {
             const SizedBox(height: AppSpace.m),
             _SelectedCaseCard(
               caseSummary: state.selectedCase!,
-              onChange: () => onQueryChanged(''),
+              onChange: () {
+                controller.clear();
+                onQueryChanged('');
+              },
             ),
           ],
           const SizedBox(height: AppSpace.s),
           const _MutedHelp(
             text:
-                'Los datos de la persona ya estan vinculados al expediente CUD seleccionado.',
+                'Ingresa el CUD y presiona Buscar. Luego selecciona el caso para continuar.',
           ),
         ],
       ),
@@ -819,7 +894,15 @@ class _CasePenalCard extends StatelessWidget {
       cud: caseSummary.cud,
       caseType: caseSummary.type,
       division: caseSummary.division,
-      subjectCount: caseSummary.subjects.length,
+      statusLabel: caseSummary.status,
+      onViewSubjects: () => showAppModalBottomSheet<void>(
+        context: context,
+        maxWidth: 560,
+        builder: (_) => CaseSubjectsSheet.fromEcosystem(
+          subjects: caseSummary.caseSubjects,
+          fallbackNames: caseSummary.subjects,
+        ),
+      ),
       onRemove: onRemove,
     );
   }

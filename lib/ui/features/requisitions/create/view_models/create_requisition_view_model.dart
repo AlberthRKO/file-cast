@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:math';
 
 import 'package:file_cast/domain/models/requisition_creation.dart';
@@ -24,7 +23,6 @@ class CreateRequisitionViewModel extends ChangeNotifier {
   final RequisitionCreationRepository _repository;
   final LocationService _locationService;
   final String _creationId;
-  Timer? _caseDebounce;
   int _caseSearchToken = 0;
   int _personSearchToken = 0;
 
@@ -36,6 +34,13 @@ class CreateRequisitionViewModel extends ChangeNotifier {
     _emit(
       _state.copyWith(
         mode: mode,
+        cudQuery: '',
+        caseSearchPhase: AsyncPhase.initial,
+        caseResults: const [],
+        selectedCase: null,
+        personQuery: '',
+        personSearchPhase: AsyncPhase.initial,
+        selectedPerson: null,
         errorMessage: null,
         cudError: null,
         personError: null,
@@ -45,24 +50,20 @@ class CreateRequisitionViewModel extends ChangeNotifier {
   }
 
   void updateCudQuery(String value) {
-    _caseDebounce?.cancel();
+    // La búsqueda de CUD es explícita mediante el botón Buscar. Incrementar
+    // el token invalida cualquier petición anterior si el usuario cambia el
+    // texto antes de volver a buscar.
+    _caseSearchToken++;
     _emit(
       _state.copyWith(
         cudQuery: value,
         selectedCase: null,
         caseResults: const [],
-        caseSearchPhase: value.trim().length >= 4
-            ? AsyncPhase.loading
-            : AsyncPhase.initial,
+        caseSearchPhase: AsyncPhase.initial,
         cudError: null,
         errorMessage: null,
         createdResult: null,
       ),
-    );
-    if (value.trim().length < 4) return;
-    _caseDebounce = Timer(
-      const Duration(milliseconds: 350),
-      () => searchCases(),
     );
   }
 
@@ -301,7 +302,6 @@ class CreateRequisitionViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
-    _caseDebounce?.cancel();
     super.dispose();
   }
 

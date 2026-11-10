@@ -6,6 +6,7 @@ final class EcosystemCaseDto {
     required this.cud,
     required this.type,
     required this.division,
+    required this.status,
     required this.subjects,
     required this.officials,
     required this.caseSubjects,
@@ -35,6 +36,11 @@ final class EcosystemCaseDto {
           .where((value) => value.isNotEmpty)
           .join(', ')
           .ifEmpty('Sin division'),
+      status:
+          _nestedName(json['casoEstado']) ??
+          _nestedName(json['estadoCaso']) ??
+          _asString(json['caseStatus']) ??
+          'Sin estado',
       subjects: people
           .map(_subjectLabel)
           .where((value) => value.isNotEmpty)
@@ -51,6 +57,7 @@ final class EcosystemCaseDto {
   final String cud;
   final String type;
   final String division;
+  final String status;
   final List<String> subjects;
   final List<String> officials;
   final List<EcosystemSubjectSummary> caseSubjects;
@@ -61,6 +68,7 @@ final class EcosystemCaseDto {
       cud: cud,
       type: type,
       division: division,
+      status: status,
       subjects: subjects,
       officials: officials,
       caseSubjects: caseSubjects,

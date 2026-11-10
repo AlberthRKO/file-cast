@@ -70,10 +70,10 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   bool _isFinalizing = false;
   bool _isLinkingCase = false;
   bool _isAddingParticipant = false;
-  Timer? _caseLinkDebounce;
   int _caseLinkSearchToken = 0;
   String _caseLinkQuery = '';
   List<EcosystemCaseSummary> _caseLinkResults = const [];
+  EcosystemCaseSummary? _selectedCaseLinkCandidate;
   CaseLinkSearchPhase _caseLinkSearchPhase = CaseLinkSearchPhase.initial;
   String? _caseLinkError;
   int _participantSearchToken = 0;
@@ -194,6 +194,8 @@ class RequisitionDetailViewModel extends ChangeNotifier {
 
   String get caseLinkQuery => _caseLinkQuery;
   List<EcosystemCaseSummary> get caseLinkResults => _caseLinkResults;
+  EcosystemCaseSummary? get selectedCaseLinkCandidate =>
+      _selectedCaseLinkCandidate;
   CaseLinkSearchPhase get caseLinkSearchPhase => _caseLinkSearchPhase;
   String? get caseLinkError => _caseLinkError;
   bool get isLinkingCase => _isLinkingCase;
@@ -876,19 +878,31 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   }
 
   void updateCaseLinkQuery(String value) {
-    _caseLinkDebounce?.cancel();
+    // La consulta se dispara únicamente al pulsar Buscar. El incremento del
+    // token invalida una petición anterior si el texto cambia mientras llega
+    // su respuesta.
+    _caseLinkSearchToken++;
     _caseLinkQuery = value;
     _caseLinkResults = const [];
+    _selectedCaseLinkCandidate = null;
     _caseLinkError = null;
-    _caseLinkSearchPhase = value.trim().length >= 4
-        ? CaseLinkSearchPhase.loading
-        : CaseLinkSearchPhase.initial;
+    _caseLinkSearchPhase = CaseLinkSearchPhase.initial;
     if (!_disposed) notifyListeners();
-    if (value.trim().length < 4) return;
-    _caseLinkDebounce = Timer(
-      const Duration(milliseconds: 350),
-      searchCaseLinkCandidates,
-    );
+  }
+
+  void selectCaseLinkCandidate(EcosystemCaseSummary candidate) {
+    _selectedCaseLinkCandidate = candidate;
+    _caseLinkQuery = candidate.cud;
+    _caseLinkResults = const [];
+    _caseLinkError = null;
+    if (!_disposed) notifyListeners();
+  }
+
+  void clearCaseLinkCandidate() {
+    _selectedCaseLinkCandidate = null;
+    _caseLinkResults = const [];
+    _caseLinkSearchPhase = CaseLinkSearchPhase.initial;
+    if (!_disposed) notifyListeners();
   }
 
   Future<void> searchCaseLinkCandidates() async {
@@ -936,9 +950,19 @@ class RequisitionDetailViewModel extends ChangeNotifier {
         subjects: caseSummary.subjects,
         participants: caseSummary.officials,
       );
-      await _reloadSilently();
+      try {
+        _detail = await _repository.refreshDetail(requisitionId);
+        _updateUploadStatusPolling();
+        _phase = RequisitionDetailPhase.content;
+        _clearUploadStateWhenNoPendingEvidence();
+      } catch (_) {
+        // El vínculo ya fue confirmado por el backend. Si la lectura remota
+        // posterior falla, conservamos el detalle visible y permitimos que el
+        // siguiente refresh lo actualice sin provocar un segundo vínculo.
+      }
       _caseLinkQuery = '';
       _caseLinkResults = const [];
+      _selectedCaseLinkCandidate = null;
       _caseLinkSearchPhase = CaseLinkSearchPhase.initial;
       return null;
     } catch (error) {
@@ -1064,7 +1088,6 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _caseLinkDebounce?.cancel();
     _changesSubscription?.cancel();
     _uploadProgressSubscription?.cancel();
     _offlineSyncProgressSubscription?.cancel();
