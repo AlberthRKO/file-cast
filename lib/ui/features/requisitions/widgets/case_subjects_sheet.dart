@@ -16,6 +16,7 @@ class CaseSubjectsSheet extends StatefulWidget {
        selectionEnabled = false,
        confirmLabel = 'Aceptar',
        initialSelectedPersonIds = const {},
+       onConfirm = null,
        _subjects = subjects.isNotEmpty
            ? subjects
                  .map(
@@ -40,12 +41,14 @@ class CaseSubjectsSheet extends StatefulWidget {
     bool selectionEnabled = false,
     Set<int> initialSelectedPersonIds = const {},
     String confirmLabel = 'Anclar',
+    Future<String?> Function(List<int> personIds)? onConfirm,
     super.key,
   }) : title = title,
        subtitle = subtitle,
        selectionEnabled = selectionEnabled,
        confirmLabel = confirmLabel,
        initialSelectedPersonIds = initialSelectedPersonIds,
+       onConfirm = onConfirm,
        _subjects = subjects.isNotEmpty
            ? subjects
                  .map(
@@ -68,6 +71,7 @@ class CaseSubjectsSheet extends StatefulWidget {
   final bool selectionEnabled;
   final Set<int> initialSelectedPersonIds;
   final String confirmLabel;
+  final Future<String?> Function(List<int> personIds)? onConfirm;
 
   @override
   State<CaseSubjectsSheet> createState() => _CaseSubjectsSheetState();
@@ -77,6 +81,7 @@ class _CaseSubjectsSheetState extends State<CaseSubjectsSheet> {
   late final TextEditingController _searchController;
   late final Set<int> _selectedPersonIds;
   String _query = '';
+  bool _isConfirming = false;
 
   List<_CaseSubjectItem> get _filteredSubjects {
     final query = _query.trim().toLowerCase();
@@ -153,10 +158,14 @@ class _CaseSubjectsSheetState extends State<CaseSubjectsSheet> {
                         subtitle:
                             widget.subtitle ??
                             '${widget._subjects.length} ${widget._subjects.length == 1 ? 'sujeto procesal' : 'sujetos procesales'}',
+                        onClose: _isConfirming
+                            ? null
+                            : () => Navigator.of(context).pop(),
                       ),
                       const SizedBox(height: AppSpace.s),
                       TextField(
                         controller: _searchController,
+                        enabled: !_isConfirming,
                         textInputAction: TextInputAction.search,
                         decoration: InputDecoration(
                           labelText: 'Buscar sujeto',
@@ -195,7 +204,8 @@ class _CaseSubjectsSheetState extends State<CaseSubjectsSheet> {
                                     selectable: widget.selectionEnabled,
                                     selected: selected,
                                     onPressed:
-                                        !widget.selectionEnabled ||
+                                        _isConfirming ||
+                                            !widget.selectionEnabled ||
                                             personId == null
                                         ? null
                                         : () => _toggle(personId),
@@ -209,16 +219,27 @@ class _CaseSubjectsSheetState extends State<CaseSubjectsSheet> {
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
                             TextButton(
-                              onPressed: () => Navigator.of(context).pop(),
+                              onPressed: _isConfirming
+                                  ? null
+                                  : () => Navigator.of(context).pop(),
                               child: const Text('Cancelar'),
                             ),
                             const SizedBox(width: AppSpace.s),
                             FilledButton.icon(
-                              onPressed: () => Navigator.of(
-                                context,
-                              ).pop(_selectedPersonIds.toList(growable: false)),
-                              icon: const Icon(Icons.link_rounded),
-                              label: Text(widget.confirmLabel),
+                              onPressed: _isConfirming ? null : _confirm,
+                              icon: _isConfirming
+                                  ? const SizedBox.square(
+                                      dimension: AppSize.iconS,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.link_rounded),
+                              label: Text(
+                                _isConfirming
+                                    ? 'Guardando…'
+                                    : widget.confirmLabel,
+                              ),
                             ),
                           ],
                         ),
@@ -241,13 +262,38 @@ class _CaseSubjectsSheetState extends State<CaseSubjectsSheet> {
       }
     });
   }
+
+  Future<void> _confirm() async {
+    final selected = _selectedPersonIds.toList(growable: false);
+    final onConfirm = widget.onConfirm;
+    if (onConfirm == null) {
+      Navigator.of(context).pop(selected);
+      return;
+    }
+
+    setState(() {
+      _isConfirming = true;
+    });
+    final error = await onConfirm(selected);
+    if (!mounted) return;
+    if (error != null) {
+      Navigator.of(context).pop(error);
+      return;
+    }
+    Navigator.of(context).pop(true);
+  }
 }
 
 class _SheetHeader extends StatelessWidget {
-  const _SheetHeader({required this.title, required this.subtitle});
+  const _SheetHeader({
+    required this.title,
+    required this.subtitle,
+    required this.onClose,
+  });
 
   final String title;
   final String subtitle;
+  final VoidCallback? onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -285,7 +331,7 @@ class _SheetHeader extends StatelessWidget {
         ),
         IconButton(
           tooltip: 'Cerrar',
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: onClose,
           icon: const Icon(Icons.close_rounded),
         ),
       ],

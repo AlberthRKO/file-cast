@@ -9,11 +9,13 @@ class EvidenceRenameSheet extends StatefulWidget {
   const EvidenceRenameSheet({
     required this.currentName,
     required this.originalName,
+    required this.onSave,
     super.key,
   });
 
   final String currentName;
   final String originalName;
+  final Future<String?> Function(String displayName) onSave;
 
   @override
   State<EvidenceRenameSheet> createState() => _EvidenceRenameSheetState();
@@ -24,6 +26,7 @@ class _EvidenceRenameSheetState extends State<EvidenceRenameSheet> {
 
   late final String _extension;
   late final TextEditingController _controller;
+  bool _isSaving = false;
 
   bool get _canSave {
     final baseName = _controller.text.trim();
@@ -85,84 +88,103 @@ class _EvidenceRenameSheetState extends State<EvidenceRenameSheet> {
         ),
         child: SafeArea(
           top: false,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpace.m,
-              AppSpace.s,
-              AppSpace.m,
-              AppSpace.m,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: AppSize.formMaxWidth,
+              maxHeight: MediaQuery.sizeOf(context).height * .9,
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: AppSize.minTouchTarget,
-                      height: AppSize.minTouchTarget,
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primaryContainer,
-                        borderRadius: BorderRadius.circular(AppRadius.m),
+            child: SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: EdgeInsets.fromLTRB(
+                AppSpace.m,
+                AppSpace.s,
+                AppSpace.m,
+                AppSpace.m + MediaQuery.viewPaddingOf(context).bottom,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: AppSize.minTouchTarget,
+                        height: AppSize.minTouchTarget,
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primaryContainer,
+                          borderRadius: BorderRadius.circular(AppRadius.m),
+                        ),
+                        child: Icon(
+                          Icons.drive_file_rename_outline_rounded,
+                          color: theme.colorScheme.onPrimaryContainer,
+                        ),
                       ),
-                      child: Icon(
-                        Icons.drive_file_rename_outline_rounded,
-                        color: theme.colorScheme.onPrimaryContainer,
+                      const SizedBox(width: AppSpace.s),
+                      Expanded(
+                        child: Text(
+                          'Cambiar nombre',
+                          style: theme.textTheme.titleLarge,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: AppSpace.s),
-                    Expanded(
-                      child: Text(
-                        'Cambiar nombre',
-                        style: theme.textTheme.titleLarge,
+                      IconButton(
+                        tooltip: 'Cerrar',
+                        onPressed: _isSaving
+                            ? null
+                            : () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.close_rounded),
                       ),
-                    ),
-                    IconButton(
-                      tooltip: 'Cerrar',
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpace.s),
-                Text(
-                  'Edita el nombre visible de la evidencia. La extensión del archivo se conserva.',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+                    ],
                   ),
-                ),
-                const SizedBox(height: AppSpace.m),
-                TextField(
-                  controller: _controller,
-                  autofocus: true,
-                  maxLength: _maximumBaseNameLength,
-                  textInputAction: TextInputAction.done,
-                  decoration: InputDecoration(
-                    labelText: 'Nombre de evidencia (sin extensión)',
-                    suffixText: _extension.isEmpty ? null : _extension,
-                    prefixIcon: const Icon(Icons.edit_outlined),
+                  const SizedBox(height: AppSpace.s),
+                  Text(
+                    'Edita el nombre visible de la evidencia. La extensión del archivo se conserva.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
-                  onSubmitted: (_) {
-                    if (_canSave) _save();
-                  },
-                ),
-                const SizedBox(height: AppSpace.s),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('Cancelar'),
+                  const SizedBox(height: AppSpace.m),
+                  TextField(
+                    controller: _controller,
+                    autofocus: true,
+                    enabled: !_isSaving,
+                    maxLength: _maximumBaseNameLength,
+                    textInputAction: TextInputAction.done,
+                    decoration: InputDecoration(
+                      labelText: 'Nombre de evidencia (sin extensión)',
+                      suffixText: _extension.isEmpty ? null : _extension,
+                      prefixIcon: const Icon(Icons.edit_outlined),
                     ),
-                    const SizedBox(width: AppSpace.s),
-                    FilledButton.icon(
-                      onPressed: _canSave ? _save : null,
-                      icon: const Icon(Icons.check_rounded),
-                      label: const Text('Guardar'),
-                    ),
-                  ],
-                ),
-              ],
+                    onSubmitted: (_) {
+                      if (_canSave) _save();
+                    },
+                  ),
+                  const SizedBox(height: AppSpace.s),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: _isSaving
+                            ? null
+                            : () => Navigator.of(context).pop(),
+                        child: const Text('Cancelar'),
+                      ),
+                      const SizedBox(width: AppSpace.s),
+                      FilledButton.icon(
+                        onPressed: _canSave && !_isSaving ? _save : null,
+                        icon: _isSaving
+                            ? const SizedBox.square(
+                                dimension: AppSize.iconS,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.check_rounded),
+                        label: Text(_isSaving ? 'Guardando…' : 'Guardar'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -170,9 +192,19 @@ class _EvidenceRenameSheetState extends State<EvidenceRenameSheet> {
     );
   }
 
-  void _save() {
+  Future<void> _save() async {
     if (!_canSave) return;
-    Navigator.of(context).pop('${_controller.text.trim()}$_extension');
+    final displayName = '${_controller.text.trim()}$_extension';
+    setState(() {
+      _isSaving = true;
+    });
+    final error = await widget.onSave(displayName);
+    if (!mounted) return;
+    if (error != null) {
+      Navigator.of(context).pop(error);
+      return;
+    }
+    Navigator.of(context).pop(true);
   }
 }
 

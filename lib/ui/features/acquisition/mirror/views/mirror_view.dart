@@ -49,6 +49,9 @@ class MirrorView extends StatelessWidget {
     final viewModel = context.watch<MirrorViewModel>();
     final compactWindow = MediaQuery.sizeOf(context).width < 600;
     return Scaffold(
+      // Interactive sheets handle the keyboard inset; do not resize the
+      // mirror/evidence panes underneath while a rename sheet is focused.
+      resizeToAvoidBottomInset: false,
       appBar: AppBar(
         backgroundColor: Theme.of(context).cardColor,
         elevation: 0,
@@ -541,19 +544,26 @@ class _EvidencePane extends StatelessWidget {
     BuildContext context,
     RequisitionEvidence evidence,
   ) async {
-    final name = await showAppModalBottomSheet<String>(
+    final result = await showAppModalBottomSheet<Object?>(
       context: context,
+      isDismissible: false,
+      enableDrag: false,
       maxWidth: AppSize.formMaxWidth,
       builder: (_) => EvidenceRenameSheet(
         currentName: evidence.effectiveName,
         originalName: evidence.name,
+        onSave: (name) => viewModel.renameEvidence(evidence, name),
       ),
     );
-    if (!context.mounted || name == null) return;
-    final error = await viewModel.renameEvidence(evidence, name);
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(error ?? 'Nombre de evidencia actualizado.')),
+    if (result is String) {
+      await showAppErrorBottomSheet(context, result);
+      return;
+    }
+    if (result != true) return;
+    await showAppSuccessBottomSheet(
+      context,
+      'Nombre de evidencia actualizado.',
     );
   }
 }

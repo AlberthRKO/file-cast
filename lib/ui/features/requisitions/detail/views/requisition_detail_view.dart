@@ -140,6 +140,10 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
     final categories = viewModel.evidenceCategories;
     final decryptionService = context.read<EvidenceDecryptionService>();
     return Scaffold(
+      // The rename/anchor sheets manage keyboard insets themselves. Keeping
+      // the page behind them at its original height avoids a second resize of
+      // the detail layout while the keyboard is opening.
+      resizeToAvoidBottomInset: false,
       appBar: AppBar(
         title: const Text('Detalle de requisa'),
         backgroundColor: Theme.of(context).cardColor,
@@ -178,69 +182,73 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
               child: const Icon(Icons.add),
             )
           : null,
-      body: Column(
-        children: [
-          AnimatedSize(
-            duration: const Duration(milliseconds: 260),
-            curve: Curves.easeInOut,
-            alignment: Alignment.topCenter,
-            child: _showInfo
-                ? _CaseHeader(
-                    detail: detail,
-                    viewModel: viewModel,
-                    onShowSubjects: () => _showSubjects(context),
-                    onShowParticipants: () => _showParticipants(context),
-                    onShowLocation: () => _showLocation(context),
-                  )
-                : const SizedBox.shrink(),
-          ),
-          Expanded(
-            child: ConstrainedContent(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpace.m,
-                AppSpace.m,
-                AppSpace.m,
-                0,
-              ),
-              child: RefreshIndicator(
-                onRefresh: viewModel.refresh,
-                child: ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: EdgeInsets.only(
-                    bottom:
-                        AppSpace.xxl * 2 +
-                        MediaQuery.viewPaddingOf(context).bottom,
-                  ),
-                  children: [
-                    _EvidenceTotals(categories: categories),
-                    for (final category in categories) ...[
-                      const SizedBox(height: AppSpace.m),
-                      _EvidenceSection(
-                        summary: category,
-                        decryptionService: decryptionService,
-                        onOpenEvidence: (evidence) =>
-                            _showEvidencePreview(context, evidence),
-                        canDeleteEvidence: viewModel.canDeleteEvidence,
-                        isDeletingEvidence: viewModel.isDeletingEvidence,
-                        onDeleteEvidence: (evidence) =>
-                            _deleteEvidence(context, evidence),
-                        canUploadEvidence: viewModel.canUploadEvidence,
-                        isUploadingEvidence: viewModel.isUploadingEvidence,
-                        onUploadEvidence: (evidence) =>
-                            _uploadEvidence(context, evidence),
-                        onRenameEvidence: (evidence) =>
-                            _renameEvidence(context, evidence),
-                        onAnchorEvidence: (evidence) =>
-                            _anchorEvidence(context, evidence),
-                        showSubjectInfo: detail.requisition.cud != null,
-                      ),
+      body: MediaQuery.removeViewInsets(
+        context: context,
+        removeBottom: true,
+        child: Column(
+          children: [
+            AnimatedSize(
+              duration: const Duration(milliseconds: 260),
+              curve: Curves.easeInOut,
+              alignment: Alignment.topCenter,
+              child: _showInfo
+                  ? _CaseHeader(
+                      detail: detail,
+                      viewModel: viewModel,
+                      onShowSubjects: () => _showSubjects(context),
+                      onShowParticipants: () => _showParticipants(context),
+                      onShowLocation: () => _showLocation(context),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+            Expanded(
+              child: ConstrainedContent(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpace.m,
+                  AppSpace.m,
+                  AppSpace.m,
+                  0,
+                ),
+                child: RefreshIndicator(
+                  onRefresh: viewModel.refresh,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: EdgeInsets.only(
+                      bottom:
+                          AppSpace.xxl * 2 +
+                          MediaQuery.viewPaddingOf(context).bottom,
+                    ),
+                    children: [
+                      _EvidenceTotals(categories: categories),
+                      for (final category in categories) ...[
+                        const SizedBox(height: AppSpace.m),
+                        _EvidenceSection(
+                          summary: category,
+                          decryptionService: decryptionService,
+                          onOpenEvidence: (evidence) =>
+                              _showEvidencePreview(context, evidence),
+                          canDeleteEvidence: viewModel.canDeleteEvidence,
+                          isDeletingEvidence: viewModel.isDeletingEvidence,
+                          onDeleteEvidence: (evidence) =>
+                              _deleteEvidence(context, evidence),
+                          canUploadEvidence: viewModel.canUploadEvidence,
+                          isUploadingEvidence: viewModel.isUploadingEvidence,
+                          onUploadEvidence: (evidence) =>
+                              _uploadEvidence(context, evidence),
+                          onRenameEvidence: (evidence) =>
+                              _renameEvidence(context, evidence),
+                          onAnchorEvidence: (evidence) =>
+                              _anchorEvidence(context, evidence),
+                          showSubjectInfo: detail.requisition.cud != null,
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -385,7 +393,8 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
               .map(
                 (participant) => _DisplayPerson(
                   name: viewModel.participantName(participant),
-                  secondary: _participantRoleLabel(participant.role),
+                  secondary: participant.documentNumber,
+                  badgeLabel: _participantRoleLabel(participant.role),
                 ),
               )
               .toList(growable: false),
@@ -481,21 +490,23 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
     BuildContext context,
     RequisitionEvidence evidence,
   ) async {
-    final name = await showAppModalBottomSheet<String>(
+    final result = await showAppModalBottomSheet<Object?>(
       context: context,
+      isDismissible: false,
+      enableDrag: false,
       maxWidth: AppSize.formMaxWidth,
       builder: (_) => EvidenceRenameSheet(
         currentName: evidence.effectiveName,
         originalName: evidence.name,
+        onSave: (name) => viewModel.renameEvidence(evidence, name),
       ),
     );
-    if (!context.mounted || name == null) return;
-    final error = await viewModel.renameEvidence(evidence, name);
     if (!context.mounted) return;
-    if (error != null) {
-      await showAppErrorBottomSheet(context, error);
+    if (result is String) {
+      await showAppErrorBottomSheet(context, result);
       return;
     }
+    if (result != true) return;
     await showAppSuccessBottomSheet(
       context,
       'Nombre de evidencia actualizado.',
@@ -520,8 +531,10 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
       );
       return;
     }
-    final selected = await showAppModalBottomSheet<List<int>>(
+    final result = await showAppModalBottomSheet<Object?>(
       context: context,
+      isDismissible: false,
+      enableDrag: false,
       maxWidth: AppSize.formMaxWidth,
       builder: (_) => CaseSubjectsSheet.fromRequisition(
         subjects: subjects,
@@ -531,15 +544,18 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
         initialSelectedPersonIds: {
           for (final subject in evidence.linkedSubjects) subject.personId,
         },
+        onConfirm: (personIds) => viewModel.setEvidenceSubjects(
+          evidence,
+          personIds,
+        ),
       ),
     );
-    if (!context.mounted || selected == null) return;
-    final error = await viewModel.setEvidenceSubjects(evidence, selected);
     if (!context.mounted) return;
-    if (error != null) {
-      await showAppErrorBottomSheet(context, error);
+    if (result is String) {
+      await showAppErrorBottomSheet(context, result);
       return;
     }
+    if (result != true) return;
     await showAppSuccessBottomSheet(
       context,
       'Sujetos de la evidencia actualizados.',
@@ -1993,11 +2009,17 @@ class _PeoplePair extends StatelessWidget {
 }
 
 class _DisplayPerson {
-  const _DisplayPerson({required this.name, this.secondary, this.details});
+  const _DisplayPerson({
+    required this.name,
+    this.secondary,
+    this.details,
+    this.badgeLabel,
+  });
 
   final String name;
   final String? secondary;
   final String? details;
+  final String? badgeLabel;
 }
 
 List<_DisplayPerson> _subjectPeople(RequisitionDetail detail) {
@@ -2060,7 +2082,7 @@ class _PeopleSheet extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 560),
+          constraints: const BoxConstraints(maxHeight: 620),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(
               AppSpace.m,
@@ -2070,51 +2092,37 @@ class _PeopleSheet extends StatelessWidget {
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(title, style: theme.textTheme.titleMedium),
-                    ),
-                    IconButton(
-                      tooltip: 'Cerrar',
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ],
+                _PeopleSheetHeader(
+                  title: title,
+                  subtitle:
+                      '${people.length} ${people.length == 1 ? 'participante' : 'participantes'}',
                 ),
                 const SizedBox(height: AppSpace.s),
                 Flexible(
                   child: ListView.separated(
                     shrinkWrap: true,
-                    itemCount: people.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
+                    itemCount: people.isEmpty ? 1 : people.length,
+                    separatorBuilder: (_, _) =>
+                        const SizedBox(height: AppSpace.s),
                     itemBuilder: (context, index) {
-                      final person = people[index];
-                      return ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: SvgPicture.asset(
-                          'assets/images/icons/cardEmployee.svg',
-                          width: AppSize.iconM,
-                          height: AppSize.iconM,
-                          colorFilter: ColorFilter.mode(
-                            theme.colorScheme.primary,
-                            BlendMode.srcIn,
+                      if (people.isEmpty) {
+                        return Padding(
+                          padding: const EdgeInsets.all(AppSpace.l),
+                          child: Text(
+                            'No hay participantes registrados en la requisa.',
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
                           ),
-                        ),
-                        title: Text(person.name),
-                        subtitle:
-                            person.secondary == null && person.details == null
-                            ? null
-                            : Text(
-                                [
-                                  if (person.secondary != null)
-                                    person.secondary!,
-                                  if (person.details != null) person.details!,
-                                ].join('\n'),
-                              ),
-                      );
+                        );
+                      }
+                      final person = people[index];
+                      return _PeopleSheetCard(person: person);
                     },
                   ),
                 ),
@@ -2122,6 +2130,172 @@ class _PeopleSheet extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _PeopleSheetHeader extends StatelessWidget {
+  const _PeopleSheetHeader({required this.title, required this.subtitle});
+
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        Container(
+          width: AppSize.minTouchTarget,
+          height: AppSize.minTouchTarget,
+          decoration: BoxDecoration(
+            color: theme.colorScheme.primaryContainer,
+            borderRadius: BorderRadius.circular(AppRadius.m),
+          ),
+          child: Icon(
+            Icons.groups_2_outlined,
+            color: theme.colorScheme.onPrimaryContainer,
+          ),
+        ),
+        const SizedBox(width: AppSpace.s),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              Text(
+                subtitle,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          tooltip: 'Cerrar',
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.close_rounded),
+        ),
+      ],
+    );
+  }
+}
+
+class _PeopleSheetCard extends StatelessWidget {
+  const _PeopleSheetCard({required this.person});
+
+  final _DisplayPerson person;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpace.m),
+      decoration: BoxDecoration(
+        color: theme.cardColor,
+        borderRadius: BorderRadius.circular(AppRadius.m),
+        border: Border.all(
+          color: theme.colorScheme.outline.withValues(alpha: .16),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: .04),
+            blurRadius: 12,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: AppSize.minTouchTarget,
+            height: AppSize.minTouchTarget,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withValues(alpha: .08),
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: SvgPicture.asset(
+              'assets/images/icons/cardEmployee.svg',
+              width: AppSize.iconL,
+              height: AppSize.iconL,
+              colorFilter: ColorFilter.mode(
+                theme.colorScheme.primary,
+                BlendMode.srcIn,
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSpace.m),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (person.secondary?.trim().isNotEmpty == true) ...[
+                  Text(
+                    'C.I. ${person.secondary}',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpace.xs),
+                ],
+                Text(
+                  person.name.toUpperCase(),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (person.badgeLabel?.trim().isNotEmpty == true) ...[
+                  const SizedBox(height: AppSpace.s),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primary.withValues(alpha: .14),
+                        borderRadius: BorderRadius.circular(AppRadius.pill),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpace.s,
+                          vertical: AppSpace.xs,
+                        ),
+                        child: Text(
+                          person.badgeLabel!,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.primary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                if (person.details?.trim().isNotEmpty == true) ...[
+                  const SizedBox(height: AppSpace.xs),
+                  Text(
+                    person.details!,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2568,125 +2742,159 @@ class _CaseLinkSheetState extends State<_CaseLinkSheet> {
                     children: [
                       Row(
                         children: [
+                          Container(
+                            width: AppSize.minTouchTarget,
+                            height: AppSize.minTouchTarget,
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primary.withValues(
+                                alpha: .12,
+                              ),
+                              borderRadius: BorderRadius.circular(AppRadius.m),
+                            ),
+                            child: SvgPicture.asset(
+                              'assets/images/icons/folder.svg',
+                              width: AppSize.iconL,
+                              height: AppSize.iconL,
+                              colorFilter: ColorFilter.mode(
+                                theme.colorScheme.primary,
+                                BlendMode.srcIn,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: AppSpace.s),
                           Expanded(
-                            child: Text(
-                              'Vincular requisa a un CUD',
-                              style: theme.textTheme.titleMedium,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Vincular requisa a un CUD',
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: AppSpace.xs),
+                                Text(
+                                  'Selecciona el caso que corresponde a esta requisa.',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                           IconButton(
                             tooltip: 'Cerrar',
-                            onPressed: () => Navigator.of(context).pop(),
+                            onPressed: viewModel.isLinkingCase
+                                ? null
+                                : () => Navigator.of(context).pop(),
                             icon: const Icon(Icons.close_rounded),
                           ),
                         ],
                       ),
-                      Text(
-                        'Ingresa el CUD, presiona Buscar y selecciona el caso para asociarlo a esta requisa por persona.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
                       const SizedBox(height: AppSpace.m),
-                      LayoutBuilder(
-                        builder: (context, constraints) {
-                          final compact = constraints.maxWidth < 420;
-                          final canSearch =
-                              viewModel.selectedCaseLinkCandidate == null &&
-                              viewModel.caseLinkQuery.trim().length >= 4 &&
-                              viewModel.caseLinkSearchPhase !=
-                                  CaseLinkSearchPhase.loading;
-                          final suggestions = viewModel.caseLinkResults
-                              .map(
-                                (item) =>
-                                    SearchFieldListItem<EcosystemCaseSummary>(
-                                      item.cud,
-                                      item: item,
-                                      child: ListTile(
-                                        dense: true,
-                                        title: Text(item.cud),
-                                        subtitle: Text(
-                                          '${item.type} - ${item.division}',
+                      RequisitionSectionCard(
+                        icon: Icons.search_rounded,
+                        title: 'Buscar caso por CUD',
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final compact = constraints.maxWidth < 420;
+                            final canSearch =
+                                viewModel.selectedCaseLinkCandidate == null &&
+                                viewModel.caseLinkQuery.trim().length >= 4 &&
+                                viewModel.caseLinkSearchPhase !=
+                                    CaseLinkSearchPhase.loading;
+                            final suggestions = viewModel.caseLinkResults
+                                .map(
+                                  (item) =>
+                                      SearchFieldListItem<EcosystemCaseSummary>(
+                                        item.cud,
+                                        item: item,
+                                        child: ListTile(
+                                          dense: true,
+                                          title: Text(item.cud),
+                                          subtitle: Text(
+                                            '${item.type} - ${item.division}',
+                                          ),
                                         ),
                                       ),
+                                )
+                                .toList(growable: false);
+                            final field = Expanded(
+                              child: SearchField<EcosystemCaseSummary>(
+                                controller: _controller,
+                                focusNode: _focusNode,
+                                suggestionState: Suggestion.hidden,
+                                suggestionDirection: SuggestionDirection.down,
+                                maxSuggestionsInViewPort: maxVisibleSuggestions,
+                                itemHeight: 76,
+                                suggestions: suggestions,
+                                suggestionsDecoration: SuggestionDecoration(
+                                  color: theme.cardColor,
+                                  elevation: 6,
+                                  border: Border.all(
+                                    color: theme.colorScheme.outline.withValues(
+                                      alpha: .18,
                                     ),
-                              )
-                              .toList(growable: false);
-                          final field = Expanded(
-                            child: SearchField<EcosystemCaseSummary>(
-                              controller: _controller,
-                              focusNode: _focusNode,
-                              suggestionState: Suggestion.hidden,
-                              suggestionDirection: SuggestionDirection.down,
-                              maxSuggestionsInViewPort: maxVisibleSuggestions,
-                              itemHeight: 76,
-                              suggestions: suggestions,
-                              suggestionsDecoration: SuggestionDecoration(
-                                color: theme.cardColor,
-                                elevation: 6,
-                                border: Border.all(
-                                  color: theme.colorScheme.outline.withValues(
-                                    alpha: .18,
+                                  ),
+                                  borderRadius: BorderRadius.circular(
+                                    AppRadius.s,
                                   ),
                                 ),
-                                borderRadius: BorderRadius.circular(
-                                  AppRadius.s,
+                                onSearchTextChanged: (query) {
+                                  widget.viewModel.updateCaseLinkQuery(query);
+                                  return const <
+                                    SearchFieldListItem<EcosystemCaseSummary>
+                                  >[];
+                                },
+                                onSuggestionTap: (suggestion) {
+                                  final item = suggestion.item;
+                                  if (item == null) return;
+                                  WidgetsBinding.instance.addPostFrameCallback((
+                                    _,
+                                  ) {
+                                    if (mounted) {
+                                      widget.viewModel.selectCaseLinkCandidate(
+                                        item,
+                                      );
+                                    }
+                                  });
+                                },
+                                textInputAction: TextInputAction.search,
+                                onSubmit: (_) {
+                                  if (canSearch) _search();
+                                },
+                                searchStyle: theme.textTheme.bodyLarge,
+                                suggestionStyle: theme.textTheme.bodyMedium,
+                                searchInputDecoration: InputDecoration(
+                                  labelText: 'Buscar por número de CUD',
+                                  prefixIcon: const AppFormInputIcon(
+                                    asset: 'assets/images/icons/search.svg',
+                                  ),
+                                  errorText: viewModel.caseLinkError,
                                 ),
                               ),
-                              onSearchTextChanged: (query) {
-                                widget.viewModel.updateCaseLinkQuery(query);
-                                return const <
-                                  SearchFieldListItem<EcosystemCaseSummary>
-                                >[];
-                              },
-                              onSuggestionTap: (suggestion) {
-                                final item = suggestion.item;
-                                if (item == null) return;
-                                WidgetsBinding.instance.addPostFrameCallback((
-                                  _,
-                                ) {
-                                  if (mounted) {
-                                    widget.viewModel.selectCaseLinkCandidate(
-                                      item,
-                                    );
-                                  }
-                                });
-                              },
-                              textInputAction: TextInputAction.search,
-                              onSubmit: (_) {
-                                if (canSearch) _search();
-                              },
-                              searchStyle: theme.textTheme.bodyLarge,
-                              suggestionStyle: theme.textTheme.bodyMedium,
-                              searchInputDecoration: InputDecoration(
-                                labelText: 'Buscar por número de CUD',
-                                prefixIcon: const AppFormInputIcon(
-                                  asset: 'assets/images/icons/search.svg',
-                                ),
-                                errorText: viewModel.caseLinkError,
-                              ),
-                            ),
-                          );
-                          final searchButton = compact
-                              ? IconButton.filledTonal(
-                                  tooltip: 'Buscar CUD',
-                                  onPressed: canSearch ? _search : null,
-                                  icon: const Icon(Icons.search_rounded),
-                                )
-                              : FilledButton.icon(
-                                  onPressed: canSearch ? _search : null,
-                                  icon: const Icon(Icons.search_rounded),
-                                  label: const Text('Buscar'),
-                                );
-                          return Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              field,
-                              const SizedBox(width: AppSpace.s),
-                              searchButton,
-                            ],
-                          );
-                        },
+                            );
+                            final searchButton = compact
+                                ? IconButton.filledTonal(
+                                    tooltip: 'Buscar CUD',
+                                    onPressed: canSearch ? _search : null,
+                                    icon: const Icon(Icons.search_rounded),
+                                  )
+                                : FilledButton.icon(
+                                    onPressed: canSearch ? _search : null,
+                                    icon: const Icon(Icons.search_rounded),
+                                    label: const Text('Buscar'),
+                                  );
+                            return Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                field,
+                                const SizedBox(width: AppSpace.s),
+                                searchButton,
+                              ],
+                            );
+                          },
+                        ),
                       ),
                       ListenableBuilder(
                         listenable: _focusNode,
