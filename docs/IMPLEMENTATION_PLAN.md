@@ -8,6 +8,15 @@ restricciones operativas del repositorio.
 
 Este documento convierte el objetivo del producto y los tres mockups en un plan técnico. Debe leerse junto con [PROJECT_STATUS_AND_FEASIBILITY.md](PROJECT_STATUS_AND_FEASIBILITY.md), [HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md), [IOS_USB_LIBIMOBILEDEVICE_PLAN.md](IOS_USB_LIBIMOBILEDEVICE_PLAN.md), `AGENTS.md` y las skills Flutter del repositorio. Para trabajar una vista en otra sesión puede usarse [SINGLE_VIEW_REFACTOR_PROMPT.md](SINGLE_VIEW_REFACTOR_PROMPT.md).
 
+La matriz y el plan detallado para recibir objetivos Android/iPhone mediante
+salida HDMI y capturadora UVC están en
+[HDMI_UVC_VIDEO_CAPTURE_IMPLEMENTATION_PLAN.md](HDMI_UVC_VIDEO_CAPTURE_IMPLEMENTATION_PLAN.md).
+Las conexiones físicas de Mirror, Transferencia, Capturadora e Importar están en
+[HDMI_UVC_CABLE_CONNECTION_GUIDE.md](HDMI_UVC_CABLE_CONNECTION_GUIDE.md).
+El soporte multisesión dinámico de N mirrors Android, con ORICO 1/2/3 como
+primera matriz y un hub de seis puertos como ampliación 4/5/6, está en
+[ANDROID_MULTI_MIRROR_USB_HUB_IMPLEMENTATION_PLAN.md](ANDROID_MULTI_MIRROR_USB_HUB_IMPLEMENTATION_PLAN.md).
+
 > Límite de ejecución: las pruebas, compilaciones y validadores mencionados en este plan son criterios de aceptación a cargo del propietario o de una tarea futura que los autorice expresamente. Las sesiones de reestructuración deben limitarse al código y a la inspección del diff.
 
 ## Objetivo del producto
@@ -470,6 +479,12 @@ Estado al 4 de septiembre de 2026: vertical arquitectónica inicial implementada
 
 - contrato de capacidades y estado;
 - refactor de `AdbClient`/plugin detrás de repositorio;
+- clasificar dispositivos USB por interfaces y aceptar como objetivo de Mirror
+  solamente la interfaz ADB exacta `255/66/1`;
+- diagnosticar por separado no enumerado, sin ADB, permiso, claim, handshake y
+  reenumeración;
+- homologar un Android objetivo a través del ORICO usado como OTG de un solo
+  puerto como gate previo a la multisesión obligatoria 1/2/3;
 - conexión obligatoriamente ligada a requisa/sesión;
 - cleanup de lifecycle, cancelación y diagnósticos;
 - ocultar consola shell fuera de debug.
@@ -487,6 +502,41 @@ Estado actualizado al 9 de noviembre de 2026: screenshot binario, control tácti
 - manejo de desconexión/espacio insuficiente.
 
 Salida: archivos reproducibles con hash y manifiesto, vinculados a requisa.
+
+### Fase 4A — Mirror Android multisesión mediante ORICO
+
+Objetivo obligatorio: mantener N Android objetivo con sesiones ADB/scrcpy
+concurrentes e independientes. El ORICO valida primero 1/2/3 y un hub alimentado
+de seis puertos valida después 4/5/6 sin cambiar la arquitectura. La secuencia,
+arquitectura y matriz completas están en
+[ANDROID_MULTI_MIRROR_USB_HUB_IMPLEMENTATION_PLAN.md](ANDROID_MULTI_MIRROR_USB_HUB_IMPLEMENTATION_PLAN.md).
+
+- MM0: diagnosticar el caso inicial de un objetivo que solo carga;
+- MM1: homologar un mirror a través de cada USB-A del ORICO;
+- MM2: reemplazar estado USB/ADB/scrcpy global por registro de sesiones por
+  `sourceSessionId` y `deviceId`;
+- MM3: mantener dos mirrors, control por foco y detach independiente;
+- MM4: mantener tres mirrors con admisión de recursos y calidad adaptativa;
+- MM5: retirar límites fijos y homologar progresivamente 4/5/6 en un hub de seis
+  USB-A;
+- MM6: rutas plurales y workspace responsive 1..N;
+- MM7: soak tests, PD, permutación de puertos, capturas, grabaciones y
+  atribución probatoria por fuente.
+
+Rutas previstas:
+
+```text
+/requisitions/:requisitionId/acquisitions/:sessionId/mirrors/connect
+/requisitions/:requisitionId/acquisitions/:sessionId/mirrors/live
+```
+
+Las rutas singulares actuales continúan como compatibilidad y fallback. Mirror
+múltiple no reescribe ADB/scrcpy: crea una instancia aislada del pipeline
+existente por objetivo.
+
+Salida: N previews activos hasta `maxConcurrentMirrors`, con control dirigido a
+una fuente, acciones por objetivo y desconexión individual sin afectar las otras
+sesiones; primera homologación de tres y ampliación de seis.
 
 ### Fase 5 — transferencia Android
 
@@ -510,7 +560,13 @@ Salida: prueba offline -> reconnect -> sync -> seal sin pérdida ni duplicado.
 
 ### Fase 7 — PoC iOS USB y UVC
 
-- PoC HDMI/UVC para mirror en Lightning y USB-C;
+- PoC HDMI/UVC con la capturadora UGREEN en inspector Android y en iPad Air 4
+  con iPadOS 27, para objetivos Lightning, iPhone USB-C y Android con salida
+  HDMI;
+- conservar sin cambios funcionales el transporte ADB/scrcpy, decoder,
+  recorder, control y ADB Sync ya operativos mientras se demuestra UVC;
+- reutilizar el ORICO homologado en la Fase 4A para probar después una sola
+  capturadora, manteniendo Capturadora y multimirror como adaptadores distintos;
 - PoC `libimobiledevice` en inspector Android para pairing y AFC de solo lectura;
 - gate legal de LGPL/GPL y SBOM del stack nativo;
 - pruebas en iPhone Lightning/USB-C y versiones soportadas;

@@ -10,7 +10,8 @@ Este documento distingue el **dispositivo inspector** —donde corre File Cast�
 | Modo | Inspector | Objetivo | Transporte | Mirror | Control | Archivos |
 |---|---|---|---|---|---|---|
 | A. Android directo | Android teléfono/tablet | Android 5.0+ | USB OTG/host + ADB | Sí | Sí, sujeto a fabricante | Shared storage accesible/selección |
-| B. Mirror iPhone | Android/tablet con UVC | iPhone Lightning/USB-C | Salida de video -> HDMI -> UVC | Sí, solo imagen/audio | No | No por el mismo enlace |
+| A2. Android multimirror | Android inspector + hub USB de datos | N Android 5.0+ | USB-C host -> hub -> N USB-A/ADB | Dinámico; ORICO inicial 1/2/3 y matriz ampliada 4–6 | Uno enfocado a la vez | Transferencia singular por fuente |
+| B. Capturadora HDMI/UVC | Android USB Host o iPad Air 4/iPadOS 27 | iPhone o Android con salida HDMI | Salida de video -> HDMI -> UVC | Sí, solo imagen/audio | No | No por el mismo enlace |
 | C. Archivos iPhone experimental | Android USB Host | iPhone/iPad desbloqueado y confiado | USB OTG + usbmux/lockdownd/AFC | No | No | Solo ubicaciones publicadas por iOS |
 | D. Backup lógico iPhone futuro | Android USB Host | iPhone/iPad desbloqueado y confiado | USB + MobileBackup2 | No | No | Backup lógico, no filesystem físico |
 
@@ -60,6 +61,26 @@ El inspector actúa como USB host y alimenta el bus. Para sesiones largas se rec
 - medidor USB-C opcional para diagnosticar voltaje/corriente/rol, nunca como única evidencia de enlace.
 
 La combinación `inspector -> hub PD -> cable de datos -> objetivo` debe probarse por modelo. Algunos teléfonos cambian de rol o dejan de enumerar ADB cuando el hub intenta cargar ambos lados.
+
+El ORICO aportado por el propietario puede usarse como hub de laboratorio: el
+USB-C upstream va al inspector, cada USB-A de datos va a un periférico y el
+puerto PD recibe el cargador. Que mouse/teclado funcionen o que un objetivo
+cargue no demuestra que exista una interfaz ADB. File Cast actualmente conserva
+una sola conexión/transporte/decoder de Mirror; un hub puede enumerar varios
+teléfonos, pero no habilita tres mirrors simultáneos sin la ampliación
+multisesión obligatoria descrita en
+[ANDROID_MULTI_MIRROR_USB_HUB_IMPLEMENTATION_PLAN.md](ANDROID_MULTI_MIRROR_USB_HUB_IMPLEMENTATION_PLAN.md).
+
+La implementación no fija tres como máximo de software. Un hub alimentado con
+seis USB-A puede ofrecer seis candidatos ADB; File Cast calcula
+`maxConcurrentMirrors` según enumeración y recursos del inspector. El ORICO de
+tres puertos es la primera matriz, y 4/5/6 requieren una segunda homologación.
+
+Usar el ORICO como OTG para **un solo** Android objetivo sí es parte de la
+matriz obligatoria de Mirror. Debe compararse con conexión directa: enumeración
+del `UsbDevice`, interfaz ADB `255/66/1`, permiso, claim, RSA, control, captura,
+grabación y transferencia. Un fallo previo a la enumeración es de topología
+USB/hardware; un fallo posterior a enumerar ADB es corregible en File Cast.
 
 ### Almacenamiento
 
@@ -115,8 +136,9 @@ Mantener Micro-USB OTG y, si el inventario lo justifica, Mini-USB. Verificar ind
 ## Kit para iPhone/iPad
 
 La estrategia vigente evita app compañera y computadora intermedia. Usa un
-inspector Android homologado y dos conexiones separadas: HDMI/UVC para mirror y
-USB de datos para la futura adquisición AFC. Consultar
+inspector Android homologado para HDMI/UVC y futura adquisición AFC; la entrada
+HDMI/UVC también tendrá una implementación AVFoundation en el iPad Air 4 con
+iPadOS 27. Los canales de video y datos permanecen separados. Consultar
 [IOS_USB_LIBIMOBILEDEVICE_PLAN.md](IOS_USB_LIBIMOBILEDEVICE_PLAN.md).
 
 ### Kit de mirror
@@ -126,15 +148,15 @@ Para Lightning:
 - Apple Lightning Digital AV Adapter original;
 - cable HDMI corto certificado;
 - capturadora HDMI -> UVC homologada;
-- cable de salida USB-C de la capturadora hacia el inspector;
-- hub USB-C/OTG alimentado si la matriz confirma que mantiene UVC estable.
+- salida USB-C integrada de la capturadora conectada directamente al inspector
+  Android o iPad Air 4 para la primera matriz.
 
 Para USB-C:
 
 - adaptador USB-C -> HDMI o cable activo compatible con salida de video;
 - cable HDMI corto certificado;
 - capturadora HDMI -> UVC homologada;
-- cable USB-C hacia el inspector.
+- salida USB-C integrada de la capturadora directamente hacia el inspector.
 
 Una capturadora USB-C a USB-C que reciba DisplayPort puede reducir adaptadores
 en iPhone USB-C, pero no reemplaza el Digital AV Adapter en Lightning. El canal
@@ -162,11 +184,18 @@ MHL no participa en ningún flujo iPhone.
 
 Es el canal de mirror seleccionado cuando el objetivo es un iPhone:
 
+La implementación, la cobertura Android/iPhone, el límite de iPhone como
+inspector y la matriz de aceptación se detallan en
+[HDMI_UVC_VIDEO_CAPTURE_IMPLEMENTATION_PLAN.md](HDMI_UVC_VIDEO_CAPTURE_IMPLEMENTATION_PLAN.md).
+
 - adaptador de salida de video original/certificado adecuado al target;
 - cable HDMI corto;
 - capturadora HDMI -> UVC que entregue 1080p30/60 estable;
-- inspector Android con USB host y soporte UVC probado, o Mac;
-- hub alimentado si la capturadora consume demasiado.
+- inspector Android con USB host y soporte UVC probado, o iPad Air 4 con iPadOS
+  27 y AVFoundation;
+- conexión directa para la primera matriz;
+- hub ORICO USB-C como segunda topología, primero con una sola capturadora o un
+  solo objetivo ADB; Revodok/Vention continúan fuera de esta fase.
 
 Limitaciones:
 

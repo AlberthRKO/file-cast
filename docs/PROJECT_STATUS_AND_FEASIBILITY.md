@@ -40,6 +40,7 @@ La recomendación es construir primero un MVP Android de extremo a extremo y man
 | USB host Android | Detección, permisos, attach/detach | Implementado como prototipo |
 | ADB por USB | Handshake RSA, streams multiplexados, shell y push | Implementado como prototipo |
 | Espejo Android | scrcpy server 2.7, H.264, `MediaCodec` y `Texture` | Demostrado en código |
+| Mirror Android N mediante hub | Sesión ADB/scrcpy por objetivo; ORICO 1/2/3 inicial y hub de seis puertos como ampliación | Plan obligatorio; actualmente el plugin solo mantiene una sesión global y el primer ensayo mediante hub solo cargó |
 | Control Android | Touch, arrastre, mouse/trackpad y teclas por canal scrcpy 2.7 | Implementado y validado en hardware por el propietario; algunos fabricantes requieren un ajuste de seguridad adicional |
 | Foto de la pantalla | `exec:screencap -p`, PNG privado, validación de firma y SHA-256 | Implementado como vertical local |
 | Grabación | Inicio confirmado en keyframe posterior al toque, muestras H.264 nativas, `MediaMuxer`, contador alineado, MP4 privado y SHA-256 | Implementado en código; requiere revalidación física del MP4 generado |
@@ -110,6 +111,11 @@ La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto,
 8. **scrcpy 2.7 está congelado dentro del APK.** El proyecto oficial ya publica una versión posterior y registra correcciones para Android recientes. Actualizar no es solo reemplazar el JAR: cambian opciones y protocolo. Se requiere política de versionado, hash permitido, matriz de compatibilidad y pruebas de regresión.
 9. **Diagnóstico visible en UI.** La consola arbitraria fue retirada; el panel actual es de solo lectura y muestra tamaños, último gesto, estado del stream, confirmaciones ADB y salida de scrcpy-server. Debe ocultarse o condicionarse en builds operativos si los logs contienen datos sensibles.
 10. **Licencias de terceros.** El repositorio no contiene un archivo de licencia/avisos para el servidor scrcpy distribuido. Debe incorporarse el cumplimiento Apache-2.0 y el inventario SBOM.
+11. **Mirror multisesión no implementado.** `UsbPlugin` y el servicio Dart
+    conservan una sola conexión, transporte, textura, decoder, recorder y sesión.
+    El objetivo obligatorio es migrar a un registro dinámico por `deviceId`,
+    validar 1/2/3 mediante el ORICO y ampliar a 4/5/6 con otro hub, sin
+    reescribir el protocolo ADB/scrcpy ni hardcodear la cantidad de fuentes.
 
 ### P1 — riesgos de producto y datos
 
