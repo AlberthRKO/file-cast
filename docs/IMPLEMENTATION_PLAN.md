@@ -443,7 +443,8 @@ Requisitos:
 
 ### Fase 0 — alcance, laboratorio y toolchain
 
-- fijar Flutter/Dart en FVM/mise y CI;
+- Flutter 3.44/Dart 3.12 fijados localmente mediante `.fvmrc`; falta replicarlo
+  en CI;
 - definir versiones mínimas y matriz de dispositivos;
 - aprobar política legal/consentimiento/custodia;
 - crear set de archivos/pantallas conocidos para validación;
@@ -511,11 +512,14 @@ de seis puertos valida después 4/5/6 sin cambiar la arquitectura. La secuencia,
 arquitectura y matriz completas están en
 [ANDROID_MULTI_MIRROR_USB_HUB_IMPLEMENTATION_PLAN.md](ANDROID_MULTI_MIRROR_USB_HUB_IMPLEMENTATION_PLAN.md).
 
-- MM0: diagnosticar el caso inicial de un objetivo que solo carga;
-- MM1: homologar un mirror a través de cada USB-A del ORICO;
-- MM2: reemplazar estado USB/ADB/scrcpy global por registro de sesiones por
-  `sourceSessionId` y `deviceId`;
-- MM3: mantener dos mirrors, control por foco y detach independiente;
+- MM0: distinguir host inactivo, MTP sin ADB y ADB listo; la prueba USB-C
+  actual ya alcanza MTP/galería y queda pendiente exponer/autorizar ADB;
+- MM1: homologar un mirror a través de cada USB-A del ORICO (código multi listo;
+  pendiente hardware);
+- MM2: registro de sesiones por `sourceSessionId` y `deviceId` implementado,
+  preservando la API singular;
+- MM3: selección múltiple, dos mirrors, control por foco y detach independiente
+  implementados en código;
 - MM4: mantener tres mirrors con admisión de recursos y calidad adaptativa;
 - MM5: retirar límites fijos y homologar progresivamente 4/5/6 en un hub de seis
   USB-A;
@@ -533,6 +537,14 @@ Rutas previstas:
 Las rutas singulares actuales continúan como compatibilidad y fallback. Mirror
 múltiple no reescribe ADB/scrcpy: crea una instancia aislada del pipeline
 existente por objetivo.
+
+Estado al 17 de noviembre de 2026: el mirror individual limita preventivamente
+el borde de video a 1600 px en objetivos mayores; 2/3/N sesiones parten de
+1280/1024/800 px. Todos conservan una escala descendente. Un rechazo del socket
+porque el proceso scrcpy terminó durante un reinicio se considera recuperable,
+el cleanup espera la liberación del encoder OEM y continúa con el siguiente
+tamaño. El transporte aplica contrapresión solo al stream H.264 para evitar
+latencia acumulada sin afectar control, shell ni transferencia.
 
 Salida: N previews activos hasta `maxConcurrentMirrors`, con control dirigido a
 una fuente, acciones por objetivo y desconexión individual sin afectar las otras

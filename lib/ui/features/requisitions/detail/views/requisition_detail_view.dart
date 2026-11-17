@@ -266,6 +266,11 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
             sheetContext,
             () => _openAcquisition(context, transfer: false),
           ),
+          onMultiMirror: () => _closeThen(
+            context,
+            sheetContext,
+            () => _openMultiMirror(context),
+          ),
           onTransfer: () => _closeThen(
             context,
             sheetContext,
@@ -342,6 +347,22 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
         'sessionId': sessionId,
       },
       queryParameters: transfer ? {'destination': 'transfer'} : const {},
+    );
+  }
+
+  Future<void> _openMultiMirror(BuildContext context) async {
+    if (!viewModel.supportsAndroidUsbAcquisition) return;
+    final sessionId = await viewModel.ensureAcquisitionSession(
+      sourcePlatform: 'ANDROID',
+      transport: 'USB_OTG_SCRCPY_MULTI',
+    );
+    if (!context.mounted || sessionId == null) return;
+    context.pushNamed(
+      AppRouteName.multiMirrorConnect,
+      pathParameters: {
+        'requisitionId': detail.requisition.id,
+        'sessionId': sessionId,
+      },
     );
   }
 
@@ -3705,12 +3726,14 @@ class _AcquisitionActionSheet extends StatelessWidget {
   const _AcquisitionActionSheet({
     required this.showAndroidUsbActions,
     required this.onCapture,
+    required this.onMultiMirror,
     required this.onTransfer,
     required this.onImport,
     required this.isImporting,
   });
   final bool showAndroidUsbActions;
   final VoidCallback onCapture;
+  final VoidCallback onMultiMirror;
   final VoidCallback onTransfer;
   final VoidCallback onImport;
   final bool isImporting;
@@ -3725,6 +3748,12 @@ class _AcquisitionActionSheet extends StatelessWidget {
           subtitle: 'Conecta el dispositivo e inicia la captura.',
           asset: 'camera.svg',
           onTap: onCapture,
+        ),
+        _ActionData(
+          title: 'Mirror múltiple',
+          subtitle: 'Conecta varios Android mediante un hub USB.',
+          asset: 'camera.svg',
+          onTap: onMultiMirror,
         ),
         _ActionData(
           title: 'Transferencia de archivos',

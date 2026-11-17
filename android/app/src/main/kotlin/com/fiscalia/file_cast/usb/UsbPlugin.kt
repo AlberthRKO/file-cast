@@ -27,6 +27,9 @@ import java.security.MessageDigest
 import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.ConcurrentHashMap
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 class UsbPlugin(private val context: Context, private val flutterEngine: FlutterEngine) {
 
@@ -54,10 +57,16 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     private var resultCalled = false
     private var pendingHandshakeResult: MethodChannel.Result? = null
     private var pendingHandshakeDevice: UsbDevice? = null
+    private var activeDeviceName: String? = null
     private var waitingForReattach = false
     private var handshakeGeneration = 0
+    @Volatile private var lastAdbLog: String = ""
     @Volatile private var activeSyncClient: AdbSyncClient? = null
     private val fileTransferRunning = AtomicBoolean(false)
+    private val adbDeviceMetadata = context.getSharedPreferences(
+        "file_cast_adb_device_metadata",
+        Context.MODE_PRIVATE,
+    )
 
     // Mirror components
     private var mirrorTextureEntry: TextureRegistry.SurfaceTextureEntry? = null
@@ -79,6 +88,14 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     private val recorderLock = Any()
     private var pendingRecordingStartResult: MethodChannel.Result? = null
     private var recordingStartTimeout: Runnable? = null
+
+    /**
+     * Multi-mirror sessions are deliberately isolated from the legacy single
+     * mirror fields above.  The existing routes keep using the legacy session;
+     * the map lets a hub host N independent ADB/scrcpy transports without
+     * sharing a connection, decoder, texture or recorder.
+     */
+    private val multiSessions = ConcurrentHashMap<String, MultiMirrorState>()
 
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -125,7 +142,15 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                             waitingForReattach = true
                         }
 
-                        disconnectAdb()
+                        val multi = multiSessions.values.firstOrNull {
+                            it.device.deviceName == device.deviceName
+                        }
+                        if (multi != null) {
+                            disconnectMultiSession(multi.sourceSessionId, notify = true)
+                        } else if (pendingHandshakeDevice?.deviceName == device.deviceName ||
+                            activeDeviceName == device.deviceName) {
+                            disconnectAdb()
+                        }
                         sendEvent("device_detached", deviceToMap(device))
                     }
                 }
@@ -152,6 +177,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
 
     fun unregister() {
         disconnectAdb()
+        multiSessions.keys.toList().forEach { disconnectMultiSession(it, notify = false) }
         try {
             context.unregisterReceiver(usbReceiver)
         } catch (_: Exception) {}
@@ -182,14 +208,105 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     disconnectAdb()
                     result.success(true)
                 }
+                "multiConnectAdb" -> {
+                    val sourceSessionId = call.argument<String>("sourceSessionId")
+                    val deviceName = call.argument<String>("deviceName")
+                    if (sourceSessionId == null || deviceName == null) {
+                        result.error("INVALID_ARGS", "sourceSessionId and deviceName are required", null)
+                    } else {
+                        connectMultiAdb(sourceSessionId, deviceName, result)
+                    }
+                }
+                "multiPushFile" -> {
+                    val sourceSessionId = call.argument<String>("sourceSessionId")
+                    val localPath = call.argument<String>("localPath")
+                    val remotePath = call.argument<String>("remotePath")
+                    if (sourceSessionId == null || localPath == null || remotePath == null) {
+                        result.error("INVALID_ARGS", "sourceSessionId, localPath and remotePath are required", null)
+                    } else {
+                        multiPushFile(sourceSessionId, localPath, remotePath, result)
+                    }
+                }
+                "multiStartPersistentShell" -> {
+                    val sourceSessionId = call.argument<String>("sourceSessionId")
+                    val command = call.argument<String>("command")
+                    if (sourceSessionId == null || command == null) {
+                        result.error("INVALID_ARGS", "sourceSessionId and command are required", null)
+                    } else {
+                        multiStartPersistentShell(sourceSessionId, command, result)
+                    }
+                }
+                "multiShellCommand" -> {
+                    val sourceSessionId = call.argument<String>("sourceSessionId")
+                    val command = call.argument<String>("command")
+                    if (sourceSessionId == null || command == null) {
+                        result.error("INVALID_ARGS", "sourceSessionId and command are required", null)
+                    } else {
+                        multiShellCommand(sourceSessionId, command, result)
+                    }
+                }
+                "multiConnectScrcpySockets" -> {
+                    val sourceSessionId = call.argument<String>("sourceSessionId")
+                    if (sourceSessionId == null) {
+                        result.error("INVALID_ARGS", "sourceSessionId is required", null)
+                    } else {
+                        multiConnectScrcpySockets(sourceSessionId, result)
+                    }
+                }
+                "multiCreateMirrorTexture" -> {
+                    val sourceSessionId = call.argument<String>("sourceSessionId")
+                    if (sourceSessionId == null) {
+                        result.error("INVALID_ARGS", "sourceSessionId is required", null)
+                    } else {
+                        multiCreateMirrorTexture(sourceSessionId, result)
+                    }
+                }
+                "multiStartMirror" -> {
+                    val sourceSessionId = call.argument<String>("sourceSessionId")
+                    val width = call.argument<Number>("width")?.toInt()
+                    val height = call.argument<Number>("height")?.toInt()
+                    val localId = call.argument<Number>("videoStreamLocalId")?.toInt()
+                    if (sourceSessionId == null || width == null || height == null || localId == null) {
+                        result.error("INVALID_ARGS", "sourceSessionId, width, height and videoStreamLocalId are required", null)
+                    } else {
+                        multiStartMirror(sourceSessionId, width, height, localId, result)
+                    }
+                }
+                "multiStopMirror" -> {
+                    val sourceSessionId = call.argument<String>("sourceSessionId")
+                    if (sourceSessionId == null) {
+                        result.error("INVALID_ARGS", "sourceSessionId is required", null)
+                    } else {
+                        stopMultiMirror(sourceSessionId)
+                        result.success(mapOf("stopped" to true))
+                    }
+                }
+                "multiDisconnectAdb" -> {
+                    val sourceSessionId = call.argument<String>("sourceSessionId")
+                    if (sourceSessionId == null) {
+                        result.error("INVALID_ARGS", "sourceSessionId is required", null)
+                    } else {
+                        disconnectMultiSession(sourceSessionId, notify = false)
+                        result.success(true)
+                    }
+                }
+                "multiSendTouch" -> multiSendTouch(call, result)
+                "multiSendKey" -> multiSendKey(call, result)
+                "multiSendScroll" -> multiSendScroll(call, result)
+                "multiCaptureScreenshot" -> multiCaptureScreenshot(call, result)
+                "multiStartScreenRecording" -> multiStartScreenRecording(call, result)
+                "multiStopScreenRecording" -> multiStopScreenRecording(call, result)
+                "multiGetMirrorLog" -> multiGetMirrorLog(call, result)
+                "getMultiSessions" -> result.success(multiSessions.values.map { it.toMap() })
                 "getAdbState" -> {
                     result.success(mapOf(
                         "connected" to (adbTransport?.isAdbConnected() ?: false)
                     ))
                 }
                 "getAdbLog" -> {
+                    val activeLog = adbTransport?.getLog().orEmpty()
                     result.success(mapOf(
-                        "log" to (adbTransport?.getLog() ?: "")
+                        "log" to (activeLog.ifBlank { lastAdbLog })
                     ))
                 }
                 "shellCommand" -> {
@@ -656,6 +773,9 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                             mirrorVideoWidth = width
                             mirrorVideoHeight = height
                             surfaceTexture.setDefaultBufferSize(width, height)
+                            if (!transport.enableVideoFlowControl(localId)) {
+                                throw IllegalStateException("El stream de video $localId ya no está disponible")
+                            }
                             val surface = Surface(surfaceTexture)
 
                             val decoder = ScrcpyDecoder()
@@ -680,9 +800,17 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                                 }
                             )
                             if (!started) {
-                                Log.e(TAG, "Decoder failed to start after retries")
+                                val codecError = decoder.getLastStartError()
+                                    ?: "El decodificador H.264 del inspector no aceptó ${width}x$height"
+                                Log.e(TAG, "Decoder failed to start after retries: $codecError")
+                                decoder.stop()
+                                scrcpyDecoder = null
                                 mainHandler.post {
-                                    result.error("CODEC_ERROR", "MediaCodec failed to start after 3 attempts. Error 0xffffec77 may indicate insufficient codec resources.", null)
+                                    result.error("CODEC_ERROR", codecError, mapOf(
+                                        "width" to width,
+                                        "height" to height,
+                                        "retryableAtLowerResolution" to true,
+                                    ))
                                 }
                                 return@Thread
                             }
@@ -722,6 +850,8 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                             }
                         } catch (e: Exception) {
                             Log.e(TAG, "startMirror error: ${e.message}", e)
+                            scrcpyDecoder?.stop()
+                            scrcpyDecoder = null
                             mainHandler.post {
                                 result.error("MIRROR_ERROR", e.message ?: "Failed to start mirror", null)
                             }
@@ -830,30 +960,33 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                         result.error("NOT_CONNECTED", "ADB not connected", null)
                         return@setMethodCallHandler
                     }
-                    try {
-                        val output = transport.shellCommand("wm size")
-                        val match = Regex("Physical size: (\\d+)x(\\d+)").find(output)
-                        if (match != null) {
-                            val w = match.groupValues[1].toInt()
-                            val h = match.groupValues[2].toInt()
-                            Log.d(TAG, "Device screen size: ${w}x${h}")
-                            result.success(mapOf("width" to w, "height" to h))
-                        } else {
-                            val matchOverride = Regex("Override size: (\\d+)x(\\d+)").find(output)
-                            if (matchOverride != null) {
-                                val w = matchOverride.groupValues[1].toInt()
-                                val h = matchOverride.groupValues[2].toInt()
-                                Log.d(TAG, "Device screen size (override): ${w}x${h}")
-                                result.success(mapOf("width" to w, "height" to h))
+                    Thread {
+                        try {
+                            val output = transport.shellCommand("wm size")
+                            val matches = Regex("(?:Physical|Override) size: (\\d+)x(\\d+)")
+                                .findAll(output)
+                                .toList()
+                            val match = matches.lastOrNull()
+                            if (match != null) {
+                                val w = match.groupValues[1].toInt()
+                                val h = match.groupValues[2].toInt()
+                                Log.d(TAG, "Device effective screen size: ${w}x${h}")
+                                mainHandler.post {
+                                    result.success(mapOf("width" to w, "height" to h))
+                                }
                             } else {
                                 Log.e(TAG, "Could not parse wm size output: $output")
-                                result.error("PARSE_ERROR", "Could not parse screen size: $output", null)
+                                mainHandler.post {
+                                    result.error("PARSE_ERROR", "Could not parse screen size: $output", null)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "getDeviceScreenSize error: ${e.message}")
+                            mainHandler.post {
+                                result.error("SCREEN_SIZE_ERROR", e.message, null)
                             }
                         }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "getDeviceScreenSize error: ${e.message}")
-                        result.error("SCREEN_SIZE_ERROR", e.message, null)
-                    }
+                    }.apply { name = "GetDeviceScreenSize"; isDaemon = true; start() }
                 }
                 "sendTouch" -> {
                     val controlId = controlStreamLocalId
@@ -1259,11 +1392,23 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     }
 
     private fun isOtgSupported(): Boolean {
-        return context.packageManager.hasSystemFeature("android.hardware.usb.host")
+        // Some OEMs omit the feature declaration even while their framework
+        // enumerates peripherals correctly. A live device list is conclusive.
+        return context.packageManager.hasSystemFeature("android.hardware.usb.host") ||
+            usbManager.deviceList.isNotEmpty()
     }
 
     private fun getConnectedDevices(): List<Map<String, Any?>> {
-        return usbManager.deviceList.values.map { deviceToMap(it) }
+        return usbManager.deviceList.values.mapNotNull { device ->
+            try {
+                deviceToMap(device)
+            } catch (error: Exception) {
+                // A malformed or permission-protected descriptor must not hide
+                // every other device connected behind the same USB hub.
+                Log.e(TAG, "Could not inspect USB device ${device.deviceName}", error)
+                null
+            }
+        }
     }
 
     private fun hasPermission(deviceName: String?): Boolean {
@@ -1272,8 +1417,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     }
 
     private fun requestPermission(deviceName: String?, result: MethodChannel.Result) {
-        val device = findDeviceByName(deviceName)
-        if (device == null) {
+        val device: UsbDevice = findDeviceByName(deviceName) ?: run {
             result.error("DEVICE_NOT_FOUND", "Device not found: $deviceName", null)
             return
         }
@@ -1284,21 +1428,23 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         }
 
         pendingDevice = device
+        usbManager.requestPermission(device, createUsbPermissionIntent())
+        result.success(null)
+    }
+
+    private fun createUsbPermissionIntent(): PendingIntent {
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
         } else {
             PendingIntent.FLAG_UPDATE_CURRENT
         }
 
-        val permissionIntent = PendingIntent.getBroadcast(
+        return PendingIntent.getBroadcast(
             context,
             0,
             Intent(ACTION_USB_PERMISSION).setPackage(context.packageName),
             flags,
         )
-
-        usbManager.requestPermission(device, permissionIntent)
-        result.success(null)
     }
 
     private fun openDevice(deviceName: String?, result: MethodChannel.Result) {
@@ -1344,6 +1490,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         }
         resultCalled = false
         waitingForReattach = false
+        lastAdbLog = ""
 
         val device = findDeviceByName(deviceName)
         if (device == null) {
@@ -1386,6 +1533,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         currentConnection = connection
         pendingHandshakeResult = result
         pendingHandshakeDevice = device
+        activeDeviceName = device.deviceName
 
         Log.d(TAG, "Starting ADB handshake thread...")
         val handshakeThread = Thread {
@@ -1394,6 +1542,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                 adbTransport = transport
 
                 transport.setOnStateChangedListener { state, message, log ->
+                    lastAdbLog = log
                     Log.d(TAG, "ADB state: $state, message: $message")
                     mainHandler.post {
                         sendEvent("adb_state", mapOf(
@@ -1420,6 +1569,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
 
                 postResult(result, generation) {
                     if (success) {
+                        rememberAdbProductModel(device, transport.getRemoteProductModel())
                         result.success(mapOf(
                             "connected" to true,
                             "deviceName" to device.deviceName
@@ -1445,6 +1595,9 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                 Log.e(TAG, "HANDSHAKE GLOBAL TIMEOUT")
                 resultCalled = true
                 waitingForReattach = false
+                adbTransport?.getLog()?.takeIf { it.isNotBlank() }?.let {
+                    lastAdbLog = it
+                }
                 adbTransport?.disconnect()
                 adbTransport = null
                 connection.close()
@@ -1490,10 +1643,14 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         mirrorVideoWidth = 0
         mirrorVideoHeight = 0
         val transport = adbTransport
+        transport?.getLog()?.takeIf { it.isNotBlank() }?.let {
+            lastAdbLog = it
+        }
         adbTransport = null
         transport?.disconnect()
         currentConnection?.close()
         currentConnection = null
+        activeDeviceName = null
     }
 
     private fun findDeviceByName(deviceName: String?): UsbDevice? {
@@ -1501,19 +1658,700 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         return usbManager.deviceList.values.find { it.deviceName == deviceName }
     }
 
+    // ---------------------------------------------------------------------
+    // Multi-mirror transport registry
+    // ---------------------------------------------------------------------
+
+    private fun connectMultiAdb(
+        sourceSessionId: String,
+        deviceName: String,
+        result: MethodChannel.Result,
+    ) {
+        val existing = multiSessions[sourceSessionId]
+        if (existing?.transport?.isAdbConnected() == true) {
+            result.success(mapOf("connected" to true, "reused" to true, "sourceSessionId" to sourceSessionId))
+            return
+        }
+        val device: UsbDevice = findDeviceByName(deviceName) ?: run {
+            result.error("DEVICE_NOT_FOUND", "Device not found: $deviceName", null)
+            return
+        }
+        if (!hasAdbInterface(device)) {
+            result.error("NO_ADB_INTERFACE", "El dispositivo no expone una interfaz ADB", null)
+            return
+        }
+        if (!usbManager.hasPermission(device)) {
+            result.error("NO_PERMISSION", "No permission for device: $deviceName", null)
+            return
+        }
+        val firstConnection: android.hardware.usb.UsbDeviceConnection =
+            usbManager.openDevice(device) ?: run {
+                result.error("OPEN_FAILED", "Failed to open device: $deviceName", null)
+                return
+            }
+        val deviceNamesBeforeHandshake = usbManager.deviceList.keys.toSet()
+        Thread {
+            var currentDevice = device
+            var currentConnection = firstConnection
+            var lastError = "ADB handshake failed"
+
+            for (attempt in 0..1) {
+                val transport = UsbAdbTransport(currentDevice, currentConnection, adbAuth)
+                try {
+                    if (!transport.findAdbInterface()) {
+                        throw IllegalStateException("No exact ADB interface found")
+                    }
+                    if (!transport.handshake()) {
+                        throw IllegalStateException("ADB handshake failed")
+                    }
+                    rememberAdbProductModel(currentDevice, transport.getRemoteProductModel())
+                    val state = MultiMirrorState(
+                        sourceSessionId = sourceSessionId,
+                        device = currentDevice,
+                        connection = currentConnection,
+                        transport = transport,
+                    )
+                    multiSessions[sourceSessionId]?.let {
+                        disconnectMultiSession(sourceSessionId, notify = false)
+                    }
+                    multiSessions[sourceSessionId] = state
+                    mainHandler.post {
+                        result.success(
+                            mapOf(
+                                "connected" to true,
+                                "sourceSessionId" to sourceSessionId,
+                                "deviceName" to currentDevice.deviceName,
+                                "rsaFingerprint" to adbAuth.getKeyFingerprint(),
+                            ),
+                        )
+                        sendEvent("multi_adb_state", mapOf(
+                            "sourceSessionId" to sourceSessionId,
+                            "state" to "connected",
+                            "deviceName" to currentDevice.deviceName,
+                        ))
+                    }
+                    return@Thread
+                } catch (error: Exception) {
+                    lastError = error.message ?: "No se pudo conectar ADB"
+                    transport.disconnect()
+                    currentConnection.close()
+                }
+
+                if (attempt == 0) {
+                    mainHandler.post {
+                        sendEvent("multi_adb_state", mapOf(
+                            "sourceSessionId" to sourceSessionId,
+                            "state" to "reenumerating",
+                            "message" to "Esperando la reconexión posterior a la autorización RSA",
+                        ))
+                    }
+                    val reenumerated = waitForMultiAdbDevice(
+                        previous = currentDevice,
+                        deviceNamesBeforeHandshake = deviceNamesBeforeHandshake,
+                        timeoutMs = 15_000L,
+                    )
+                    if (reenumerated != null) {
+                        val reopened = usbManager.openDevice(reenumerated)
+                        if (reopened != null) {
+                            currentDevice = reenumerated
+                            currentConnection = reopened
+                            continue
+                        }
+                        lastError = "El dispositivo reapareció, pero Android no pudo abrirlo"
+                    } else {
+                        lastError =
+                            "El dispositivo no reapareció con permiso ADB después de la autorización RSA"
+                    }
+                }
+            }
+
+            mainHandler.post {
+                result.error("MULTI_ADB_ERROR", lastError, null)
+                sendEvent("multi_adb_state", mapOf(
+                    "sourceSessionId" to sourceSessionId,
+                    "state" to "error",
+                    "message" to lastError,
+                ))
+            }
+        }.apply {
+            name = "MultiAdbHandshake-$sourceSessionId"
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun waitForMultiAdbDevice(
+        previous: UsbDevice,
+        deviceNamesBeforeHandshake: Set<String>,
+        timeoutMs: Long,
+    ): UsbDevice? {
+        val previousSerial = if (usbManager.hasPermission(previous)) {
+            safeUsbString { previous.serialNumber }
+        } else {
+            null
+        }
+        val deadline = System.currentTimeMillis() + timeoutMs
+        val permissionRequests = mutableSetOf<String>()
+        while (System.currentTimeMillis() < deadline) {
+            val activeNames = multiSessions.values.map { it.device.deviceName }.toSet()
+            val candidates = usbManager.deviceList.values.filter { candidate ->
+                candidate.deviceName !in activeNames &&
+                    candidate.vendorId == previous.vendorId &&
+                    candidate.productId == previous.productId &&
+                    hasAdbInterface(candidate)
+            }
+            val serialMatch = previousSerial?.let { expected ->
+                candidates.firstOrNull { candidate ->
+                    usbManager.hasPermission(candidate) &&
+                        safeUsbString { candidate.serialNumber } == expected
+                }
+            }
+            val match = serialMatch
+                ?: candidates.firstOrNull { it.deviceName == previous.deviceName }
+                ?: candidates.filter {
+                    it.deviceName !in deviceNamesBeforeHandshake
+                }.singleOrNull()
+                ?: candidates.singleOrNull()
+            if (match != null) {
+                if (usbManager.hasPermission(match)) return match
+                if (permissionRequests.add(match.deviceName)) {
+                    mainHandler.post {
+                        sendEvent("multi_adb_state", mapOf(
+                            "state" to "permission_required",
+                            "deviceName" to match.deviceName,
+                            "message" to "Confirma nuevamente el acceso USB después de la reenumeración ADB",
+                        ))
+                        try {
+                            usbManager.requestPermission(match, createUsbPermissionIntent())
+                        } catch (error: Exception) {
+                            Log.e(TAG, "Could not request permission after ADB re-enumeration", error)
+                        }
+                    }
+                }
+            }
+            try {
+                Thread.sleep(350L)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return null
+            }
+        }
+        return null
+    }
+
+    private fun multiState(sourceSessionId: String, result: MethodChannel.Result): MultiMirrorState? {
+        val state = multiSessions[sourceSessionId]
+        if (state == null || !state.transport.isAdbConnected()) {
+            result.error("NOT_CONNECTED", "La sesión multi no está conectada", null)
+            return null
+        }
+        return state
+    }
+
+    private fun multiPushFile(sourceSessionId: String, localPath: String, remotePath: String, result: MethodChannel.Result) {
+        val state = multiState(sourceSessionId, result) ?: return
+        Thread {
+            try {
+                val success = state.transport.pushFile(localPath, remotePath)
+                mainHandler.post { result.success(mapOf("success" to success, "sourceSessionId" to sourceSessionId)) }
+            } catch (error: Exception) {
+                mainHandler.post { result.error("MULTI_PUSH_ERROR", error.message ?: "No se pudo preparar scrcpy", null) }
+            }
+        }.apply { name = "MultiPushFile-$sourceSessionId"; isDaemon = true; start() }
+    }
+
+    private fun multiStartPersistentShell(sourceSessionId: String, command: String, result: MethodChannel.Result) {
+        val state = multiState(sourceSessionId, result) ?: return
+        Thread {
+            try {
+                val localId = state.transport.startPersistentShell(command)
+                state.serverShellLocalId = localId
+                mainHandler.post { result.success(mapOf("localId" to localId, "sourceSessionId" to sourceSessionId)) }
+            } catch (error: Exception) {
+                mainHandler.post { result.error("MULTI_SHELL_ERROR", error.message ?: "No se pudo iniciar scrcpy", null) }
+            }
+        }.apply { name = "MultiShell-$sourceSessionId"; isDaemon = true; start() }
+    }
+
+    private fun multiShellCommand(sourceSessionId: String, command: String, result: MethodChannel.Result) {
+        val state = multiState(sourceSessionId, result) ?: return
+        Thread {
+            try {
+                val output = state.transport.shellCommand(command)
+                mainHandler.post { result.success(mapOf("output" to output, "sourceSessionId" to sourceSessionId)) }
+            } catch (error: Exception) {
+                mainHandler.post { result.error("MULTI_SHELL_ERROR", error.message ?: "No se pudo ejecutar el comando", null) }
+            }
+        }.apply { name = "MultiShellCommand-$sourceSessionId"; isDaemon = true; start() }
+    }
+
+    private fun multiConnectScrcpySockets(sourceSessionId: String, result: MethodChannel.Result) {
+        val state = multiState(sourceSessionId, result) ?: return
+        Thread {
+            var videoLocalId: Int? = null
+            var controlLocalId: Int? = null
+            try {
+                val video = state.transport.openStream("localabstract:scrcpy", 10_000L)
+                videoLocalId = video.localId
+                val control = state.transport.openStream("localabstract:scrcpy", 10_000L)
+                controlLocalId = control.localId
+                val dummy = state.transport.readStreamExact(video.localId, 1)
+                    ?: throw IllegalStateException("scrcpy no devolvió el encabezado")
+                val nameBytes = state.transport.readStreamExact(video.localId, 64)
+                    ?: throw IllegalStateException("scrcpy no devolvió el nombre")
+                val nameEnd = nameBytes.indexOfFirst { it.toInt() == 0 }
+                val deviceName = String(nameBytes, 0, if (nameEnd > 0) nameEnd else 64, Charsets.UTF_8)
+                val meta = state.transport.readStreamExact(video.localId, 12)
+                    ?: throw IllegalStateException("scrcpy no devolvió las dimensiones")
+                val buffer = ByteBuffer.wrap(meta).order(ByteOrder.BIG_ENDIAN)
+                buffer.int // codec id
+                val width = buffer.int
+                val height = buffer.int
+                state.videoStreamLocalId = video.localId
+                state.controlStreamLocalId = control.localId
+                state.videoWidth = width
+                state.videoHeight = height
+                state.screenWidth = width
+                state.screenHeight = height
+                mainHandler.post {
+                    result.success(mapOf(
+                        "sourceSessionId" to sourceSessionId,
+                        "deviceName" to deviceName,
+                        "width" to width,
+                        "height" to height,
+                        "localId" to video.localId,
+                        "controlLocalId" to control.localId,
+                    ))
+                }
+            } catch (error: Exception) {
+                controlLocalId?.let { state.transport.closeStream(it) }
+                videoLocalId?.let { state.transport.closeStream(it) }
+                mainHandler.post { result.error("MULTI_SCRCPY_ERROR", error.message ?: "No se pudo abrir scrcpy", null) }
+            }
+        }.apply { name = "MultiScrcpySockets-$sourceSessionId"; isDaemon = true; start() }
+    }
+
+    private fun multiCreateMirrorTexture(sourceSessionId: String, result: MethodChannel.Result) {
+        val state = multiState(sourceSessionId, result) ?: return
+        if (state.textureEntry != null) {
+            result.success(mapOf("textureId" to state.textureEntry!!.id(), "reused" to true))
+            return
+        }
+        try {
+            val entry = flutterEngine.renderer.createSurfaceTexture()
+            state.textureEntry = entry
+            result.success(mapOf("textureId" to entry.id(), "sourceSessionId" to sourceSessionId))
+        } catch (error: Exception) {
+            result.error("MULTI_TEXTURE_ERROR", error.message ?: "No se pudo crear la textura", null)
+        }
+    }
+
+    private fun multiStartMirror(
+        sourceSessionId: String,
+        width: Int,
+        height: Int,
+        localId: Int,
+        result: MethodChannel.Result,
+    ) {
+        val state = multiState(sourceSessionId, result) ?: return
+        val entry = state.textureEntry
+        if (entry == null) {
+            result.error("NOT_READY", "La textura multi no está inicializada", null)
+            return
+        }
+        if (state.decoder != null) {
+            result.error("MIRROR_ALREADY_ACTIVE", "El mirror multi ya está activo", null)
+            return
+        }
+        Thread {
+            try {
+                val surfaceTexture = entry.surfaceTexture()
+                state.videoWidth = width
+                state.videoHeight = height
+                state.screenWidth = width
+                state.screenHeight = height
+                surfaceTexture.setDefaultBufferSize(width, height)
+                if (!state.transport.enableVideoFlowControl(localId)) {
+                    throw IllegalStateException("El stream de video $localId ya no está disponible")
+                }
+                val decoder = ScrcpyDecoder()
+                state.decoder = decoder
+                val started = decoder.start(
+                    width = width,
+                    height = height,
+                    surface = Surface(surfaceTexture),
+                    onOutputSizeChanged = { outputWidth, outputHeight ->
+                        state.videoWidth = outputWidth
+                        state.videoHeight = outputHeight
+                        state.screenWidth = outputWidth
+                        state.screenHeight = outputHeight
+                        mainHandler.post {
+                            surfaceTexture.setDefaultBufferSize(outputWidth, outputHeight)
+                            sendEvent("multi_mirror_state", mapOf(
+                                "sourceSessionId" to sourceSessionId,
+                                "state" to "video_size",
+                                "width" to outputWidth,
+                                "height" to outputHeight,
+                            ))
+                        }
+                    },
+                )
+                if (!started) {
+                    val codecError = decoder.getLastStartError()
+                        ?: "El decodificador H.264 del inspector no aceptó ${width}x$height"
+                    decoder.stop()
+                    state.decoder = null
+                    mainHandler.post {
+                        result.error("MULTI_CODEC_ERROR", codecError, mapOf(
+                            "width" to width,
+                            "height" to height,
+                            "retryableAtLowerResolution" to true,
+                        ))
+                    }
+                    return@Thread
+                }
+                state.transport.quietMode = true
+                state.transport.startVideoReadLoop(
+                    localId = localId,
+                    onPacket = { headerValue, payload ->
+                        decoder.feedPacket(payload, headerValue)
+                        synchronized(state.recorderLock) {
+                            if ((headerValue and FLAG_VIDEO_CONFIG) != 0L) {
+                                state.lastCodecConfig = (state.lastCodecConfig ?: byteArrayOf()) + payload
+                            } else {
+                                state.recorder?.writePacket(headerValue, payload)
+                            }
+                        }
+                    },
+                    onError = { message ->
+                        mainHandler.post { sendEvent("multi_mirror_state", mapOf(
+                            "sourceSessionId" to sourceSessionId,
+                            "state" to "error",
+                            "message" to message,
+                        )) }
+                    },
+                )
+                mainHandler.post { result.success(mapOf("started" to true, "sourceSessionId" to sourceSessionId)) }
+            } catch (error: Exception) {
+                state.decoder?.stop()
+                state.decoder = null
+                mainHandler.post { result.error("MULTI_MIRROR_ERROR", error.message ?: "No se pudo iniciar el mirror", null) }
+            }
+        }.apply { name = "MultiStartMirror-$sourceSessionId"; isDaemon = true; start() }
+    }
+
+    private fun stopMultiMirror(sourceSessionId: String) {
+        val state = multiSessions[sourceSessionId] ?: return
+        state.transport.quietMode = false
+        state.transport.stopVideoReadLoop()
+        state.transport.stopControlWriter()
+        state.decoder?.stop()
+        state.decoder = null
+        synchronized(state.recorderLock) {
+            state.recorder?.abort()
+            state.recorder = null
+            state.lastCodecConfig = null
+        }
+        state.textureEntry?.release()
+        state.textureEntry = null
+        listOfNotNull(
+            state.videoStreamLocalId,
+            state.controlStreamLocalId,
+            state.serverShellLocalId,
+        ).distinct().forEach { localId ->
+            try {
+                state.transport.closeStream(localId)
+            } catch (error: Exception) {
+                Log.w(TAG, "Could not close multi stream $localId: ${error.message}")
+            }
+        }
+        state.videoStreamLocalId = null
+        state.controlStreamLocalId = null
+        state.serverShellLocalId = null
+    }
+
+    private fun disconnectMultiSession(sourceSessionId: String, notify: Boolean) {
+        stopMultiMirror(sourceSessionId)
+        val state = multiSessions.remove(sourceSessionId) ?: return
+        state.transport.disconnect()
+        state.connection.close()
+        if (notify) {
+            sendEvent("multi_session_state", mapOf("sourceSessionId" to sourceSessionId, "state" to "disconnected"))
+        }
+    }
+
+    private fun multiSendTouch(call: MethodCall, result: MethodChannel.Result) {
+        val sourceSessionId = call.argument<String>("sourceSessionId")
+        val state = sourceSessionId?.let { multiSessions[it] }
+        val controlId = state?.controlStreamLocalId
+        if (state == null || controlId == null) {
+            result.error("NOT_READY", "Control multi no inicializado", null)
+            return
+        }
+        try {
+            val action = call.argument<Number>("action")?.toInt() ?: 0
+            val pointerId = call.argument<Number>("pointerId")?.toLong() ?: 1L
+            val x = call.argument<Number>("x")?.toInt() ?: 0
+            val y = call.argument<Number>("y")?.toInt() ?: 0
+            val pressure = if (action == 1) 0 else 0xFFFF
+            val packet = com.fiscalia.file_cast.scrcpy.ScrcpyControl.buildTouchPacket(
+                action, pointerId, x, y, state.screenWidth, state.screenHeight, pressure,
+            )
+            state.transport.enqueueControlWrite(controlId, packet)
+            result.success(true)
+        } catch (error: Exception) {
+            result.error("TOUCH_ERROR", error.message ?: "No se pudo enviar el toque", null)
+        }
+    }
+
+    private fun multiSendKey(call: MethodCall, result: MethodChannel.Result) {
+        val sourceSessionId = call.argument<String>("sourceSessionId")
+        val state = sourceSessionId?.let { multiSessions[it] }
+        val controlId = state?.controlStreamLocalId
+        if (state == null || controlId == null) {
+            result.error("NOT_READY", "Control multi no inicializado", null)
+            return
+        }
+        try {
+            val packet = com.fiscalia.file_cast.scrcpy.ScrcpyControl.buildKeyPacket(
+                call.argument<Number>("action")?.toInt() ?: 0,
+                call.argument<Number>("keycode")?.toInt() ?: 0,
+            )
+            state.transport.enqueueControlWrite(controlId, packet)
+            result.success(true)
+        } catch (error: Exception) {
+            result.error("KEY_ERROR", error.message ?: "No se pudo enviar la tecla", null)
+        }
+    }
+
+    private fun multiSendScroll(call: MethodCall, result: MethodChannel.Result) {
+        val sourceSessionId = call.argument<String>("sourceSessionId")
+        val state = sourceSessionId?.let { multiSessions[it] }
+        val controlId = state?.controlStreamLocalId
+        if (state == null || controlId == null) {
+            result.error("NOT_READY", "Control multi no inicializado", null)
+            return
+        }
+        try {
+            val packet = com.fiscalia.file_cast.scrcpy.ScrcpyControl.buildScrollPacket(
+                call.argument<Number>("x")?.toInt() ?: 0,
+                call.argument<Number>("y")?.toInt() ?: 0,
+                call.argument<Number>("scrollX")?.toInt() ?: 0,
+                call.argument<Number>("scrollY")?.toInt() ?: 0,
+                state.screenWidth,
+                state.screenHeight,
+            )
+            state.transport.enqueueControlWrite(controlId, packet)
+            result.success(true)
+        } catch (error: Exception) {
+            result.error("SCROLL_ERROR", error.message ?: "No se pudo enviar el scroll", null)
+        }
+    }
+
+    private fun multiCaptureScreenshot(call: MethodCall, result: MethodChannel.Result) {
+        val sourceSessionId = call.argument<String>("sourceSessionId")
+        val state = sourceSessionId?.let { multiSessions[it] }
+        if (state == null || !state.transport.isAdbConnected()) {
+            result.error("NOT_CONNECTED", "La sesión multi no está conectada", null)
+            return
+        }
+        val requisitionId = call.argument<String>("requisitionId") ?: "unknown"
+        val sessionId = call.argument<String>("sessionId") ?: "unknown"
+        Thread {
+            var localId: Int? = null
+            try {
+                val file = File(evidenceDirectory(requisitionId, sessionId), "captura-${sourceSessionId}-${System.currentTimeMillis()}.png")
+                val stream = state.transport.openStream("exec:screencap -p", 10_000L)
+                localId = stream.localId
+                val digest = MessageDigest.getInstance("SHA-256")
+                var total = 0L
+                FileOutputStream(file).use { output ->
+                    while (!stream.closed.get() || stream.dataQueue.isNotEmpty()) {
+                        val chunk = stream.dataQueue.poll(500, TimeUnit.MILLISECONDS) ?: break
+                        output.write(chunk)
+                        digest.update(chunk)
+                        total += chunk.size
+                        if (total > 32L * 1024L * 1024L) throw IllegalStateException("La captura excedió el límite permitido")
+                    }
+                    output.flush()
+                }
+                if (total < 8 || !hasPngSignature(file)) throw IllegalStateException("El dispositivo no devolvió una imagen PNG válida")
+                mainHandler.post { result.success(evidenceMetadata(file, digest.digest())) }
+            } catch (error: Exception) {
+                mainHandler.post { result.error("CAPTURE_ERROR", error.message ?: "No se pudo capturar", null) }
+            } finally {
+                localId?.let { state.transport.closeStream(it) }
+            }
+        }.apply { name = "MultiScreenshot-$sourceSessionId"; isDaemon = true; start() }
+    }
+
+    private fun multiStartScreenRecording(call: MethodCall, result: MethodChannel.Result) {
+        val sourceSessionId = call.argument<String>("sourceSessionId")
+        val state = sourceSessionId?.let { multiSessions[it] }
+        if (state == null || state.decoder == null || state.videoWidth <= 0 || state.videoHeight <= 0) {
+            result.error("MIRROR_NOT_READY", "El mirror multi aún no está listo", null)
+            return
+        }
+        val config = synchronized(state.recorderLock) { state.lastCodecConfig }
+        if (config == null) {
+            result.error("RECORDING_NOT_READY", "Aún no se recibió la configuración H.264", null)
+            return
+        }
+        val requisitionId = call.argument<String>("requisitionId") ?: "unknown"
+        val sessionId = call.argument<String>("sessionId") ?: "unknown"
+        try {
+            synchronized(state.recorderLock) {
+                if (state.recorder != null) throw IllegalStateException("Ya existe una grabación activa")
+                val file = File(evidenceDirectory(requisitionId, sessionId), "grabacion-${sourceSessionId}-${System.currentTimeMillis()}.mp4")
+                state.recorder = ScrcpyRecorder(file, state.videoWidth, state.videoHeight).also { it.start(config) }
+                result.success(evidenceMetadata(file, byteArrayOf()))
+            }
+        } catch (error: Exception) {
+            result.error("RECORDING_ERROR", error.message ?: "No se pudo iniciar la grabación", null)
+        }
+    }
+
+    private fun multiStopScreenRecording(call: MethodCall, result: MethodChannel.Result) {
+        val sourceSessionId = call.argument<String>("sourceSessionId")
+        val state = sourceSessionId?.let { multiSessions[it] }
+        if (state == null) {
+            result.error("NOT_CONNECTED", "La sesión multi no está conectada", null)
+            return
+        }
+        val recorder = synchronized(state.recorderLock) { state.recorder.also { state.recorder = null } }
+        if (recorder == null) {
+            result.error("NOT_RECORDING", "No existe una grabación activa", null)
+            return
+        }
+        Thread {
+            try {
+                val file = recorder.stop()
+                mainHandler.post { result.success(evidenceMetadata(file, sha256(file))) }
+            } catch (error: Exception) {
+                mainHandler.post { result.error("RECORDING_ERROR", error.message ?: "No se pudo guardar la grabación", null) }
+            }
+        }.apply { name = "MultiStopRecording-$sourceSessionId"; isDaemon = true; start() }
+    }
+
+    private fun multiGetMirrorLog(call: MethodCall, result: MethodChannel.Result) {
+        val sourceSessionId = call.argument<String>("sourceSessionId")
+        val state = sourceSessionId?.let { multiSessions[it] }
+        if (state == null) {
+            result.success(mapOf("log" to "(multi session not found)"))
+            return
+        }
+        val log = buildString {
+            appendLine("Source: $sourceSessionId device=${state.device.deviceName}")
+            appendLine("Decoder: started=${state.decoder?.isStarted() == true} frames=${state.decoder?.getFrameCount() ?: 0}")
+            appendLine("Video: ${state.videoWidth}x${state.videoHeight} control=${state.controlStreamLocalId}")
+            appendLine("Transport: ${state.transport.getControlWriteStats()}")
+            append(state.transport.getLog())
+        }
+        result.success(mapOf("log" to log, "videoWidth" to state.videoWidth, "videoHeight" to state.videoHeight))
+    }
+
     private fun deviceToMap(device: UsbDevice): Map<String, Any?> {
+        val hasAdb = hasAdbInterface(device)
+        val hasPermission = usbManager.hasPermission(device)
+        val interfaces = (0 until device.interfaceCount).map { index ->
+            val iface = device.getInterface(index)
+            mapOf(
+                "index" to index,
+                "class" to iface.interfaceClass,
+                "subclass" to iface.interfaceSubclass,
+                "protocol" to iface.interfaceProtocol,
+                "endpointCount" to iface.endpointCount,
+            )
+        }
+        val interfaceClasses = interfaces.mapNotNull { it["class"] as? Int }.toSet()
         return mapOf(
             "deviceName" to device.deviceName,
             "vendorId" to device.vendorId,
             "productId" to device.productId,
-            "manufacturerName" to device.manufacturerName,
-            "productName" to device.productName,
-            "serialNumber" to device.serialNumber,
+            // Android 10+ throws SecurityException when serialNumber is read
+            // before UsbManager permission is granted. Some vendors protect
+            // the string descriptors as well, so read all three defensively.
+            "manufacturerName" to safeUsbString { device.manufacturerName },
+            "productName" to safeUsbString { device.productName },
+            "adbProductModel" to cachedAdbProductModel(device, hasPermission),
+            "serialNumber" to if (hasPermission) {
+                safeUsbString { device.serialNumber }
+            } else {
+                null
+            },
             "deviceClass" to device.deviceClass,
             "deviceSubclass" to device.deviceSubclass,
             "deviceProtocol" to device.deviceProtocol,
-            "hasPermission" to usbManager.hasPermission(device)
+            "hasPermission" to hasPermission,
+            "hasAdbInterface" to hasAdb,
+            "deviceType" to when {
+                hasAdb -> "android_adb"
+                device.deviceClass == 9 || 9 in interfaceClasses -> "hub"
+                device.deviceClass == 6 || 6 in interfaceClasses -> "mtp"
+                device.deviceClass == 3 || 3 in interfaceClasses -> "hid"
+                device.deviceClass == 14 || 14 in interfaceClasses -> "video"
+                else -> "other"
+            },
+            "interfaces" to interfaces,
         )
+    }
+
+    private fun rememberAdbProductModel(device: UsbDevice, productModel: String?) {
+        val model = productModel?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        val editor = adbDeviceMetadata.edit()
+            .putString(adbMetadataDeviceKey(device), model)
+        if (usbManager.hasPermission(device)) {
+            safeUsbString { device.serialNumber }
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { serial ->
+                    editor.putString(adbMetadataSerialKey(device, serial), model)
+                }
+        }
+        editor.apply()
+    }
+
+    private fun cachedAdbProductModel(device: UsbDevice, hasPermission: Boolean): String? {
+        if (hasPermission) {
+            val bySerial = safeUsbString { device.serialNumber }
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { serial ->
+                    adbDeviceMetadata.getString(adbMetadataSerialKey(device, serial), null)
+                }
+            if (!bySerial.isNullOrBlank()) return bySerial
+        }
+        return adbDeviceMetadata.getString(adbMetadataDeviceKey(device), null)
+    }
+
+    private fun adbMetadataDeviceKey(device: UsbDevice): String =
+        "device:${device.vendorId}:${device.productId}:${device.deviceName}"
+
+    private fun adbMetadataSerialKey(device: UsbDevice, serial: String): String =
+        "serial:${device.vendorId}:${device.productId}:$serial"
+
+    private fun safeUsbString(reader: () -> String?): String? {
+        return try {
+            reader()
+        } catch (_: SecurityException) {
+            null
+        } catch (_: UnsupportedOperationException) {
+            null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun hasAdbInterface(device: UsbDevice): Boolean {
+        for (index in 0 until device.interfaceCount) {
+            val iface = device.getInterface(index)
+            if (iface.interfaceClass == 0xFF &&
+                iface.interfaceSubclass == 0x42 &&
+                iface.interfaceProtocol == 0x01) {
+                return true
+            }
+        }
+        return false
     }
 
     private fun sendDeviceConnected(device: UsbDevice) {
@@ -1531,4 +2369,34 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     private fun postTransferEvent(data: Map<String, Any>) {
         mainHandler.post { sendEvent("file_transfer", data) }
     }
+}
+
+private class MultiMirrorState(
+    val sourceSessionId: String,
+    val device: UsbDevice,
+    val connection: android.hardware.usb.UsbDeviceConnection,
+    val transport: UsbAdbTransport,
+) {
+    var serverShellLocalId: Int? = null
+    var videoStreamLocalId: Int? = null
+    var controlStreamLocalId: Int? = null
+    var textureEntry: TextureRegistry.SurfaceTextureEntry? = null
+    var decoder: ScrcpyDecoder? = null
+    var videoWidth: Int = 0
+    var videoHeight: Int = 0
+    var screenWidth: Int = 0
+    var screenHeight: Int = 0
+    var lastCodecConfig: ByteArray? = null
+    var recorder: ScrcpyRecorder? = null
+    val recorderLock = Any()
+
+    fun toMap(): Map<String, Any?> = mapOf(
+        "sourceSessionId" to sourceSessionId,
+        "deviceName" to device.deviceName,
+        "connected" to transport.isAdbConnected(),
+        "mirrorActive" to (decoder?.isStarted() == true),
+        "textureId" to textureEntry?.id(),
+        "videoWidth" to videoWidth,
+        "videoHeight" to videoHeight,
+    )
 }

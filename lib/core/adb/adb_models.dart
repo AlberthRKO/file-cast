@@ -7,8 +7,12 @@ class UsbDeviceInfo {
     required this.deviceSubclass,
     required this.deviceProtocol,
     required this.hasPermission,
+    required this.hasAdbInterface,
+    required this.deviceType,
+    this.interfaceDescriptors = const [],
     this.manufacturerName,
     this.productName,
+    this.adbProductModel,
     this.serialNumber,
   });
 
@@ -19,11 +23,23 @@ class UsbDeviceInfo {
       productId: map['productId'] as int? ?? 0,
       manufacturerName: map['manufacturerName'] as String?,
       productName: map['productName'] as String?,
+      adbProductModel: map['adbProductModel'] as String?,
       serialNumber: map['serialNumber'] as String?,
       deviceClass: map['deviceClass'] as int? ?? 0,
       deviceSubclass: map['deviceSubclass'] as int? ?? 0,
       deviceProtocol: map['deviceProtocol'] as int? ?? 0,
       hasPermission: map['hasPermission'] as bool? ?? false,
+      hasAdbInterface: map['hasAdbInterface'] as bool? ?? false,
+      deviceType: map['deviceType'] as String? ?? 'other',
+      interfaceDescriptors: (map['interfaces'] as List? ?? const [])
+          .whereType<Map>()
+          .map(
+            (interface) =>
+                '${interface['class'] ?? '?'} / '
+                '${interface['subclass'] ?? '?'} / '
+                '${interface['protocol'] ?? '?'}',
+          )
+          .toList(growable: false),
     );
   }
 
@@ -32,20 +48,55 @@ class UsbDeviceInfo {
   final int productId;
   final String? manufacturerName;
   final String? productName;
+  final String? adbProductModel;
   final String? serialNumber;
   final int deviceClass;
   final int deviceSubclass;
   final int deviceProtocol;
   final bool hasPermission;
+  final bool hasAdbInterface;
+  final String deviceType;
+  final List<String> interfaceDescriptors;
+
+  String get interfaceSummary => interfaceDescriptors.isEmpty
+      ? 'Sin descriptores de interfaz'
+      : interfaceDescriptors.join(', ');
 
   String get displayName {
-    if (manufacturerName != null && productName != null) {
-      return '$manufacturerName $productName';
+    final manufacturer = manufacturerName?.trim();
+    final resolvedAdbModel = adbProductModel?.trim();
+    final usbProduct = productName?.trim();
+    final product = resolvedAdbModel?.isNotEmpty == true
+        ? resolvedAdbModel
+        : _isGenericAndroidProduct(usbProduct)
+        ? null
+        : usbProduct;
+    if (manufacturer != null &&
+        manufacturer.isNotEmpty &&
+        product != null &&
+        product.isNotEmpty) {
+      if (product.toLowerCase().startsWith(manufacturer.toLowerCase())) {
+        return product;
+      }
+      return '$manufacturer $product';
     }
-    if (manufacturerName != null) {
-      return '$manufacturerName (0x${vendorId.toRadixString(16).toUpperCase()})';
+    if (product != null && product.isNotEmpty) return product;
+    if (manufacturer != null && manufacturer.isNotEmpty) {
+      if (hasAdbInterface) return '$manufacturer · modelo pendiente';
+      return '$manufacturer (0x${vendorId.toRadixString(16).toUpperCase()})';
     }
     return 'USB Device (0x${vendorId.toRadixString(16).toUpperCase()})';
+  }
+
+  bool _isGenericAndroidProduct(String? value) {
+    if (value == null || value.isEmpty) return true;
+    final normalized = value.toLowerCase().replaceAll(
+      RegExp(r'[^a-z0-9]'),
+      '',
+    );
+    return normalized == 'android' ||
+        normalized == 'androidadb' ||
+        normalized == 'samsungandroid';
   }
 
   String get vendorIdHex => '0x${vendorId.toRadixString(16).toUpperCase()}';
@@ -65,6 +116,9 @@ enum UsbEventType {
   adbState,
   mirrorState,
   fileTransfer,
+  multiAdbState,
+  multiMirrorState,
+  multiSessionState,
 }
 
 class UsbEvent {
@@ -98,6 +152,12 @@ class UsbEvent {
             return UsbEventType.mirrorState;
           case 'file_transfer':
             return UsbEventType.fileTransfer;
+          case 'multi_adb_state':
+            return UsbEventType.multiAdbState;
+          case 'multi_mirror_state':
+            return UsbEventType.multiMirrorState;
+          case 'multi_session_state':
+            return UsbEventType.multiSessionState;
           default:
             return UsbEventType.deviceAttached;
         }
@@ -146,6 +206,12 @@ class UsbEvent {
   Map<String, dynamic>? get fileTransferInfo {
     final raw = _data;
     if (type != UsbEventType.fileTransfer || raw is! Map) return null;
+    return raw.map((key, value) => MapEntry(key.toString(), value));
+  }
+
+  Map<String, dynamic>? get multiSessionInfo {
+    final raw = _data;
+    if (raw is! Map) return null;
     return raw.map((key, value) => MapEntry(key.toString(), value));
   }
 }

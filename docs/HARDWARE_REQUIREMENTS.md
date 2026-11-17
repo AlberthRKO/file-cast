@@ -65,10 +65,12 @@ La combinación `inspector -> hub PD -> cable de datos -> objetivo` debe probars
 El ORICO aportado por el propietario puede usarse como hub de laboratorio: el
 USB-C upstream va al inspector, cada USB-A de datos va a un periférico y el
 puerto PD recibe el cargador. Que mouse/teclado funcionen o que un objetivo
-cargue no demuestra que exista una interfaz ADB. File Cast actualmente conserva
-una sola conexión/transporte/decoder de Mirror; un hub puede enumerar varios
-teléfonos, pero no habilita tres mirrors simultáneos sin la ampliación
-multisesión obligatoria descrita en
+cargue no demuestra que exista una interfaz ADB. Que el selector de archivos
+del inspector muestre la galería del objetivo sí demuestra rol host y enlace de
+datos, pero solo para MTP: ADB sigue requiriendo la interfaz exacta `255/66/1`.
+File Cast conserva el flujo singular y ya dispone de un registro independiente
+por fuente para Mirror múltiple; la homologación física y de capacidad continúa
+según
 [ANDROID_MULTI_MIRROR_USB_HUB_IMPLEMENTATION_PLAN.md](ANDROID_MULTI_MIRROR_USB_HUB_IMPLEMENTATION_PLAN.md).
 
 La implementación no fija tres como máximo de software. Un hub alimentado con
@@ -81,6 +83,12 @@ matriz obligatoria de Mirror. Debe compararse con conexión directa: enumeració
 del `UsbDevice`, interfaz ADB `255/66/1`, permiso, claim, RSA, control, captura,
 grabación y transferencia. Un fallo previo a la enumeración es de topología
 USB/hardware; un fallo posterior a enumerar ADB es corregible en File Cast.
+
+File Cast no puede forzar desde una app convencional el data-role/power-role
+USB-C ni activar Depuración USB en el objetivo: esas operaciones están mediadas
+por Android, el firmware USB/Type-C y la confirmación del usuario. La pantalla
+de conexión debe mostrar por separado el total USB enumerado y los candidatos
+ADB para distinguir `host inactivo`, `MTP sin ADB` y `ADB listo`.
 
 ### Almacenamiento
 

@@ -27,6 +27,10 @@ class AdbAuth(private val context: Context) {
         private const val KEY_SIZE = 2048
         private const val MODULUS_SIZE = 256
         private const val MODULUS_SIZE_WORDS = MODULUS_SIZE / 4  // 64
+        private val SHA1_DIGEST_INFO_PREFIX = byteArrayOf(
+            0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2B, 0x0E,
+            0x03, 0x02, 0x1A, 0x05, 0x00, 0x04, 0x14,
+        )
     }
 
     private val prefs: SharedPreferences by lazy {
@@ -35,12 +39,13 @@ class AdbAuth(private val context: Context) {
 
     private var currentKeyPair: KeyPair? = null
 
+    @Synchronized
     fun init(): KeyPair {
         Log.d(TAG, "=== AdbAuth.init() ===")
         val existing = loadKeyPair()
         if (existing != null) {
-            Log.d(TAG, "Loaded existing keypair, fingerprint: ${getKeyFingerprint()}")
             currentKeyPair = existing
+            Log.d(TAG, "Loaded existing keypair, fingerprint: ${getKeyFingerprint()}")
             return existing
         }
         Log.d(TAG, "Generating new keypair...")
@@ -58,18 +63,21 @@ class AdbAuth(private val context: Context) {
         return generator.generateKeyPair()
     }
 
-    /**
-     * Sign token with NONEwithRSA.
-     * The device token is 20 raw bytes. adbd verifies with
-     * RSA_verify(NID_sha1, token, ...) which hashes internally.
-     */
+    /** Sign the 20-byte ADB token exactly like RSA_sign(NID_sha1, digest). */
     fun signToken(token: ByteArray): ByteArray? {
         val keyPair = currentKeyPair ?: return null
-        Log.d(TAG, "Signing token: ${token.size} bytes with NONEwithRSA")
+        if (token.size != 20) {
+            Log.e(TAG, "Unexpected ADB token size: ${token.size}")
+            return null
+        }
+        Log.d(TAG, "Signing ADB SHA-1 digest: ${token.size} bytes")
         return try {
+            // The token is already a SHA-1 digest. SHA1withRSA would hash it a
+            // second time, while plain NONEwithRSA without DigestInfo would
+            // omit the ASN.1 prefix expected by RSA_sign(NID_sha1, ...).
             val signature = Signature.getInstance("NONEwithRSA")
             signature.initSign(keyPair.private)
-            signature.update(token)
+            signature.update(SHA1_DIGEST_INFO_PREFIX + token)
             val sig = signature.sign()
             Log.d(TAG, "Signature: ${sig.size} bytes")
             sig
@@ -115,8 +123,8 @@ class AdbAuth(private val context: Context) {
 
             Log.d(TAG, "Modulus: ${modulusBytes.size} bytes, padded to $MODULUS_SIZE, reversed to LE")
 
-            // n0inv: -1/mod[0] mod 2^32 (Montgomery reduction)
-            // After reversal, mod[0] is the least significant byte
+            // n0inv: -1/N[0] mod 2^32 (Montgomery reduction), where N[0]
+            // is the first little-endian 32-bit word of the modulus.
             val n0inv = computeN0inv(paddedModulus)
             Log.d(TAG, "n0inv: $n0inv")
 
@@ -175,22 +183,20 @@ class AdbAuth(private val context: Context) {
     /**
      * Compute n0inv = -1/mod[0] mod 2^32
      * This is the Montgomery reduction parameter.
-     * mod[0] is the least significant byte (first byte after little-endian reversal).
+     * N[0] is the least-significant 32-bit word of the modulus.
      */
     private fun computeN0inv(modulus: ByteArray): ByteArray {
-        // mod[0] is the least significant byte (after LE reversal)
-        val mod0 = BigInteger.valueOf((modulus[0].toInt() and 0xFF).toLong())
+        val mod0Word = ByteBuffer.wrap(modulus, 0, 4)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .int
+            .toLong() and 0xFFFFFFFFL
+        val mod0 = BigInteger.valueOf(mod0Word)
         val two32 = BigInteger.ONE.shiftLeft(32)
-
-        // n0inv = -1/mod[0] mod 2^32
-        val n0inv = two32.subtract(mod0.modInverse(two32))
-        return n0inv.toByteArray().let { arr ->
-            // Pad to 4 bytes little-endian
-            val padded = ByteArray(4)
-            val copyLen = minOf(arr.size, 4)
-            System.arraycopy(arr, arr.size - copyLen, padded, 4 - copyLen, copyLen)
-            padded
-        }
+        val n0inv = two32.subtract(mod0.modInverse(two32)).mod(two32).toLong()
+        return ByteBuffer.allocate(4)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(n0inv.toInt())
+            .array()
     }
 
     /**
@@ -217,7 +223,9 @@ class AdbAuth(private val context: Context) {
         editor.putString(KEY_PRIVATE_KEY, Base64.encodeToString(keyPair.private.encoded, Base64.NO_WRAP))
         editor.putString(KEY_PUBLIC_KEY, Base64.encodeToString(keyPair.public.encoded, Base64.NO_WRAP))
         editor.putBoolean(KEY_KEY_PAIR, true)
-        editor.apply()
+        if (!editor.commit()) {
+            throw IllegalStateException("No se pudo persistir la identidad RSA ADB")
+        }
     }
 
     private fun loadKeyPair(): KeyPair? {

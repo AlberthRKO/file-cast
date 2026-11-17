@@ -12,6 +12,15 @@ Gateway SMS
 
 ## Getting Started 🚀
 
+The repository is pinned to Flutter 3.44.4 (Dart 3.12) in `.fvmrc`, matching
+`pubspec.yaml` and `pubspec.lock`. Select that SDK before resolving packages:
+
+```sh
+fvm install
+fvm use
+fvm flutter pub get
+```
+
 This project contains 3 flavors:
 
 - development

@@ -3,8 +3,10 @@ import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/ui/core/navigation/app_route.dart';
 import 'package:file_cast/ui/core/navigation/app_route_error_view.dart';
 import 'package:file_cast/ui/core/navigation/route_args/mirror_route_args.dart';
+import 'package:file_cast/ui/core/navigation/route_args/multi_mirror_route_args.dart';
 import 'package:file_cast/ui/features/acquisition/connect/views/usb_device_list_view.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/views/mirror_view.dart';
+import 'package:file_cast/ui/features/acquisition/mirror/views/multi_mirror_view.dart';
 import 'package:file_cast/ui/features/acquisition/transfer/views/file_transfer_view.dart';
 import 'package:file_cast/ui/features/auth/login/views/login_view.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
@@ -122,6 +124,8 @@ GoRouter createAppRouter({
             sessionId: state.pathParameters['sessionId']!,
             destination: destination == 'transfer'
                 ? AcquisitionDestination.transfer
+                : destination == 'multiMirror'
+                ? AcquisitionDestination.multiMirror
                 : AcquisitionDestination.mirror,
           );
         },
@@ -138,6 +142,32 @@ GoRouter createAppRouter({
           }
 
           return MirrorRoute(
+            args: args,
+            requisitionId: state.pathParameters['requisitionId']!,
+            sessionId: state.pathParameters['sessionId']!,
+          );
+        },
+      ),
+      GoRoute(
+        name: AppRouteName.multiMirrorConnect,
+        path: AppRoutePath.multiMirrorConnect,
+        builder: (context, state) => UsbDeviceListRoute(
+          requisitionId: state.pathParameters['requisitionId']!,
+          sessionId: state.pathParameters['sessionId']!,
+          destination: AcquisitionDestination.multiMirror,
+        ),
+      ),
+      GoRoute(
+        name: AppRouteName.multiMirror,
+        path: AppRoutePath.multiMirror,
+        builder: (context, state) {
+          final args = state.extra;
+          if (args is! MultiMirrorRouteArgs) {
+            return const AppRouteErrorView(
+              message: 'La sesión de mirrors no está disponible.',
+            );
+          }
+          return MultiMirrorRoute(
             args: args,
             requisitionId: state.pathParameters['requisitionId']!,
             sessionId: state.pathParameters['sessionId']!,

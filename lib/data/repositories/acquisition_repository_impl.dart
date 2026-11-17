@@ -57,6 +57,111 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
   );
 
   @override
+  Future<AcquisitionMultiMirrorSession> connectAndStartMulti({
+    required List<AcquisitionDevice> devices,
+    required String requisitionId,
+    required String sessionId,
+  }) => _platformService.connectAndStartMulti(
+    devices: devices,
+    requisitionId: requisitionId,
+    sessionId: sessionId,
+  );
+
+  @override
+  Future<List<AcquisitionMirrorSession>> activeMultiSessions({
+    required String requisitionId,
+    required String sessionId,
+  }) => _platformService.activeMultiSessions(
+    requisitionId: requisitionId,
+    sessionId: sessionId,
+  );
+
+  @override
+  Future<void> disconnectMulti({String? sourceSessionId}) =>
+      _platformService.disconnectMulti(sourceSessionId: sourceSessionId);
+
+  @override
+  Future<void> sendTouchToSource(
+    String sourceSessionId,
+    int action,
+    int pointerId,
+    int x,
+    int y,
+  ) => _platformService.sendTouchToSource(
+    sourceSessionId,
+    action,
+    pointerId,
+    x,
+    y,
+  );
+
+  @override
+  Future<void> sendScrollToSource(
+    String sourceSessionId,
+    int x,
+    int y,
+    int deltaY,
+  ) => _platformService.sendScrollToSource(sourceSessionId, x, y, deltaY);
+
+  @override
+  Future<void> sendKeyToSource(String sourceSessionId, int keycode) =>
+      _platformService.sendKeyToSource(sourceSessionId, keycode);
+
+  @override
+  Future<RequisitionDetail> captureScreenshotForSource({
+    required String sourceSessionId,
+    required String requisitionId,
+    required String sessionId,
+  }) async {
+    final captured = await _platformService.captureScreenshotForSource(
+      sourceSessionId: sourceSessionId,
+      requisitionId: requisitionId,
+      sessionId: sessionId,
+    );
+    return _register(
+      requisitionId: requisitionId,
+      sessionId: sessionId,
+      captured: captured,
+      type: RequisitionEvidenceType.image,
+    );
+  }
+
+  @override
+  Future<void> startRecordingForSource({
+    required String sourceSessionId,
+    required String requisitionId,
+    required String sessionId,
+  }) async {
+    await _platformService.startRecordingForSource(
+      sourceSessionId: sourceSessionId,
+      requisitionId: requisitionId,
+      sessionId: sessionId,
+    );
+  }
+
+  @override
+  Future<RequisitionDetail> stopRecordingForSource({
+    required String sourceSessionId,
+    required String requisitionId,
+    required String sessionId,
+  }) async {
+    final captured = await _platformService.stopRecordingForSource(
+      sourceSessionId,
+    );
+    final detail = await _register(
+      requisitionId: requisitionId,
+      sessionId: sessionId,
+      captured: captured,
+      type: RequisitionEvidenceType.video,
+    );
+    return detail;
+  }
+
+  @override
+  Future<String> getMultiControlDiagnostics(String sourceSessionId) =>
+      _platformService.getMultiControlDiagnostics(sourceSessionId);
+
+  @override
   Future<AcquisitionMirrorSession?> activeSession({
     required String requisitionId,
     required String sessionId,
@@ -372,6 +477,10 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
   @override
   Future<void> sendScroll(int x, int y, int deltaY) =>
       _platformService.sendScroll(x, y, deltaY);
+
+  @override
+  Future<String> getConnectionDiagnostics() =>
+      _platformService.getConnectionDiagnostics();
 
   @override
   Future<String> getControlDiagnostics() =>

@@ -56,9 +56,10 @@ El docking Revodok/Vention no forma parte del alcance actual. La primera matriz
 usa conexión directa de la capturadora al inspector. El hub ORICO aportado se
 incorpora en dos alcances distintos: usarlo como OTG para **un solo Android ADB**
 es el primer gate; usarlo para dos y tres mirrors simultáneos es el objetivo
-multisesión obligatorio, aunque todavía no está implementado por el código
-actual. La arquitectura será dinámica N: tres es la primera homologación por el
-ORICO, no el máximo de software; un hub de seis puertos agrega una matriz 4/5/6.
+multisesión obligatorio. La primera vertical de código ya registra sesiones
+independientes por fuente; falta la homologación física 1/2/3. La arquitectura
+es dinámica N: tres es la primera homologación por el ORICO, no el máximo de
+software; un hub de seis puertos agrega una matriz 4/5/6.
 
 ## Garantía de no regresión de Mirror y Transferencia
 

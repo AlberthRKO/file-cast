@@ -38,9 +38,9 @@ La recomendación es construir primero un MVP Android de extremo a extremo y man
 | Archivos/evidencias por requisa | Resumen por categoría/peso, selector múltiple de imágenes, videos, audios y documentos, cifrado local, outbox, sincronización y preview | Implementado como vertical local: selección múltiple con preview antes de confirmar, sesión creada al aceptar, importación cifrada, carga en segundo plano con progreso por lote, reintento visible, miniaturas y preview de imágenes, videos, audio, PDF y texto/DOCX; las evidencias cifradas comparten DEK por dispositivo autorizado y descargan el FCE mediante el puente autenticado de `file-cast-back`, sin exponer URL firmada ni `x-session-token` al móvil; pendiente validación probatoria end-to-end |
 | Offline y sincronización | SQLite SQLCipher, outbox de evidencias FCE y reintento al recuperar conectividad | La subida conserva el FCE en `evidencias_locales` y usa outbox hasta recibir `msFileId`; el detalle también permite sincronizar evidencias `AVAILABLE` al almacenamiento privado de cada participante, validarlas y dejarlas como `SINCRONIZADA` sin reinsertarlas en outbox; pendiente validación probatoria end-to-end |
 | USB host Android | Detección, permisos, attach/detach | Implementado como prototipo |
-| ADB por USB | Handshake RSA, streams multiplexados, shell y push | Implementado como prototipo |
+| ADB por USB | Handshake RSA compatible con `RSA_sign(NID_sha1)`, identidad persistente, streams multiplexados, shell y push | Implementado como prototipo; requiere revalidar reutilización de clave en la matriz Samsung |
 | Espejo Android | scrcpy server 2.7, H.264, `MediaCodec` y `Texture` | Demostrado en código |
-| Mirror Android N mediante hub | Sesión ADB/scrcpy por objetivo; ORICO 1/2/3 inicial y hub de seis puertos como ampliación | Plan obligatorio; actualmente el plugin solo mantiene una sesión global y el primer ensayo mediante hub solo cargó |
+| Mirror Android N mediante hub | Registro dinámico `sourceSessionId`, transporte/decoder/textura por objetivo, selección multi, grilla y diagnóstico USB/MTP/ADB | Primera vertical de código implementada; falta validación física ORICO 1/2/3 y matriz 4–6; el ensayo USB-C más reciente enumeró MTP/galería, pero no ADB |
 | Control Android | Touch, arrastre, mouse/trackpad y teclas por canal scrcpy 2.7 | Implementado y validado en hardware por el propietario; algunos fabricantes requieren un ajuste de seguridad adicional |
 | Foto de la pantalla | `exec:screencap -p`, PNG privado, validación de firma y SHA-256 | Implementado como vertical local |
 | Grabación | Inicio confirmado en keyframe posterior al toque, muestras H.264 nativas, `MediaMuxer`, contador alineado, MP4 privado y SHA-256 | Implementado en código; requiere revalidación física del MP4 generado |
@@ -48,7 +48,7 @@ La recomendación es construir primero un MVP Android de extremo a extremo y man
 | Integración iOS | `AppDelegate` estándar, sin canal/plugin de adquisición; plan USB/AFC documentado | No implementado; PoC diferida hasta cerrar Android |
 | Cifrado de evidencias | FCE AES-256-GCM por bloques, hashes plano/ciphertext y clave envuelta en bóveda segura | Implementado con envolturas X25519 por dispositivo autorizado y escrow institucional para recuperar tras pérdida, cambio o reinstalación; requiere secreto/KMS configurado. Las evidencias históricas sin envoltura `RECOVERY` no son reconstruibles tras perder su única bóveda local |
 | Cadena de custodia | No hay ledger, manifiesto, hash por evidencia ni sellado | Depende de la integración completa con el backend |
-| Pruebas | Existe prueba del servicio FCE | Debe ejecutarse con Flutter 3.35/Dart 3.9 en CI |
+| Pruebas | Existe prueba del servicio FCE | Debe ejecutarse con Flutter 3.44/Dart 3.12 en CI |
 
 ## Evidencia en el repositorio
 
@@ -103,19 +103,19 @@ La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto,
 
 1. **Pull requiere validación física.** La primera vertical `LIST`/`STAT`/`RECV` ya escribe por streaming en almacenamiento privado, calcula SHA-256 y registra el resultado contra requisa/sesión. Falta probar fragmentación, archivos grandes, cancelación, desconexión y fabricantes de la matriz.
 2. **Lectura exacta corregida.** `_readExact()` conserva excedentes por stream para no perder el inicio del video cuando comparte un chunk con los metadatos. Falta cubrirlo con pruebas de protocolo.
-3. **Backpressure parcial.** La cola de control está acotada y compacta movimientos. La grabación ya no conserva un pre-roll: espera el siguiente keyframe con timeout de inicio para no incluir segundos anteriores al toque. Las colas generales de datos ADB todavía requieren límites y métricas para sesiones extensas.
-4. **Ciclo de vida sensible.** Al abandonar mirror se libera la textura, el decoder, la grabación activa y la conexión nativa; al regresar se fuerza una sesión limpia. Todavía debe validarse ante cierre de proceso, cable retirado, background y grabación activa.
+3. **Backpressure específico de video implementado; métricas pendientes.** La cola de control está acotada y compacta movimientos. El stream H.264 difiere `A_OKAY` hasta consumir cada bloque ADB para no acumular frames antiguos mientras `MediaCodec` arranca o se ralentiza. La grabación ya no conserva un pre-roll: espera el siguiente keyframe con timeout de inicio para no incluir segundos anteriores al toque. Las colas generales de shell/Sync todavía requieren límites y métricas para sesiones extensas.
+4. **Ciclo de vida sensible.** Al abandonar mirror se libera la textura, el decoder, la grabación activa y la conexión nativa; al regresar se fuerza una sesión limpia. El fallback espera la liberación del encoder OEM y continúa ante un servidor que finaliza antes de publicar el socket. Todavía debe validarse ante cierre de proceso, cable retirado, background y grabación activa.
 5. **Confirmación de control limitada.** `sendTouch()` propaga errores del canal y la UI los presenta, pero scrcpy no confirma individualmente que Android haya inyectado cada gesto; un fabricante todavía puede rechazarlo por sus ajustes de seguridad.
 6. **Coordenadas y rotación unificadas, pendientes de matriz.** La textura usa su rectángulo renderizado, MediaCodec publica el tamaño/crop vigente y `wm size` quedó solo como diagnóstico. Deben repetirse las pruebas con letterboxing, recorte, rotación y varias resoluciones.
 7. **Autenticación ADB sin endurecimiento.** La clave privada se persiste en `SharedPreferences`; para una herramienta sensible debe protegerse con Android Keystore y validarse contra vectores/pruebas AOSP. La generación de `n0inv` y la firma deben ser revisadas con pruebas de protocolo, no solo con un modelo de teléfono.
 8. **scrcpy 2.7 está congelado dentro del APK.** El proyecto oficial ya publica una versión posterior y registra correcciones para Android recientes. Actualizar no es solo reemplazar el JAR: cambian opciones y protocolo. Se requiere política de versionado, hash permitido, matriz de compatibilidad y pruebas de regresión.
 9. **Diagnóstico visible en UI.** La consola arbitraria fue retirada; el panel actual es de solo lectura y muestra tamaños, último gesto, estado del stream, confirmaciones ADB y salida de scrcpy-server. Debe ocultarse o condicionarse en builds operativos si los logs contienen datos sensibles.
 10. **Licencias de terceros.** El repositorio no contiene un archivo de licencia/avisos para el servidor scrcpy distribuido. Debe incorporarse el cumplimiento Apache-2.0 y el inventario SBOM.
-11. **Mirror multisesión no implementado.** `UsbPlugin` y el servicio Dart
-    conservan una sola conexión, transporte, textura, decoder, recorder y sesión.
-    El objetivo obligatorio es migrar a un registro dinámico por `deviceId`,
-    validar 1/2/3 mediante el ORICO y ampliar a 4/5/6 con otro hub, sin
-    reescribir el protocolo ADB/scrcpy ni hardcodear la cantidad de fuentes.
+11. **Mirror multisesión pendiente de validación física.** La primera vertical de
+    código ya usa un registro dinámico por `sourceSessionId`, con transporte,
+    textura, decoder, recorder y cleanup por fuente. Falta validar 1/2/3 mediante
+    el ORICO y ampliar a 4/5/6 con otro hub, sin reescribir el protocolo
+    ADB/scrcpy ni hardcodear la cantidad de fuentes.
 
 ### P1 — riesgos de producto y datos
 
@@ -134,12 +134,16 @@ La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto,
 
 ### P2 — validación y toolchain
 
-- `pubspec.yaml` exige Dart `^3.9.0` y Flutter `^3.35.0`.
-- El entorno activo durante la auditoría tiene Dart 3.6.0 y Flutter 3.27.1.
-- `flutter pub get` y `flutter analyze` no pudieron ejecutarse por esa incompatibilidad.
-- Se agregó `test/data/services/evidence_crypto_service_test.dart`; todavía no se
-  ejecutó porque el entorno activo no satisface el SDK mínimo del proyecto.
-- No hay configuración FVM/mise versionada que instale o seleccione el SDK requerido.
+- `pubspec.yaml`, `pubspec.lock` y `.fvmrc` quedan alineados en Dart 3.12 y
+  Flutter 3.44.4.
+- El entorno activo fue actualizado por el propietario a Flutter 3.44.4 y
+  Dart 3.12.2.
+- La versión global de FVM y el SDK local disponible en el host fueron
+  verificados en Flutter 3.44.4/Dart 3.12.2; todavía falta reflejar el pin en CI.
+- `flutter analyze`, tests y builds permanecen reservados a la validación del
+  propietario conforme a las reglas del repositorio.
+- Se agregó `test/data/services/evidence_crypto_service_test.dart`; todavía no
+  se ejecutó en esta revisión.
 
 Esto debe resolverse fijando una única versión de Flutter en CI y desarrollo antes de refactorizar.
 

@@ -12,7 +12,7 @@ enum AcquisitionConnectionPhase {
 
 enum AcquisitionRecordingPhase { idle, starting, recording, saving }
 
-enum AcquisitionDestination { mirror, transfer }
+enum AcquisitionDestination { mirror, multiMirror, transfer }
 
 enum RemoteFileKind { directory, image, video, audio, document, other }
 
@@ -32,6 +32,11 @@ final class AcquisitionDevice {
     required this.hasPermission,
     required this.vendorId,
     required this.productId,
+    required this.supportsAdb,
+    required this.connectionLabel,
+    this.deviceType = 'android_adb',
+    this.interfaceSummary = '',
+    this.serialNumber,
   });
 
   final String id;
@@ -39,6 +44,17 @@ final class AcquisitionDevice {
   final bool hasPermission;
   final int vendorId;
   final int productId;
+  final String deviceType;
+  final bool supportsAdb;
+  final String connectionLabel;
+  final String interfaceSummary;
+  final String? serialNumber;
+
+  String get shortSerial {
+    final value = serialNumber?.trim();
+    if (value == null || value.isEmpty) return '';
+    return value.length <= 8 ? value : '…${value.substring(value.length - 8)}';
+  }
 }
 
 final class AcquisitionMirrorSession {
@@ -50,6 +66,8 @@ final class AcquisitionMirrorSession {
     required this.controlStreamId,
     required this.videoWidth,
     required this.videoHeight,
+    this.sourceSessionId = 'legacy',
+    this.usbDeviceId,
   });
 
   final String requisitionId;
@@ -59,6 +77,22 @@ final class AcquisitionMirrorSession {
   final int controlStreamId;
   final int videoWidth;
   final int videoHeight;
+  final String sourceSessionId;
+  final String? usbDeviceId;
+}
+
+final class AcquisitionMultiMirrorSession {
+  const AcquisitionMultiMirrorSession({
+    required this.requisitionId,
+    required this.sessionId,
+    required this.sources,
+    required this.maxConcurrentMirrors,
+  });
+
+  final String requisitionId;
+  final String sessionId;
+  final List<AcquisitionMirrorSession> sources;
+  final int maxConcurrentMirrors;
 }
 
 final class AcquisitionConnectionSession {
@@ -66,11 +100,13 @@ final class AcquisitionConnectionSession {
     required this.requisitionId,
     required this.sessionId,
     required this.deviceName,
+    this.usbDeviceId,
   });
 
   final String requisitionId;
   final String sessionId;
   final String deviceName;
+  final String? usbDeviceId;
 }
 
 final class RemoteFileEntry {

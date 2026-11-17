@@ -38,6 +38,9 @@ class UsbAdbTransport(
         private const val WRITE_TIMEOUT = 5000
         private const val AUTH_READ_TIMEOUT = 30000
         private const val HANDSHAKE_GLOBAL_TIMEOUT = 40000L
+        private const val STALE_PACKET_READ_TIMEOUT = 75
+        private const val MAX_STALE_USB_CHUNKS = 128
+        private const val MAX_STALE_PAYLOAD_BYTES = 8 * 1024 * 1024
 
         fun logDeviceInfo(device: UsbDevice): String {
             val sb = StringBuilder()
@@ -75,6 +78,7 @@ class UsbAdbTransport(
     private val readLock = ReentrantLock()
     private var isConnected = false
     private val disconnected = AtomicBoolean(false)
+    @Volatile private var remoteProductModel: String? = null
 
     private var onStateChanged: ((String, String?, String) -> Unit)? = null
 
@@ -92,6 +96,24 @@ class UsbAdbTransport(
     }
 
     fun getLog(): String = logBuffer.toString()
+
+    fun getRemoteProductModel(): String? = remoteProductModel
+
+    private fun readConnectionIdentity(dataLength: Int): ByteArray? {
+        if (dataLength <= 0) return null
+        val identity = readPayload(dataLength)
+        val banner = identity
+            ?.let { String(it, Charsets.UTF_8).trimEnd('\u0000') }
+        remoteProductModel = banner
+            ?.split(';')
+            ?.firstOrNull { it.startsWith("ro.product.model=") }
+            ?.substringAfter('=')
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        log("CNXN identity: ${banner ?: "null"}")
+        remoteProductModel?.let { log("Remote product model: $it") }
+        return identity
+    }
 
     fun findAdbInterface(): Boolean {
         log("=== findAdbInterface ===")
@@ -113,22 +135,11 @@ class UsbAdbTransport(
             }
         }
 
-        // Fallback: vendor-specific class
-        for (i in 0 until device.interfaceCount) {
-            val iface = device.getInterface(i)
-            if (iface.interfaceClass == ADB_CLASS) {
-                log("Found vendor class=0xFF at index $i")
-                return claimInterface(iface)
-            }
-        }
-
-        // Last resort: first interface
-        if (device.interfaceCount > 0) {
-            log("WARNING: Using first interface as fallback")
-            return claimInterface(device.getInterface(0))
-        }
-
-        log("ERROR: No interfaces found!")
+        // Do not claim an arbitrary interface. A hub, keyboard, mouse or UVC
+        // capture card may be present in the same OTG topology; selecting its
+        // first interface was the reason the old flow could remain in
+        // "charging" or fail with an opaque handshake error.
+        log("ERROR: No exact ADB interface found; refusing a non-ADB interface")
         return false
     }
 
@@ -204,6 +215,13 @@ class UsbAdbTransport(
             val fp = adbAuth.getKeyFingerprint()
             log("RSA fingerprint: ${fp ?: "null"}")
 
+            // A previous scrcpy session can leave complete WRTE/CLSE packets
+            // queued in the USB IN endpoint for a short time after its host
+            // connection closes. They belong to the previous ADB transport,
+            // not to the CNXN below. Drain complete packets first so an old
+            // stream response cannot be mistaken for the new handshake.
+            drainStalePacketsBeforeConnect()
+
             val cnxnPacket = AdbProtocol.buildCnxn()
             log("CNXN packet: ${cnxnPacket.size} bytes total")
             log("CNXN header (24B): ${cnxnPacket.sliceArray(0 until minOf(24, cnxnPacket.size)).joinToString(" ") { "%02X".format(it) }}")
@@ -234,7 +252,7 @@ class UsbAdbTransport(
             }
 
             log("Waiting for device response (timeout ${READ_TIMEOUT}ms)...")
-            val response = readMessage()
+            val response = readHandshakeResponse(startTime, READ_TIMEOUT)
             val elapsed2 = System.currentTimeMillis() - startTime
 
             if (response == null) {
@@ -260,10 +278,7 @@ class UsbAdbTransport(
                 }
                 AdbProtocol.A_CNXN -> {
                     log("Device sent CNXN - already authorized! dataLen=${response.dataLength}")
-                    if (response.dataLength > 0) {
-                        val identity = readPayload(response.dataLength)
-                        log("CNXN identity: ${identity?.let { String(it, Charsets.UTF_8).trimEnd('\u0000') } ?: "null"}")
-                    }
+                    readConnectionIdentity(response.dataLength)
                     isConnected = true
                     startReaderThread()
                     notifyState("connected", null, getLog())
@@ -321,17 +336,19 @@ class UsbAdbTransport(
                 log("AUTH_SIGNATURE send result: $sendResult")
 
                 if (!sendResult) {
-                    log("Failed to send signature, trying public key...")
-                    return sendPublicKey(startTime)
+                    log("Failed to send signature; public key will not be resent on a transport error")
+                    notifyState("error", "No se pudo enviar la firma RSA", getLog())
+                    return false
                 }
 
                 log("Waiting for auth response...")
-                val nextMessage = readMessage()
+                val nextMessage = readHandshakeResponse(startTime, READ_TIMEOUT)
                 val elapsed = System.currentTimeMillis() - startTime
 
                 if (nextMessage == null) {
                     log("NO RESPONSE after AUTH_SIGNATURE after ${elapsed}ms")
-                    notifyState("error", "Sin respuesta despues de firma. Revisa el dispositivo.", getLog())
+                    log("Public key not resent: adbd did not explicitly reject the signature")
+                    notifyState("error", "Sin respuesta despues de la firma RSA", getLog())
                     return false
                 }
 
@@ -371,10 +388,7 @@ class UsbAdbTransport(
             }
             AdbProtocol.A_CNXN -> {
                 log("CNXN received - CONNECTED! dataLen=${nextMessage.dataLength}")
-                if (nextMessage.dataLength > 0) {
-                    val identity = readPayload(nextMessage.dataLength)
-                    log("CNXN identity: ${identity?.let { String(it, Charsets.UTF_8).trimEnd('\u0000') } ?: "null"}")
-                }
+                readConnectionIdentity(nextMessage.dataLength)
                 isConnected = true
                 startReaderThread()
                 notifyState("connected", null, getLog())
@@ -401,7 +415,7 @@ class UsbAdbTransport(
         log("Public key base64: ${publicKeyBase64.length} chars")
         log("Public key header: ${publicKeyBase64.substring(0, minOf(7, publicKeyBase64.length))}")
 
-        val keyBytes = publicKeyBase64.toByteArray(Charsets.US_ASCII)
+        val keyBytes = "$publicKeyBase64 filecast@android".toByteArray(Charsets.US_ASCII)
         val authPacket = AdbProtocol.buildAuthPublicKey(keyBytes)
         log("Sending AUTH_RSAPUBLICKEY (${authPacket.size} bytes, payload ${keyBytes.size} bytes)...")
         val sendResult = sendRaw(authPacket)
@@ -442,7 +456,7 @@ class UsbAdbTransport(
 
         try {
             log("Waiting for response after public key (timeout ${AUTH_READ_TIMEOUT}ms)...")
-            val nextMessage = readMessage(AUTH_READ_TIMEOUT)
+            val nextMessage = readHandshakeResponse(startTime, AUTH_READ_TIMEOUT)
             val elapsed = System.currentTimeMillis() - startTime
 
             if (nextMessage == null) {
@@ -466,6 +480,78 @@ class UsbAdbTransport(
         }
     }
 
+    /**
+     * Drain raw USB chunks queued by the previous ADB/scrcpy connection.
+     * Reading raw chunks is intentional: the previous reader may have consumed
+     * a header just before its connection closed, leaving only payload bytes in
+     * the endpoint. Parsing that payload as a new header would never resync.
+     */
+    private fun drainStalePacketsBeforeConnect() {
+        val buffer = ByteArray(AdbProtocol.ADB_USB_MAX_PAYLOAD)
+        var chunkCount = 0
+        var drainedBytes = 0
+        while (!disconnected.get() &&
+            chunkCount < MAX_STALE_USB_CHUNKS &&
+            drainedBytes < MAX_STALE_PAYLOAD_BYTES) {
+            val bytesRead = readRaw(buffer, STALE_PACKET_READ_TIMEOUT)
+            if (bytesRead <= 0) break
+            chunkCount += 1
+            drainedBytes += bytesRead
+            log("STALE DRAIN discarded raw USB chunk: $bytesRead bytes")
+        }
+        if (chunkCount > 0) {
+            log("STALE DRAIN complete: $chunkCount chunks, $drainedBytes bytes")
+        }
+    }
+
+    /**
+     * During a reconnect, packets already emitted by the old stream can still
+     * arrive immediately after the new CNXN write. Ignore those packets until
+     * AUTH or CNXN, which are the only valid handshake responses for ADB 1.0.
+     */
+    private fun readHandshakeResponse(startTime: Long, timeoutMs: Int): AdbMessage? {
+        val phaseDeadline = System.currentTimeMillis() + timeoutMs
+        val globalDeadline = startTime + HANDSHAKE_GLOBAL_TIMEOUT
+        val deadline = minOf(phaseDeadline, globalDeadline)
+        var discarded = 0
+
+        while (!disconnected.get() && System.currentTimeMillis() < deadline) {
+            val remaining = (deadline - System.currentTimeMillis())
+                .coerceAtLeast(1L)
+                .coerceAtMost(Int.MAX_VALUE.toLong())
+                .toInt()
+            val message = readMessage(minOf(READ_TIMEOUT, remaining)) ?: return null
+            if (message.command == AdbProtocol.A_AUTH ||
+                message.command == AdbProtocol.A_CNXN) {
+                if (discarded > 0) {
+                    log("HANDSHAKE recovered after discarding $discarded stale packets")
+                }
+                return message
+            }
+
+            if (!consumeDiscardedPayload(message, minOf(remaining, READ_TIMEOUT))) {
+                log("HANDSHAKE could not consume stale ${message.commandName} payload")
+                return null
+            }
+            discarded += 1
+            log(
+                "HANDSHAKE ignored stale ${message.commandName} " +
+                    "arg0=${message.arg0} arg1=${message.arg1} " +
+                    "payload=${message.dataLength}",
+            )
+        }
+        return null
+    }
+
+    private fun consumeDiscardedPayload(message: AdbMessage, timeoutMs: Int): Boolean {
+        if (message.dataLength < 0 || message.dataLength > AdbProtocol.MAX_PAYLOAD) {
+            log("Invalid discarded payload length: ${message.dataLength}")
+            return false
+        }
+        if (message.dataLength == 0) return true
+        return readPayload(message.dataLength, timeoutMs) != null
+    }
+
     fun sendRaw(data: ByteArray): Boolean {
         writeLock.withLock {
             if (disconnected.get()) {
@@ -476,22 +562,62 @@ class UsbAdbTransport(
                 log("ERROR: writeEndpoint is null!")
                 return false
             }
-            val fd = connection.fileDescriptor
-            log("USB WRITE: ${data.size} bytes to EP 0x${Integer.toHexString(endpoint.address)} fd=$fd")
-            val bytesWritten = connection.bulkTransfer(
-                endpoint,
-                data,
-                data.size,
-                WRITE_TIMEOUT
-            )
-            log("USB WRITE result: $bytesWritten bytes (timeout=${WRITE_TIMEOUT}ms)")
-            if (bytesWritten < 0) {
-                log("USB WRITE FAILED: bulkTransfer returned -1")
-                log("Connection fd=$fd, active=${connection.bulkTransfer(writeEndpoint, ByteArray(0), 0, 100)}")
+            if (data.size < AdbProtocol.HEADER_SIZE) {
+                log("USB WRITE FAILED: packet smaller than ADB header (${data.size})")
                 return false
             }
-            return true
+
+            // AOSP's USB transport writes the 24-byte ADB header and payload
+            // as two distinct bulk transfers. Some older Samsung adbd/FunctionFS
+            // implementations reject a coalesced header+payload transaction.
+            if (!writeUsbBlock(
+                    endpoint = endpoint,
+                    data = data,
+                    offset = 0,
+                    length = AdbProtocol.HEADER_SIZE,
+                    label = "header",
+                )) {
+                return false
+            }
+
+            val payloadLength = data.size - AdbProtocol.HEADER_SIZE
+            return payloadLength == 0 || writeUsbBlock(
+                endpoint = endpoint,
+                data = data,
+                offset = AdbProtocol.HEADER_SIZE,
+                length = payloadLength,
+                label = "payload",
+            )
         }
+    }
+
+    private fun writeUsbBlock(
+        endpoint: UsbEndpoint,
+        data: ByteArray,
+        offset: Int,
+        length: Int,
+        label: String,
+    ): Boolean {
+        val fd = connection.fileDescriptor
+        log(
+            "USB WRITE $label: $length bytes to EP " +
+                "0x${Integer.toHexString(endpoint.address)} fd=$fd",
+        )
+        val bytesWritten = connection.bulkTransfer(
+            endpoint,
+            data,
+            offset,
+            length,
+            WRITE_TIMEOUT,
+        )
+        log("USB WRITE $label result: $bytesWritten/$length bytes")
+        if (bytesWritten != length) {
+            log(
+                "USB WRITE FAILED: $label expected=$length actual=$bytesWritten",
+            )
+            return false
+        }
+        return true
     }
 
     fun readRaw(buffer: ByteArray, timeoutMs: Int = READ_TIMEOUT): Int {
@@ -558,8 +684,12 @@ class UsbAdbTransport(
         return message
     }
 
-    fun readPayload(length: Int): ByteArray? {
+    fun readPayload(length: Int, timeoutMs: Int = READ_TIMEOUT): ByteArray? {
         if (length == 0) return null
+        if (length < 0 || length > AdbProtocol.MAX_PAYLOAD) {
+            if (!quietMode) log("readPayload: invalid length $length")
+            return null
+        }
         if (!quietMode) log("readPayload: reading $length bytes...")
         val payload = ByteArray(length)
         var totalRead = 0
@@ -567,7 +697,7 @@ class UsbAdbTransport(
         while (totalRead < length) {
             val remaining = length - totalRead
             val tempBuffer = ByteArray(remaining)
-            val bytesRead = readRaw(tempBuffer)
+            val bytesRead = readRaw(tempBuffer, timeoutMs)
 
             if (bytesRead < 0) {
                 if (!quietMode) log("readPayload: FAILED at $totalRead/$length bytes")
@@ -653,14 +783,23 @@ class UsbAdbTransport(
                         val stream = streams[message.arg1]
                         if (stream != null) {
                             val payload = if (message.dataLength > 0) readPayload(message.dataLength) else null
-                            if (payload != null) {
-                                stream.dataQueue.add(payload)
-                                log("WRTE: ${payload.size} bytes queued for stream ${message.arg1}")
+                            val acknowledgeImmediately = synchronized(stream) {
+                                if (payload != null) {
+                                    stream.dataQueue.add(payload)
+                                    log("WRTE: ${payload.size} bytes queued for stream ${message.arg1}")
+                                }
+                                payload == null || !stream.deferOkayUntilConsumed.get()
                             }
-                            // Send OKAY to acknowledge receipt (flow control)
-                            val okayPacket = AdbProtocol.buildOkay(message.arg1, message.arg0)
-                            if (!sendRaw(okayPacket)) {
-                                log("ERROR: Failed to send OKAY for WRTE")
+                            // Generic streams are acknowledged immediately. For
+                            // video, the consumer acknowledges as it drains each
+                            // USB chunk. This preserves ADB flow control and keeps
+                            // transient decoder stalls from becoming seconds of
+                            // queued, visibly delayed frames.
+                            if (acknowledgeImmediately) {
+                                val okayPacket = AdbProtocol.buildOkay(message.arg1, message.arg0)
+                                if (!sendRaw(okayPacket)) {
+                                    log("ERROR: Failed to send OKAY for WRTE")
+                                }
                             }
                         } else {
                             log("WRTE for unknown stream arg1=${message.arg1}, discarding")
@@ -719,7 +858,15 @@ class UsbAdbTransport(
         }
 
         // Wait for A_OKAY from device
-        val completed = stream.okayReceived.await(timeoutMs, TimeUnit.MILLISECONDS)
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var completed = false
+        while (!completed && System.currentTimeMillis() < deadline) {
+            completed = stream.okayReceived.await(100L, TimeUnit.MILLISECONDS)
+            if (stream.closed.get()) {
+                streams.remove(localId)
+                throw IOException("ADB stream refused A_OPEN for '$service'")
+            }
+        }
         if (!completed) {
             streams.remove(localId)
             throw TimeoutException("Timeout waiting for A_OKAY after A_OPEN for '$service'")
@@ -1050,6 +1197,24 @@ class UsbAdbTransport(
     private val videoRunning = AtomicBoolean(false)
 
     /**
+     * Switch the video stream from eager ACKs to consumer-driven ADB flow
+     * control. This is called before MediaCodec allocation so frames cannot
+     * accumulate while an OEM decoder is still starting or retrying.
+     */
+    fun enableVideoFlowControl(localId: Int): Boolean {
+        val videoStream = streams[localId] ?: return false
+        synchronized(videoStream) {
+            if (videoStream.deferOkayUntilConsumed.get()) return true
+            // Header reads happen through the platform channel before the
+            // native hot loop begins. Any chunks already queued were therefore
+            // acknowledged by readerLoop and must not receive a second OKAY.
+            videoStream.preAcknowledgedChunksRemaining.set(videoStream.dataQueue.size)
+            videoStream.deferOkayUntilConsumed.set(true)
+        }
+        return true
+    }
+
+    /**
      * Read video packets from an already-open scrcpy stream.
      * Calls onPacket(headerValue, payload) for each decoded packet.
      * Runs on a background thread. Call stopVideoReadLoop() to stop.
@@ -1057,6 +1222,10 @@ class UsbAdbTransport(
     fun startVideoReadLoop(localId: Int, onPacket: (Long, ByteArray) -> Unit, onError: (String) -> Unit) {
         if (videoRunning.get()) {
             log("startVideoReadLoop: already running")
+            return
+        }
+        if (!enableVideoFlowControl(localId)) {
+            onError("Video stream $localId is not open")
             return
         }
         videoRunning.set(true)
@@ -1133,9 +1302,31 @@ class UsbAdbTransport(
             offset += toCopy
             if (toCopy < chunk.size) {
                 stream.dataQueue.addFirst(chunk.copyOfRange(toCopy, chunk.size))
+            } else {
+                acknowledgeConsumedChunk(stream)
             }
         }
         return offset
+    }
+
+    private fun acknowledgeConsumedChunk(stream: AdbStream) {
+        if (!stream.deferOkayUntilConsumed.get()) return
+        while (true) {
+            val preAcknowledged = stream.preAcknowledgedChunksRemaining.get()
+            if (preAcknowledged <= 0) break
+            if (stream.preAcknowledgedChunksRemaining.compareAndSet(
+                    preAcknowledged,
+                    preAcknowledged - 1,
+                )) {
+                return
+            }
+        }
+        val remoteId = stream.remoteId ?: stream.okayRemoteId
+        if (remoteId == 0) return
+        val okayPacket = AdbProtocol.buildOkay(stream.localId, remoteId)
+        if (!sendRaw(okayPacket)) {
+            log("ERROR: Failed to acknowledge consumed video chunk on stream ${stream.localId}")
+        }
     }
 
     /**
@@ -1167,6 +1358,8 @@ data class AdbStream(
     val dataQueue: LinkedBlockingDeque<ByteArray> = LinkedBlockingDeque(),
     val okayReceived: CountDownLatch = CountDownLatch(1),
     val openAcknowledged: AtomicBoolean = AtomicBoolean(false),
+    val deferOkayUntilConsumed: AtomicBoolean = AtomicBoolean(false),
+    val preAcknowledgedChunksRemaining: AtomicInteger = AtomicInteger(0),
     val closed: AtomicBoolean = AtomicBoolean(false),
     val closeReceived: CountDownLatch = CountDownLatch(1),
     val writeOkayQueue: LinkedBlockingQueue<Int> = LinkedBlockingQueue()

@@ -2,7 +2,7 @@
 
 Fecha: 16 de noviembre de 2026
 
-Estado: **plan técnico; multisesión dinámica N no implementada**
+Estado: **primera vertical de código implementada; pendiente validación física**
 
 Hardware inicial: hub/docking ORICO enlazado por el propietario, ASIN
 `B0BYS4D3KR`, conectado por USB-C al Android inspector y con tres puertos USB-A
@@ -50,18 +50,18 @@ funcionen demuestra rol host y funcionamiento HID, pero no prueba que un
 teléfono concreto haya enumerado ADB.
 
 Android permite enumerar varios `UsbDevice` conectados al bus. Sin embargo,
-File Cast actualmente usa un solo estado global de USB/ADB/scrcpy. El hardware
-puede presentar tres teléfonos, pero el software actual no puede mantener tres
-mirrors.
+La primera vertical multi ya registra sesiones independientes por
+`sourceSessionId`. La validación física sigue pendiente: el propietario debe
+aprobar primero M1, luego M2 y M3, y finalmente la matriz N del hub ampliado.
 
 La meta de producto queda fijada así:
 
 | Etapa | Objetivos conectados | Mirrors activos | Control | Estado actual | Gate |
 |---|---:|---:|---:|---|---|
-| M1 | 1 | 1 | Independiente | Falló la prueba inicial: solo carga | Enumeración y ADB por ORICO |
-| M2 | 2 | 2 | Independiente por mirror | No implementado | Dos sesiones sin cerrar la primera |
-| M3 | 3 | 3 | Independiente por mirror | No implementado | Recursos, energía y estabilidad |
-| MN | 4–N | Hasta `maxConcurrentMirrors` | Una fuente enfocada a la vez | No implementado | Hub ampliado y capacidad homologada |
+| M1 | 1 | 1 | Independiente | Código listo; prueba inicial histórica solo cargó | Enumeración y ADB por ORICO |
+| M2 | 2 | 2 | Independiente por mirror | Código listo; pendiente laboratorio | Dos sesiones sin cerrar la primera |
+| M3 | 3 | 3 | Independiente por mirror | Código listo; pendiente laboratorio | Recursos, energía y estabilidad |
+| MN | 4–N | Hasta `maxConcurrentMirrors` | Una fuente enfocada a la vez | Registro dinámico listo; pendiente hub ampliado | Capacidad homologada |
 
 La implementación no salta etapas: M2 no comienza hasta aprobar M1 y M3 no
 comienza hasta aprobar M2.
@@ -142,20 +142,52 @@ Consecuencias:
 3. existe una sola textura de Mirror;
 4. eventos, logs, captura y grabación no identifican una fuente concurrente;
 5. retirar cualquier USB ejecuta el cleanup ADB global;
-6. `getConnectedDevices()` devuelve hub, HID y otros USB sin clasificación;
+6. `getConnectedDevices()` devuelve todos los USB con clasificación
+   diagnóstica (`android_adb`, `mtp`, `hub`, `hid`, `video`, `other`);
 7. `findAdbInterface()` usa primero la interfaz exacta `255/66/1`, pero termina
    con un fallback que puede intentar la primera interfaz de un periférico que
    no es ADB;
-8. `AndroidAcquisitionPlatformService` conserva una sola `_activeSession` y una
-   sola `_activeConnection`;
-9. `AcquisitionMirrorSession` no tiene un identificador estable de fuente o
-   slot dentro de una sesión múltiple.
+8. `AndroidAcquisitionPlatformService` conserva una sola `_activeSession` para
+   el flujo singular, pero ya mantiene `_multiSessions` para la colección multi;
+9. `AcquisitionMirrorSession` ahora tiene un identificador estable de fuente y
+   `usbDeviceId`.
 
 El protocolo ADB y scrcpy dentro de cada conexión ya funcionan y se conservan.
 El cambio necesario es de **propiedad y ciclo de vida por dispositivo**, no una
 reescritura del protocolo.
 
-## Gate previo: resolver el primer objetivo que solo carga
+## Implementación entregada en esta iteración
+
+- `UsbPlugin.kt` conserva las APIs singulares y añade métodos `multi*` con un
+  estado nativo por fuente: ADB, shell scrcpy, sockets, textura, decoder,
+  control, captura y grabación.
+- `UsbAdbTransport.kt` ya no reclama una interfaz arbitraria: exige la interfaz
+  ADB exacta `255/66/1`, evitando seleccionar el hub, HID o UVC.
+- `getConnectedDevices` publica `hasAdbInterface`, `deviceType` e inventario de
+  interfaces. Flutter conserva todos para diagnóstico visual y habilita Mirror
+  únicamente en candidatos ADB.
+- Cada tarjeta muestra serial USB abreviado cuando Android lo permite y la
+  dirección bus/device (`USB 001/004`) para diferenciar descriptores genéricos
+  como `SAMSUNG SAMSUNG_Android`. La API pública `UsbDevice` no publica el
+  número físico del puerto downstream del hub; la dirección diferencia la
+  conexión actual, pero puede cambiar al reconectar.
+- La lectura de `serialNumber` y descriptores USB es defensiva: Android 10+
+  puede lanzar `SecurityException` antes del permiso. Un descriptor protegido
+  ya no convierte toda la enumeración del hub en una lista vacía.
+- `android.hardware.usb.host` se conserva como hint del fabricante, pero no
+  bloquea la pantalla: algunos OEM lo omiten aunque `UsbManager` enumere MTP o
+  ADB. La lista real de `UsbDevice` es la evidencia operativa.
+- La capa Dart añade `connectAndStartMulti`, control por fuente, captura y
+  grabación enfocadas, manteniendo el flujo singular intacto.
+- La identidad ADB RSA es única y persistente para todo File Cast. Singular y
+  multi firman con el mismo par, y multi reintenta después de la reenumeración
+  que algunos Samsung realizan al aceptar la clave por primera vez.
+- La navegación añade la variante `/mirrors/live`, selección múltiple de
+  objetivos y un workspace con modo simultáneo 1/2/3 columnas y modo enfocado
+  con selector de fuente. No existe un límite de tres en la colección; la
+  capacidad real sigue siendo un gate físico.
+
+## Gate previo: resolver el primer objetivo USB-C que queda en MTP sin ADB
 
 Antes de crear multisesión se debe obtener un snapshot diagnóstico para la misma
 combinación inspector + ORICO + cable + objetivo.
@@ -183,11 +215,19 @@ Resultado:
 - si aparece pero no contiene `255/66/1`, el objetivo no está exponiendo ADB;
 - si contiene `255/66/1`, el fallo posterior es corregible en File Cast.
 
+Si el inspector puede abrir la galería/archivos del objetivo, el sistema ya
+enumeró MTP y el inspector está ejerciendo el rol host. En ese caso no se debe
+diagnosticar `host inactivo`: corresponde `MTP sin ADB`. Se debe activar
+Depuración USB en el objetivo, mantenerlo desbloqueado, reconectar y aceptar la
+huella RSA. File Cast no puede activar ADB ni forzar el rol USB-C de otro equipo
+mediante APIs públicas.
+
 ### Gate 2 — selección y permiso
 
 - clasificar dispositivos por sus interfaces;
 - exponer a Mirror solo candidatos `adb`;
-- no mostrar el propio hub, HID, almacenamiento o UVC como Android objetivo;
+- mostrar hub, MTP, HID, almacenamiento o UVC como diagnóstico no seleccionable,
+  sin presentarlos como Android objetivo apto para Mirror;
 - pedir permiso para el `deviceId`/`deviceName` seleccionado;
 - eliminar el fallback operativo a la primera interfaz no ADB;
 - diferenciar `notEnumerated`, `noAdbInterface`, `permissionDenied`,

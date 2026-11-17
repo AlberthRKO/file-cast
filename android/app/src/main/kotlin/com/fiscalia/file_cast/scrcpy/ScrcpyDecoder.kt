@@ -2,7 +2,9 @@ package com.fiscalia.file_cast.scrcpy
 
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
+import android.media.MediaCodecList
 import android.media.MediaFormat
+import android.os.Build
 import android.util.Log
 import android.view.Surface
 
@@ -36,6 +38,7 @@ class ScrcpyDecoder {
     private var configCount = 0
     private var outputWidth = 0
     private var outputHeight = 0
+    private var lastStartError: String? = null
     private var onOutputSizeChanged: ((Int, Int) -> Unit)? = null
     // Reuse BufferInfo to avoid allocation per frame in drainOutputBuffers
     private val bufferInfo = MediaCodec.BufferInfo()
@@ -51,11 +54,8 @@ class ScrcpyDecoder {
         this.outputWidth = width
         this.outputHeight = height
         this.onOutputSizeChanged = onOutputSizeChanged
-
-        val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
-            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
-        }
+        this.inputSurface = surface
+        this.lastStartError = null
 
         var lastError: Exception? = null
         repeat(maxRetries) { attempt ->
@@ -64,28 +64,110 @@ class ScrcpyDecoder {
                 Log.w(TAG, "Retry attempt $attempt/$maxRetries after ${delayMs}ms")
                 Thread.sleep(delayMs)
             }
+            var mediaCodec: MediaCodec? = null
             try {
-                val mediaCodec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                val format = MediaFormat.createVideoFormat(
+                    MediaFormat.MIMETYPE_VIDEO_AVC,
+                    width,
+                    height,
+                ).apply {
+                    setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+                    setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
+                }
+                // Ask Android for a decoder that supports this exact format.
+                // createDecoderByType() may pick an OEM default that advertises
+                // AVC but cannot allocate the requested portrait resolution.
+                val codecName = MediaCodecList(MediaCodecList.REGULAR_CODECS)
+                    .findDecoderForFormat(format)
+                mediaCodec = if (codecName != null) {
+                    MediaCodec.createByCodecName(codecName)
+                } else {
+                    // Some API 21 vendor tables under-report surface formats.
+                    // Keep the legacy factory as a compatibility fallback;
+                    // configure/start remains the authoritative probe.
+                    MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                }
+                // Android 11+ may expose a dedicated real-time decoding path.
+                // Probe the actual selected codec, not any AVC codec installed
+                // on the device. If an OEM advertises it incorrectly and the
+                // first configure fails, the next attempt intentionally falls
+                // back to the standard format.
+                if (attempt == 0 &&
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                    supportsLowLatencyDecoding(mediaCodec.codecInfo)
+                ) {
+                    format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+                }
                 mediaCodec.configure(format, surface, null, 0)
                 mediaCodec.start()
 
                 this.codec = mediaCodec
-                this.inputSurface = surface
                 this.started = true
                 this.configSent = false
                 this.frameCount = 0
                 this.configCount = 0
 
-                Log.d(TAG, "Decoder started (synchronous mode) on attempt ${attempt + 1}")
+                Log.d(
+                    TAG,
+                    "Decoder '${codecName ?: "default AVC"}' started " +
+                        "(synchronous mode) on attempt ${attempt + 1}"
+                )
                 return true
             } catch (e: Exception) {
                 lastError = e
-                Log.e(TAG, "Decoder start failed on attempt ${attempt + 1}: ${e.message}")
+                lastStartError = codecErrorDescription(e)
+                Log.e(TAG, "Decoder start failed on attempt ${attempt + 1}: $lastStartError")
+                // A failed configure/start moves many OEM codecs to a terminal
+                // state. Always release the partial instance before retrying;
+                // otherwise every retry consumes another scarce hardware slot.
+                try {
+                    mediaCodec?.stop()
+                } catch (_: Exception) {
+                    // The codec may not have reached the started state.
+                }
+                try {
+                    mediaCodec?.release()
+                } catch (_: Exception) {
+                    // Best-effort cleanup for broken vendor codecs.
+                }
             }
         }
 
-        Log.e(TAG, "Decoder start failed after $maxRetries attempts: ${lastError?.message}")
+        lastStartError = lastStartError ?: lastError?.message ?: "Unknown codec error"
+        Log.e(TAG, "Decoder start failed after $maxRetries attempts: $lastStartError")
+        try {
+            inputSurface?.release()
+        } catch (_: Exception) {
+            // Surface release is best effort during a failed startup.
+        }
+        inputSurface = null
         return false
+    }
+
+    private fun supportsLowLatencyDecoding(codecInfo: MediaCodecInfo): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
+        return try {
+            codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                .isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_LowLatency)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun codecErrorDescription(error: Exception): String {
+        if (error is MediaCodec.CodecException) {
+            return buildString {
+                append(error.diagnosticInfo)
+                append(" (code=")
+                append(error.errorCode)
+                append(", transient=")
+                append(error.isTransient)
+                append(", recoverable=")
+                append(error.isRecoverable)
+                append(')')
+            }
+        }
+        return error.message ?: error.javaClass.simpleName
     }
 
     fun feedPacket(payload: ByteArray, headerValue: Long) {
@@ -182,13 +264,23 @@ class ScrcpyDecoder {
         started = false
         configSent = false
 
+        val codecToRelease = codec
         try {
-            codec?.stop()
-            codec?.release()
+            codecToRelease?.stop()
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping codec: ${e.message}")
         }
+        try {
+            codecToRelease?.release()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing codec: ${e.message}")
+        }
         codec = null
+        try {
+            inputSurface?.release()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing decoder surface: ${e.message}")
+        }
         inputSurface = null
         onOutputSizeChanged = null
     }
@@ -196,4 +288,5 @@ class ScrcpyDecoder {
     fun isStarted(): Boolean = started
     fun getFrameCount(): Int = frameCount
     fun getConfigCount(): Int = configCount
+    fun getLastStartError(): String? = lastStartError
 }

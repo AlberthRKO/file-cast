@@ -15,6 +15,46 @@ abstract interface class AcquisitionRepository {
     required String requisitionId,
     required String sessionId,
   });
+  Future<AcquisitionMultiMirrorSession> connectAndStartMulti({
+    required List<AcquisitionDevice> devices,
+    required String requisitionId,
+    required String sessionId,
+  });
+  Future<List<AcquisitionMirrorSession>> activeMultiSessions({
+    required String requisitionId,
+    required String sessionId,
+  });
+  Future<void> disconnectMulti({String? sourceSessionId});
+  Future<void> sendTouchToSource(
+    String sourceSessionId,
+    int action,
+    int pointerId,
+    int x,
+    int y,
+  );
+  Future<void> sendScrollToSource(
+    String sourceSessionId,
+    int x,
+    int y,
+    int deltaY,
+  );
+  Future<void> sendKeyToSource(String sourceSessionId, int keycode);
+  Future<RequisitionDetail> captureScreenshotForSource({
+    required String sourceSessionId,
+    required String requisitionId,
+    required String sessionId,
+  });
+  Future<void> startRecordingForSource({
+    required String sourceSessionId,
+    required String requisitionId,
+    required String sessionId,
+  });
+  Future<RequisitionDetail> stopRecordingForSource({
+    required String sourceSessionId,
+    required String requisitionId,
+    required String sessionId,
+  });
+  Future<String> getMultiControlDiagnostics(String sourceSessionId);
   Future<AcquisitionConnectionSession> connectForTransfer({
     required AcquisitionDevice device,
     required String requisitionId,
@@ -67,6 +107,7 @@ abstract interface class AcquisitionRepository {
   Future<void> disconnect();
   Future<void> sendTouch(int action, int pointerId, int x, int y);
   Future<void> sendScroll(int x, int y, int deltaY);
+  Future<String> getConnectionDiagnostics();
   Future<String> getControlDiagnostics();
   Future<void> sendBack();
   Future<void> sendHome();

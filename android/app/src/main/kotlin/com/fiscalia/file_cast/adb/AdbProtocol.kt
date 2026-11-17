@@ -2,7 +2,6 @@ package com.fiscalia.file_cast.adb
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.zip.CRC32
 
 /**
  * ADB Protocol constants and packet building.
@@ -110,12 +109,18 @@ object AdbProtocol {
     }
 
     /**
-     * Calculate CRC32 checksum of data.
+     * Calculate the legacy ADB payload checksum.
+     *
+     * ADB 1.0 uses the unsigned sum of every payload byte. This is not CRC32.
+     * Older adbd versions validate this field and silently discard packets
+     * with an invalid value, so it must remain enabled for A_VERSION.
      */
     fun calculateChecksum(data: ByteArray): Int {
-        val crc = CRC32()
-        crc.update(data)
-        return crc.value.toInt()
+        var checksum = 0
+        for (byte in data) {
+            checksum += byte.toInt() and 0xFF
+        }
+        return checksum
     }
 
     /**
@@ -141,7 +146,12 @@ object AdbProtocol {
      * Build AUTH packet with public key.
      */
     fun buildAuthPublicKey(publicKey: ByteArray): ByteArray {
-        return buildPacket(A_AUTH, ADB_AUTH_RSAPUBLICKEY, 0, publicKey)
+        val payload = if (publicKey.lastOrNull() == 0.toByte()) {
+            publicKey
+        } else {
+            publicKey + 0.toByte()
+        }
+        return buildPacket(A_AUTH, ADB_AUTH_RSAPUBLICKEY, 0, payload)
     }
 
     /**

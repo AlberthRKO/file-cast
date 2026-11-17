@@ -11,8 +11,10 @@ import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:file_cast/ui/core/widgets/evidence_rename_sheet.dart';
 import 'package:file_cast/ui/core/widgets/evidence_sync_badge.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/view_models/mirror_view_model.dart';
+import 'package:file_cast/ui/features/acquisition/mirror/widgets/interactive_mirror_texture.dart';
+import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_capture_controls.dart';
+import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_diagnostics_panel.dart';
 import 'package:file_cast/ui/core/widgets/evidence_thumbnail.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -166,9 +168,18 @@ class _MirrorPane extends StatelessWidget {
                     ),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(AppRadius.m),
-                      child: _InteractiveTexture(
-                        args: args,
-                        viewModel: viewModel,
+                      child: InteractiveMirrorTexture(
+                        textureId: args.textureId,
+                        videoSize: Size(
+                          viewModel.videoWidth > 0
+                              ? viewModel.videoWidth.toDouble()
+                              : args.videoSize.width,
+                          viewModel.videoHeight > 0
+                              ? viewModel.videoHeight.toDouble()
+                              : args.videoSize.height,
+                        ),
+                        onTouch: viewModel.sendTouch,
+                        onScroll: viewModel.sendScroll,
                       ),
                     ),
                   ),
@@ -182,7 +193,11 @@ class _MirrorPane extends StatelessWidget {
                       math.max(0.0, constraints.maxWidth - AppSpace.m),
                     ),
                     height: math.min(260.0, constraints.maxHeight * .55),
-                    child: _DiagnosticsPanel(viewModel: viewModel),
+                    child: MirrorDiagnosticsPanel(
+                      log: viewModel.diagnosticLog,
+                      onRefresh: viewModel.refreshDiagnostics,
+                      onClose: viewModel.toggleDiagnostics,
+                    ),
                   ),
                 if (viewModel.message != null ||
                     viewModel.recordingPhase ==
@@ -216,7 +231,15 @@ class _MirrorPane extends StatelessWidget {
           ),
         ),
         const SizedBox(height: AppSpace.s),
-        _CaptureControls(viewModel: viewModel),
+        MirrorCaptureControls(
+          recordingPhase: viewModel.recordingPhase,
+          recordingDurationLabel: viewModel.recordingDurationLabel,
+          isCapturing: viewModel.isCapturing,
+          onBack: viewModel.sendBack,
+          onHome: viewModel.sendHome,
+          onCapture: viewModel.captureScreenshot,
+          onToggleRecording: viewModel.toggleRecording,
+        ),
       ],
     ),
   );
@@ -264,212 +287,6 @@ class _MirrorStatusOverlay extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _InteractiveTexture extends StatelessWidget {
-  const _InteractiveTexture({required this.args, required this.viewModel});
-  final MirrorRouteArgs args;
-  final MirrorViewModel viewModel;
-
-  @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) {
-      if (constraints.maxWidth <= 0 || constraints.maxHeight <= 0)
-        return const SizedBox.shrink();
-      final videoSize = Size(
-        viewModel.videoWidth > 0
-            ? viewModel.videoWidth.toDouble()
-            : args.videoSize.width,
-        viewModel.videoHeight > 0
-            ? viewModel.videoHeight.toDouble()
-            : args.videoSize.height,
-      );
-      final available = Size(constraints.maxWidth, constraints.maxHeight);
-      final deviceAspect = videoSize.aspectRatio;
-      final renderWidth = deviceAspect > available.aspectRatio
-          ? available.width
-          : available.height * deviceAspect;
-      final renderHeight = deviceAspect > available.aspectRatio
-          ? available.width / deviceAspect
-          : available.height;
-
-      void send(int action, PointerEvent event) {
-        final maxX = math.max(0, videoSize.width.round() - 1);
-        final maxY = math.max(0, videoSize.height.round() - 1);
-        final x = (event.localPosition.dx * videoSize.width / renderWidth)
-            .clamp(0, maxX)
-            .round();
-        final y = (event.localPosition.dy * videoSize.height / renderHeight)
-            .clamp(0, maxY)
-            .round();
-        viewModel.sendTouch(action, event.pointer, x, y);
-      }
-
-      void sendScroll(PointerScrollEvent event) {
-        final maxX = math.max(0, videoSize.width.round() - 1);
-        final maxY = math.max(0, videoSize.height.round() - 1);
-        final x = (event.localPosition.dx * videoSize.width / renderWidth)
-            .clamp(0, maxX)
-            .round();
-        final y = (event.localPosition.dy * videoSize.height / renderHeight)
-            .clamp(0, maxY)
-            .round();
-        viewModel.sendScroll(x, y, event.scrollDelta.dy.round());
-      }
-
-      return Center(
-        child: SizedBox(
-          width: renderWidth,
-          height: renderHeight,
-          child: Listener(
-            behavior: HitTestBehavior.opaque,
-            onPointerDown: (event) => send(0, event),
-            onPointerMove: (event) => send(2, event),
-            onPointerUp: (event) => send(1, event),
-            onPointerCancel: (event) => send(1, event),
-            onPointerSignal: (event) {
-              if (event is PointerScrollEvent) sendScroll(event);
-            },
-            child: Texture(textureId: args.textureId),
-          ),
-        ),
-      );
-    },
-  );
-}
-
-class _DiagnosticsPanel extends StatelessWidget {
-  const _DiagnosticsPanel({required this.viewModel});
-
-  final MirrorViewModel viewModel;
-
-  @override
-  Widget build(BuildContext context) => Material(
-    color: Colors.black.withValues(alpha: .88),
-    borderRadius: BorderRadius.circular(AppRadius.m),
-    child: Padding(
-      padding: const EdgeInsets.all(AppSpace.s),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.terminal, color: Colors.white70, size: 18),
-              const SizedBox(width: AppSpace.xs),
-              const Expanded(
-                child: Text(
-                  'Diagnóstico de control',
-                  style: TextStyle(color: Colors.white),
-                ),
-              ),
-              IconButton(
-                onPressed: viewModel.refreshDiagnostics,
-                tooltip: 'Actualizar',
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.refresh, color: Colors.white70),
-              ),
-              IconButton(
-                onPressed: viewModel.toggleDiagnostics,
-                tooltip: 'Cerrar',
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.close, color: Colors.white70),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpace.xs),
-          Expanded(
-            child: SingleChildScrollView(
-              child: SelectableText(
-                viewModel.diagnosticLog.isEmpty
-                    ? 'Recopilando datos…'
-                    : viewModel.diagnosticLog,
-                style: TextStyle(
-                  color: Colors.green.shade200,
-                  fontFamily: 'monospace',
-                  fontSize: 11,
-                  height: 1.35,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-class _CaptureControls extends StatelessWidget {
-  const _CaptureControls({required this.viewModel});
-  final MirrorViewModel viewModel;
-
-  @override
-  Widget build(BuildContext context) {
-    final recording =
-        viewModel.recordingPhase == AcquisitionRecordingPhase.recording;
-    final starting =
-        viewModel.recordingPhase == AcquisitionRecordingPhase.starting;
-    final saving = viewModel.recordingPhase == AcquisitionRecordingPhase.saving;
-    return Wrap(
-      alignment: WrapAlignment.center,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      spacing: AppSpace.s,
-      runSpacing: AppSpace.s,
-      children: [
-        IconButton.filledTonal(
-          onPressed: viewModel.sendBack,
-          tooltip: 'Atrás',
-          icon: const Icon(Icons.arrow_back),
-        ),
-        IconButton.filledTonal(
-          onPressed: viewModel.sendHome,
-          tooltip: 'Inicio',
-          icon: const Icon(Icons.home_outlined),
-        ),
-        FilledButton.icon(
-          onPressed: viewModel.isCapturing || starting || saving
-              ? null
-              : viewModel.captureScreenshot,
-          icon: viewModel.isCapturing
-              ? const SizedBox.square(
-                  dimension: AppSize.iconM,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.photo_camera_outlined),
-          label: const Text('Capturar foto'),
-        ),
-        FilledButton.icon(
-          style: FilledButton.styleFrom(
-            backgroundColor: recording
-                ? Theme.of(context).colorScheme.error
-                : null,
-            foregroundColor: recording
-                ? Theme.of(context).colorScheme.onError
-                : null,
-          ),
-          onPressed: starting || saving ? null : viewModel.toggleRecording,
-          icon: starting || saving
-              ? const SizedBox.square(
-                  dimension: AppSize.iconM,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : Icon(
-                  recording
-                      ? Icons.stop_rounded
-                      : Icons.fiber_manual_record_rounded,
-                ),
-          label: Text(
-            starting
-                ? 'Preparando…'
-                : saving
-                ? 'Guardando…'
-                : recording
-                ? 'Detener · ${viewModel.recordingDurationLabel}'
-                : 'Grabar video',
-          ),
-        ),
-      ],
     );
   }
 }

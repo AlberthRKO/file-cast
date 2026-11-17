@@ -41,7 +41,7 @@ almacenada en el mismo almacén seguro.
 
 En Android, el build release conserva las clases nativas de SQLCipher mediante
 `android/app/proguard-rules.pro`. Antes de distribuir una versión release se
-debe ejecutar el build con Flutter 3.35 o superior y comprobar la apertura de
+debe ejecutar el build con Flutter 3.44 o superior y comprobar la apertura de
 la base en un dispositivo real.
 
 ## Persistencia local

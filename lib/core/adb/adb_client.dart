@@ -35,7 +35,16 @@ class AdbClient {
         'getConnectedDevices',
       );
       if (result == null) return [];
-      return result.map((e) => UsbDeviceInfo.fromMap(e as Map)).toList();
+      final devices = <UsbDeviceInfo>[];
+      for (final rawDevice in result) {
+        try {
+          devices.add(UsbDeviceInfo.fromMap(rawDevice as Map));
+        } catch (error) {
+          // One vendor descriptor must not hide every target behind a hub.
+          print('AdbClient: Invalid USB descriptor skipped: $error');
+        }
+      }
+      return devices;
     } on PlatformException catch (e) {
       print('AdbClient: Error getting connected devices: ${e.message}');
       return [];
@@ -336,6 +345,8 @@ class AdbClient {
   /// IMPORTANT: With control=true, server waits for BOTH connections before sending header.
   Future<Map<String, dynamic>> connectScrcpySockets() async {
     final logBuffer = StringBuffer();
+    int? localId;
+    int? controlLocalId;
 
     try {
       final socketName = 'localabstract:scrcpy';
@@ -343,23 +354,27 @@ class AdbClient {
       // Open video stream (first connection)
       logBuffer.writeln('[1] Opening video socket ($socketName)...');
       final streamInfo = await openStream(socketName, timeoutMs: 10000);
-      final localId = streamInfo['localId'] as int;
-      logBuffer.writeln('  Video stream opened: localId=$localId');
+      final videoLocalId = streamInfo['localId'] as int;
+      localId = videoLocalId;
+      logBuffer.writeln('  Video stream opened: localId=$videoLocalId');
 
       // Open control stream (second connection) — MUST be done before reading header
       // because with control=true, server waits for both connections
       logBuffer.writeln('[2] Opening control socket ($socketName)...');
       final controlInfo = await openStream(socketName, timeoutMs: 10000);
-      final controlLocalId = controlInfo['localId'] as int;
-      logBuffer.writeln('  Control stream opened: localId=$controlLocalId');
+      final openedControlLocalId = controlInfo['localId'] as int;
+      controlLocalId = openedControlLocalId;
+      logBuffer.writeln(
+        '  Control stream opened: localId=$openedControlLocalId',
+      );
 
       // Now server sends the video header on the first stream
       logBuffer.writeln('[3] Reading dummy byte...');
-      final dummy = await _readExact(localId, 1);
+      final dummy = await _readExact(videoLocalId, 1);
       logBuffer.writeln('  Dummy byte: 0x${dummy[0].toRadixString(16)}');
 
       logBuffer.writeln('[4] Reading device name (64 bytes)...');
-      final nameBytes = await _readExact(localId, 64);
+      final nameBytes = await _readExact(videoLocalId, 64);
       final nameEnd = nameBytes.indexWhere((b) => b == 0);
       final deviceName = String.fromCharCodes(
         nameBytes.sublist(0, nameEnd > 0 ? nameEnd : 64),
@@ -367,7 +382,7 @@ class AdbClient {
       logBuffer.writeln('  Device: $deviceName');
 
       logBuffer.writeln('[5] Reading video codec metadata (12 bytes)...');
-      final codecMeta = await _readExact(localId, 12);
+      final codecMeta = await _readExact(videoLocalId, 12);
       final hexBytes = codecMeta
           .map((b) => b.toRadixString(16).padLeft(2, '0'))
           .join(' ');
@@ -406,14 +421,214 @@ class AdbClient {
         'width': width,
         'height': height,
         'codec': codecFourcc,
-        'localId': localId,
-        'controlLocalId': controlLocalId,
+        'localId': videoLocalId,
+        'controlLocalId': openedControlLocalId,
         'log': logBuffer.toString(),
       };
     } catch (e) {
+      if (controlLocalId != null) await closeStream(controlLocalId);
+      if (localId != null) await closeStream(localId);
       logBuffer.writeln('ERROR: $e');
       throw Exception('${logBuffer.toString()}\n$e');
     }
+  }
+
+  Future<Map<String, dynamic>> multiConnectAdb({
+    required String sourceSessionId,
+    required String deviceName,
+  }) async {
+    final result = await _methodChannel.invokeMethod<Map>('multiConnectAdb', {
+      'sourceSessionId': sourceSessionId,
+      'deviceName': deviceName,
+    });
+    if (result == null) throw StateError('multiConnectAdb returned null');
+    return Map<String, dynamic>.from(result);
+  }
+
+  Future<bool> multiPushFile({
+    required String sourceSessionId,
+    required String localPath,
+    required String remotePath,
+  }) async {
+    final result = await _methodChannel.invokeMethod<Map>('multiPushFile', {
+      'sourceSessionId': sourceSessionId,
+      'localPath': localPath,
+      'remotePath': remotePath,
+    });
+    return result?['success'] as bool? ?? false;
+  }
+
+  Future<int> multiStartPersistentShell({
+    required String sourceSessionId,
+    required String command,
+  }) async {
+    final result = await _methodChannel.invokeMethod<Map>(
+      'multiStartPersistentShell',
+      {'sourceSessionId': sourceSessionId, 'command': command},
+    );
+    if (result == null)
+      throw StateError('multiStartPersistentShell returned null');
+    return result['localId'] as int;
+  }
+
+  Future<String> multiShellCommand({
+    required String sourceSessionId,
+    required String command,
+  }) async {
+    final result = await _methodChannel.invokeMethod<Map>('multiShellCommand', {
+      'sourceSessionId': sourceSessionId,
+      'command': command,
+    });
+    return result?['output'] as String? ?? '';
+  }
+
+  Future<Map<String, dynamic>> multiConnectScrcpySockets(
+    String sourceSessionId,
+  ) async {
+    final result = await _methodChannel.invokeMethod<Map>(
+      'multiConnectScrcpySockets',
+      {'sourceSessionId': sourceSessionId},
+    );
+    if (result == null)
+      throw StateError('multiConnectScrcpySockets returned null');
+    return Map<String, dynamic>.from(result);
+  }
+
+  Future<int> multiCreateMirrorTexture(String sourceSessionId) async {
+    final result = await _methodChannel.invokeMethod<Map>(
+      'multiCreateMirrorTexture',
+      {'sourceSessionId': sourceSessionId},
+    );
+    if (result == null)
+      throw StateError('multiCreateMirrorTexture returned null');
+    return result['textureId'] as int;
+  }
+
+  Future<void> multiStartMirror({
+    required String sourceSessionId,
+    required int width,
+    required int height,
+    required int videoStreamLocalId,
+  }) async {
+    await _methodChannel.invokeMethod('multiStartMirror', {
+      'sourceSessionId': sourceSessionId,
+      'width': width,
+      'height': height,
+      'videoStreamLocalId': videoStreamLocalId,
+    });
+  }
+
+  Future<void> multiStopMirror(String sourceSessionId) async {
+    await _methodChannel.invokeMethod('multiStopMirror', {
+      'sourceSessionId': sourceSessionId,
+    });
+  }
+
+  Future<void> multiDisconnectAdb(String sourceSessionId) async {
+    await _methodChannel.invokeMethod('multiDisconnectAdb', {
+      'sourceSessionId': sourceSessionId,
+    });
+  }
+
+  Future<void> multiSendTouch({
+    required String sourceSessionId,
+    required int action,
+    required int pointerId,
+    required int x,
+    required int y,
+  }) async {
+    await _methodChannel.invokeMethod('multiSendTouch', {
+      'sourceSessionId': sourceSessionId,
+      'action': action,
+      'pointerId': pointerId,
+      'x': x,
+      'y': y,
+    });
+  }
+
+  Future<void> multiSendKey({
+    required String sourceSessionId,
+    required int action,
+    required int keycode,
+  }) async {
+    await _methodChannel.invokeMethod('multiSendKey', {
+      'sourceSessionId': sourceSessionId,
+      'action': action,
+      'keycode': keycode,
+    });
+  }
+
+  Future<void> multiSendScroll({
+    required String sourceSessionId,
+    required int x,
+    required int y,
+    required int deltaY,
+  }) async {
+    await _methodChannel.invokeMethod('multiSendScroll', {
+      'sourceSessionId': sourceSessionId,
+      'x': x,
+      'y': y,
+      'scrollX': 0,
+      'scrollY': deltaY.isNegative ? 0x7FFF : -0x7FFF,
+    });
+  }
+
+  Future<Map<String, dynamic>> multiCaptureScreenshot({
+    required String sourceSessionId,
+    required String requisitionId,
+    required String sessionId,
+  }) async {
+    final result = await _methodChannel.invokeMethod<Map>(
+      'multiCaptureScreenshot',
+      {
+        'sourceSessionId': sourceSessionId,
+        'requisitionId': requisitionId,
+        'sessionId': sessionId,
+      },
+    );
+    if (result == null)
+      throw StateError('multiCaptureScreenshot returned null');
+    return Map<String, dynamic>.from(result);
+  }
+
+  Future<Map<String, dynamic>> multiStartScreenRecording({
+    required String sourceSessionId,
+    required String requisitionId,
+    required String sessionId,
+  }) async {
+    final result = await _methodChannel.invokeMethod<Map>(
+      'multiStartScreenRecording',
+      {
+        'sourceSessionId': sourceSessionId,
+        'requisitionId': requisitionId,
+        'sessionId': sessionId,
+      },
+    );
+    if (result == null)
+      throw StateError('multiStartScreenRecording returned null');
+    return Map<String, dynamic>.from(result);
+  }
+
+  Future<Map<String, dynamic>> multiStopScreenRecording(
+    String sourceSessionId,
+  ) async {
+    final result = await _methodChannel.invokeMethod<Map>(
+      'multiStopScreenRecording',
+      {
+        'sourceSessionId': sourceSessionId,
+      },
+    );
+    if (result == null)
+      throw StateError('multiStopScreenRecording returned null');
+    return Map<String, dynamic>.from(result);
+  }
+
+  Future<Map<String, dynamic>> multiGetMirrorLog(String sourceSessionId) async {
+    final result = await _methodChannel.invokeMethod<Map>('multiGetMirrorLog', {
+      'sourceSessionId': sourceSessionId,
+    });
+    return result?.map((key, value) => MapEntry(key.toString(), value)) ??
+        const {};
   }
 
   /// Create a Flutter Texture backed by a SurfaceTexture.

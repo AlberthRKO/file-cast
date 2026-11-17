@@ -8,6 +8,8 @@ abstract final class AppRouteName {
   static const offline = 'offline';
   static const acquisitionConnect = 'acquisition-connect';
   static const mirror = 'mirror';
+  static const multiMirror = 'multi-mirror';
+  static const multiMirrorConnect = 'multi-mirror-connect';
 }
 
 abstract final class AppRoutePath {
@@ -24,4 +26,8 @@ abstract final class AppRoutePath {
       '/requisitions/:requisitionId/acquisitions/:sessionId/connect';
   static const mirror =
       '/requisitions/:requisitionId/acquisitions/:sessionId/mirror';
+  static const multiMirror =
+      '/requisitions/:requisitionId/acquisitions/:sessionId/mirrors/live';
+  static const multiMirrorConnect =
+      '/requisitions/:requisitionId/acquisitions/:sessionId/mirrors/connect';
 }

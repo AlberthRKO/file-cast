@@ -69,12 +69,28 @@ Incorrecto: `two.modPow(2^4096, n)` = 2^(2^4096) mod n
 Correcto: `BigInteger.valueOf(2).modPow(4096, n)` = 2^4096 mod n
 
 #### 6. Signing algorithm
-AOSP usa `RSA_verify(NID_sha1, ...)` que hashea internamente.
-Fix: usar `NONEwithRSA` en vez de `SHA1withRSA`.
+AOSP firma el token de 20 bytes con `RSA_sign(NID_sha1, token, 20)`. El token
+ya es un digest SHA-1: `SHA1withRSA` lo hashea una segunda vez y `NONEwithRSA`
+aplicado directamente omite el `DigestInfo` ASN.1. File Cast usa
+`NONEwithRSA` sobre `SHA1 DigestInfo || token`, reproduciendo PKCS#1 v1.5 de
+AOSP. El mismo par RSA se persiste de forma síncrona y se comparte entre las
+sesiones singular y múltiples.
+
+El `android_pubkey` calcula `n0inv` con el word little-endian de 32 bits de
+menor peso, no con un solo byte. La clave pública se envía con comentario de
+host y terminador NUL, como exige `adbd`. Después de instalar esta corrección,
+los objetivos autorizados con el payload histórico pueden requerir una última
+revocación/aceptación; las reconexiones posteriores deben reutilizar la firma.
 
 #### 7. bulkTransfer hanging post-auth
 Samsung reenumera USB despues de aceptar dialog, bulkTransfer cuelga.
 Fix: watchdog thread que fuerza `connection.close()` despues de timeout.
+
+El registro multisesión también espera la reenumeración, correlaciona por
+serial cuando está disponible, por la nueva dirección USB cuando el serial no
+está expuesto y excluye objetivos que ya tienen una sesión activa antes de
+reintentar el handshake. Si Android revoca el permiso temporal al reenumerar,
+File Cast vuelve a solicitarlo en el inspector y continúa al concederlo.
 
 #### 8. UI thread error
 `result.success()`/`result.error()` se llamaba desde background thread.
@@ -90,6 +106,22 @@ Fix: envolver en `mainHandler.post { }`.
 
 ---
 
+## Permiso USB del inspector versus autorización RSA
+
+- `UsbManager.requestPermission()` muestra en el **inspector** el diálogo para
+  que File Cast acceda al periférico. Es obligatorio para abrir endpoints USB y
+  no sustituye la autorización ADB.
+- La huella RSA aparece en el **objetivo** después del permiso USB y autoriza la
+  identidad persistente de File Cast.
+- Galería u otra app del inspector puede mostrar su propio diálogo si también
+  registró la interfaz MTP del objetivo. File Cast conserva su filtro en
+  `255/66/1` y no puede suprimir un permiso solicitado por otra aplicación.
+- El aviso Samsung de instalar Android File Transfer/Smart Switch corresponde
+  a MTP hacia un host no reconocido como escritorio. No prueba que el cable
+  Micro-USB falle y no impide ADB si `255/66/1` está enumerado.
+
+---
+
 ## Fase 3: Stream Multiplexing
 
 ### Objetivo
@@ -101,9 +133,28 @@ Implementar el protocolo de multiplexacion de streams de ADB sobre una sola cone
 [4..7]   arg0       (4 bytes)  - Comando especifico (localId, remoteId, etc.)
 [8..11]  arg1       (4 bytes)  - Comando especifico
 [12..15] dataLength (4 bytes)  - Longitud del payload
-[16..19] dataCheck  (4 bytes)  - CRC32 del payload
+[16..19] dataCheck  (4 bytes)  - suma sin signo de los bytes del payload (ADB 1.0)
 [20..23] magic      (4 bytes)  - command XOR 0xFFFFFFFF
 ```
+
+Para `A_VERSION = 0x01000000` el checksum no es CRC32. Los `adbd` antiguos
+validan la suma byte a byte y pueden descartar silenciosamente un `CNXN` cuyo
+`dataCheck` sea incorrecto. Además, el transporte USB escribe el header de 24
+bytes y el payload en transferencias bulk separadas, igual que el cliente AOSP;
+esto mantiene compatibilidad con implementaciones FunctionFS antiguas.
+
+Al reiniciar un mirror sin desconectar físicamente el objetivo, el endpoint IN
+puede conservar temporalmente paquetes `WRTE`, `OKAY` o `CLSE` de los streams
+scrcpy anteriores. Esos paquetes no son una respuesta al nuevo `CNXN`: el host
+debe consumir también sus payloads y continuar leyendo hasta recibir `AUTH` o
+`CNXN`. Tratar el primer paquete residual como un error provoca falsos fallos de
+RSA y deja el stream desalineado para los siguientes intentos.
+
+Una clave ya autorizada responde al `AUTH TOKEN` con `AUTH SIGNATURE` usando la
+misma identidad persistente. La clave pública solo debe volver a enviarse si
+`adbd` rechaza explícitamente la firma enviando un segundo `AUTH TOKEN`; un
+timeout o error de transporte no autoriza a repetir `AUTH RSAPUBLICKEY`, porque
+eso puede provocar innecesariamente otro diálogo RSA.
 
 ### Constantes de comandos
 | Comando | Valor | Descripcion |
@@ -361,6 +412,44 @@ Fix: Usar `startPersistentShell()` que mantiene el stream abierto.
 
 #### 5. CNXN payload drain (ya documentado en Fase 3)
 Datos residuales del handshake desincronizan el reader thread.
+
+#### 6. MediaCodec sin recursos en inspectores heterogéneos
+
+El tamaño físico del objetivo no implica que el inspector pueda reservar un
+decoder H.264 para esa misma resolución. Por ejemplo, un objetivo vertical de
+`1200x1920` puede superar los límites o recursos disponibles de un decoder OEM
+antiguo aunque la UI Flutter tenga espacio suficiente para mostrarlo.
+
+File Cast ahora:
+
+1. selecciona con `MediaCodecList.findDecoderForFormat()` un decoder compatible
+   con el formato exacto, en lugar de aceptar ciegamente el decoder por defecto;
+2. libera cada instancia parcial de `MediaCodec` y su `Surface` si `configure()`
+   o `start()` fallan;
+3. limita preventivamente a `max_size=1600` el mirror individual cuando el
+   objetivo supera ese borde; mantiene definición suficiente para inspección y
+   evita reservar en tablets antiguas un decoder vertical fuera de su envolvente;
+4. reinicia scrcpy automáticamente con `max_size` decreciente
+   (`1600`, `1280`, `1024`, `800`, `640`, `480`) cuando el inspector rechaza la
+   resolución o el proceso termina antes de publicar/completar sus sockets;
+5. reduce todavía más la resolución inicial cuando hay varias sesiones de
+   mirror, para no reservar N decoders a resolución completa;
+6. cierra sockets, textura, shell persistente y decoder, espera la liberación del
+   encoder OEM y después reintenta. Un `A_OPEN refused` posterior a `Aborted` se
+   trata como fallo de arranque recuperable, no como pérdida de ADB/RSA;
+7. activa el modo de baja latencia de `MediaCodec` únicamente si Android 11+
+   informa que el decoder H.264 lo soporta.
+
+El stream de video usa además contrapresión por bloque ADB: el `A_OKAY` de cada
+`WRTE` se envía cuando el lector de video consumió ese bloque, no apenas fue
+encolado. Así se evita que una pausa transitoria de `MediaCodec` acumule segundos
+de frames antiguos. Los streams de control, shell, Sync y transferencia conservan
+sus confirmaciones inmediatas; la optimización no altera su protocolo.
+
+La resolución efectiva devuelta por el nuevo header scrcpy sigue siendo la
+fuente de verdad para la textura, el control táctil, las capturas y la grabación.
+El tamaño físico de la tablet o teléfono inspector no se usa para decidir la
+resolución del stream.
 
 ### Archivos clave
 - `UsbAdbTransport.kt` - `openStream()`, `readStream()`, `closeStream()`, `getStream()`
