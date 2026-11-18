@@ -23,6 +23,7 @@ import com.fiscalia.file_cast.scrcpy.ScrcpyRecorder
 import com.fiscalia.file_cast.sync.AdbSyncClient
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
@@ -1165,44 +1166,17 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         val requisitionId = call.argument<String>("requisitionId") ?: "unknown"
         val sessionId = call.argument<String>("sessionId") ?: "unknown"
         Thread {
-            var localId: Int? = null
             try {
                 val directory = evidenceDirectory(requisitionId, sessionId)
                 val file = File(directory, "captura-${System.currentTimeMillis()}.png")
-                val stream = transport.openStream("exec:screencap -p", 10_000L)
-                localId = stream.localId
-                val digest = MessageDigest.getInstance("SHA-256")
-                var total = 0L
-                var completed = false
-                val deadline = System.currentTimeMillis() + 30_000L
-                FileOutputStream(file).use { output ->
-                    while (System.currentTimeMillis() < deadline) {
-                        val chunk = stream.dataQueue.poll(500, TimeUnit.MILLISECONDS)
-                        if (chunk != null) {
-                            output.write(chunk)
-                            digest.update(chunk)
-                            total += chunk.size
-                            if (total > 32L * 1024L * 1024L) {
-                                throw IllegalStateException("La captura excedió el límite permitido")
-                            }
-                        } else if (stream.closed.get() && stream.dataQueue.isEmpty()) {
-                            completed = true
-                            break
-                        }
-                    }
-                    output.flush()
-                }
-                if (!completed || total < 8 || !hasPngSignature(file)) {
-                    file.delete()
-                    throw IllegalStateException("El dispositivo no devolvió una imagen PNG válida")
-                }
-                val metadata = evidenceMetadata(file, digest.digest())
+                val metadata = evidenceMetadata(
+                    file,
+                    capturePngFromTransport(transport, file),
+                )
                 mainHandler.post { result.success(metadata) }
             } catch (error: Exception) {
                 Log.e(TAG, "captureScreenshot error", error)
                 mainHandler.post { result.error("CAPTURE_ERROR", error.message ?: "No se pudo capturar", null) }
-            } finally {
-                localId?.let { transport.closeStream(it) }
             }
         }.apply {
             name = "AdbScreenshot"
@@ -1371,6 +1345,70 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         val actual = ByteArray(expected.size)
         file.inputStream().use { if (it.read(actual) != expected.size) return false }
         return actual.contentEquals(expected)
+    }
+
+    private fun hasPngEndMarker(file: File): Boolean {
+        val expected = byteArrayOf(
+            0x00, 0x00, 0x00, 0x00,
+            0x49, 0x45, 0x4E, 0x44,
+            0xAE.toByte(), 0x42, 0x60, 0x82.toByte(),
+        )
+        if (file.length() < expected.size) return false
+        val actual = ByteArray(expected.size)
+        RandomAccessFile(file, "r").use { input ->
+            input.seek(file.length() - expected.size)
+            input.readFully(actual)
+        }
+        return actual.contentEquals(expected)
+    }
+
+    /**
+     * Reads screencap until ADB closes the exec stream. A temporary pause is
+     * not an EOF: some targets deliver the PNG in bursts over OTG/hubs.
+     */
+    private fun capturePngFromTransport(
+        transport: UsbAdbTransport,
+        file: File,
+    ): ByteArray {
+        val stream = transport.openStream("exec:screencap -p", 10_000L)
+        val digest = MessageDigest.getInstance("SHA-256")
+        var total = 0L
+        var completed = false
+        val deadline = System.currentTimeMillis() + 30_000L
+        try {
+            FileOutputStream(file).use { output ->
+                while (System.currentTimeMillis() < deadline) {
+                    val chunk = stream.dataQueue.poll(500, TimeUnit.MILLISECONDS)
+                    if (chunk != null) {
+                        output.write(chunk)
+                        digest.update(chunk)
+                        total += chunk.size
+                        if (total > 32L * 1024L * 1024L) {
+                            throw IllegalStateException("La captura excedió el límite permitido")
+                        }
+                    } else if (stream.closed.get() && stream.dataQueue.isEmpty()) {
+                        completed = true
+                        break
+                    }
+                }
+                output.flush()
+            }
+            if (!completed ||
+                total < 20 ||
+                !hasPngSignature(file) ||
+                !hasPngEndMarker(file)
+            ) {
+                throw IllegalStateException(
+                    "El dispositivo no devolvió una imagen PNG completa",
+                )
+            }
+            return digest.digest()
+        } catch (error: Exception) {
+            file.delete()
+            throw error
+        } finally {
+            transport.closeStream(stream.localId)
+        }
     }
 
     private fun setupEventChannel() {
@@ -2158,29 +2196,13 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         val requisitionId = call.argument<String>("requisitionId") ?: "unknown"
         val sessionId = call.argument<String>("sessionId") ?: "unknown"
         Thread {
-            var localId: Int? = null
             try {
                 val file = File(evidenceDirectory(requisitionId, sessionId), "captura-${sourceSessionId}-${System.currentTimeMillis()}.png")
-                val stream = state.transport.openStream("exec:screencap -p", 10_000L)
-                localId = stream.localId
-                val digest = MessageDigest.getInstance("SHA-256")
-                var total = 0L
-                FileOutputStream(file).use { output ->
-                    while (!stream.closed.get() || stream.dataQueue.isNotEmpty()) {
-                        val chunk = stream.dataQueue.poll(500, TimeUnit.MILLISECONDS) ?: break
-                        output.write(chunk)
-                        digest.update(chunk)
-                        total += chunk.size
-                        if (total > 32L * 1024L * 1024L) throw IllegalStateException("La captura excedió el límite permitido")
-                    }
-                    output.flush()
-                }
-                if (total < 8 || !hasPngSignature(file)) throw IllegalStateException("El dispositivo no devolvió una imagen PNG válida")
-                mainHandler.post { result.success(evidenceMetadata(file, digest.digest())) }
+                val hash = capturePngFromTransport(state.transport, file)
+                mainHandler.post { result.success(evidenceMetadata(file, hash)) }
             } catch (error: Exception) {
+                Log.e(TAG, "multiCaptureScreenshot error source=$sourceSessionId", error)
                 mainHandler.post { result.error("CAPTURE_ERROR", error.message ?: "No se pudo capturar", null) }
-            } finally {
-                localId?.let { state.transport.closeStream(it) }
             }
         }.apply { name = "MultiScreenshot-$sourceSessionId"; isDaemon = true; start() }
     }

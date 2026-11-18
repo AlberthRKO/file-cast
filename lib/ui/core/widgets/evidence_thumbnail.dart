@@ -52,6 +52,7 @@ class _EvidenceThumbnailState extends State<EvidenceThumbnail> {
   Future<void> _prepare() async {
     final path = widget.localPath;
     if (path == null) return;
+    if (!await File(path).exists()) return;
     if (widget.wrappedKey == null) {
       _previewPath = path;
       if (mounted) setState(() {});
@@ -62,13 +63,15 @@ class _EvidenceThumbnailState extends State<EvidenceThumbnail> {
     if (decryptionService == null || evidenceId == null) {
       throw StateError('No hay un descifrador disponible para la evidencia.');
     }
-    final decrypted = await decryptionService.decryptToTemporaryFile(
-      evidenceId: evidenceId,
-      encryptedPath: path,
-      wrappedKey: widget.wrappedKey!,
-      expectedPlaintextSha256: widget.plaintextSha256,
-      expectedPlaintextByteLength: widget.plaintextByteLength,
-    );
+    final decrypted = await decryptionService
+        .decryptToTemporaryFile(
+          evidenceId: evidenceId,
+          encryptedPath: path,
+          wrappedKey: widget.wrappedKey!,
+          expectedPlaintextSha256: widget.plaintextSha256,
+          expectedPlaintextByteLength: widget.plaintextByteLength,
+        )
+        .timeout(const Duration(seconds: 12));
     if (mounted) {
       setState(() => _previewPath = decrypted);
     } else {
@@ -98,7 +101,9 @@ class _EvidenceThumbnailState extends State<EvidenceThumbnail> {
       if (widget.localPath == null) return widget.fallback;
       return FutureBuilder<void>(
         future: _loading,
-        builder: (_, snapshot) => snapshot.hasError
+        builder: (_, snapshot) =>
+            snapshot.hasError ||
+                snapshot.connectionState == ConnectionState.done
             ? widget.fallback
             : const Center(
                 child: SizedBox(

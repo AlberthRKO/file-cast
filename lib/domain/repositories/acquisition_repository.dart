@@ -24,6 +24,10 @@ abstract interface class AcquisitionRepository {
     required String requisitionId,
     required String sessionId,
   });
+  Future<AcquisitionMirrorSession> restartMirror();
+  Future<AcquisitionMirrorSession> restartMultiMirrorSource(
+    String sourceSessionId,
+  );
   Future<void> disconnectMulti({String? sourceSessionId});
   Future<void> sendTouchToSource(
     String sourceSessionId,

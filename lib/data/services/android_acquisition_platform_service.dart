@@ -18,12 +18,14 @@ class AndroidAcquisitionPlatformService {
   static const _serverRemotePath = '/data/local/tmp/scrcpy-server.jar';
   final AdbClient _adbClient;
   AcquisitionMirrorSession? _activeSession;
+  AcquisitionMirrorSession? _restartableSingleSession;
   AcquisitionConnectionSession? _activeConnection;
   final Map<String, AcquisitionMirrorSession> _multiSessions = {};
   int? _latestVideoWidth;
   int? _latestVideoHeight;
   Future<AcquisitionMirrorSession>? _connectOperation;
   Future<void>? _disconnectOperation;
+  Future<void> _multiLifecycleTail = Future<void>.value();
   StreamSubscription<UsbEvent>? _usbSubscription;
   String _serverLogHistory = '';
   final StreamController<void> _deviceChangesController =
@@ -155,6 +157,7 @@ class AndroidAcquisitionPlatformService {
       videoHeight: effectiveHeight,
     );
     _activeSession = session;
+    _restartableSingleSession = session;
     return session;
   }
 
@@ -172,6 +175,7 @@ class AndroidAcquisitionPlatformService {
     if (reusable != null) return reusable;
 
     _activeSession = null;
+    _restartableSingleSession = null;
     _activeConnection = null;
     await _resetNativeSession();
     final connection = await _adbClient
@@ -194,6 +198,18 @@ class AndroidAcquisitionPlatformService {
     required List<AcquisitionDevice> devices,
     required String requisitionId,
     required String sessionId,
+  }) => _serializeMultiLifecycle(
+    () => _connectAndStartMulti(
+      devices: devices,
+      requisitionId: requisitionId,
+      sessionId: sessionId,
+    ),
+  );
+
+  Future<AcquisitionMultiMirrorSession> _connectAndStartMulti({
+    required List<AcquisitionDevice> devices,
+    required String requisitionId,
+    required String sessionId,
   }) async {
     if (!Platform.isAndroid) {
       throw UnsupportedError(
@@ -207,7 +223,7 @@ class AndroidAcquisitionPlatformService {
     }
     // A retry or a new acquisition session must not leave the previous
     // registry entries, decoders or textures consuming the inspector.
-    await disconnectMulti();
+    await _disconnectMulti();
     final started = <AcquisitionMirrorSession>[];
     final startedSourceIds = <String>{};
     try {
@@ -581,7 +597,105 @@ class AndroidAcquisitionPlatformService {
       )
       .toList(growable: false);
 
-  Future<void> disconnectMulti({String? sourceSessionId}) async {
+  Future<AcquisitionMirrorSession> restartMirror() async {
+    final current = _activeSession ?? _restartableSingleSession;
+    if (current == null) {
+      throw StateError('No existe un mirror individual activo para recargar.');
+    }
+    final usbDeviceId = current.usbDeviceId;
+    if (usbDeviceId == null || usbDeviceId.isEmpty) {
+      throw StateError('No se pudo identificar el dispositivo USB activo.');
+    }
+    AcquisitionDevice? device;
+    for (final candidate in await getDevices()) {
+      if (candidate.id == usbDeviceId) {
+        device = candidate;
+        break;
+      }
+    }
+    if (device == null) {
+      throw StateError(
+        'El dispositivo objetivo ya no está disponible en el puerto USB.',
+      );
+    }
+
+    _activeSession = null;
+    _activeConnection = null;
+    try {
+      return await _connectAndStart(
+        device: device,
+        requisitionId: current.requisitionId,
+        sessionId: current.sessionId,
+      );
+    } catch (_) {
+      _restartableSingleSession = current;
+      rethrow;
+    }
+  }
+
+  Future<AcquisitionMirrorSession> restartMultiMirrorSource(
+    String sourceSessionId,
+  ) => _serializeMultiLifecycle(
+    () => _restartMultiMirrorSource(sourceSessionId),
+  );
+
+  Future<AcquisitionMirrorSession> _restartMultiMirrorSource(
+    String sourceSessionId,
+  ) async {
+    final current = _multiSessions[sourceSessionId];
+    if (current == null) {
+      throw StateError('El mirror seleccionado ya no está conectado.');
+    }
+
+    await _adbClient.multiStopMirror(sourceSessionId);
+    try {
+      await _adbClient.multiShellCommand(
+        sourceSessionId: sourceSessionId,
+        command:
+            "pkill -f '[c]om.genymobile.scrcpy.Server' 2>/dev/null; sleep 1.25",
+      );
+    } on PlatformException {
+      // El servidor anterior puede haber terminado cuando se congeló el video.
+    }
+
+    int? longestTargetEdge;
+    try {
+      longestTargetEdge = _longestEdgeFromWmSize(
+        await _adbClient.multiShellCommand(
+          sourceSessionId: sourceSessionId,
+          command: 'wm size',
+        ),
+      );
+    } on PlatformException {
+      // La escalera de resolución también funciona sin consultar wm size.
+    }
+    final (video, textureId) = await _startMultiMirrorWithFallback(
+      sourceSessionId: sourceSessionId,
+      mirrorCount: _multiSessions.length,
+      longestTargetEdge: longestTargetEdge,
+    );
+    final restarted = AcquisitionMirrorSession(
+      requisitionId: current.requisitionId,
+      sessionId: current.sessionId,
+      sourceSessionId: current.sourceSessionId,
+      usbDeviceId: current.usbDeviceId,
+      deviceName: video['deviceName'] as String? ?? current.deviceName,
+      textureId: textureId,
+      controlStreamId: video['controlLocalId'] as int,
+      videoWidth: video['width'] as int,
+      videoHeight: video['height'] as int,
+    );
+    _multiSessions[sourceSessionId] = restarted;
+    _deviceChangesController.add(null);
+    return restarted;
+  }
+
+  Future<void> disconnectMulti({String? sourceSessionId}) =>
+      _serializeMultiLifecycle(
+        () => _disconnectMulti(sourceSessionId: sourceSessionId),
+      );
+
+  Future<void> _disconnectMulti({String? sourceSessionId}) async {
     final ids = sourceSessionId == null
         ? _multiSessions.keys.toList(growable: false)
         : [sourceSessionId];
@@ -592,6 +706,19 @@ class AndroidAcquisitionPlatformService {
         _multiSessions.remove(id);
       }
     }
+  }
+
+  Future<T> _serializeMultiLifecycle<T>(Future<T> Function() operation) {
+    final completer = Completer<T>();
+    final scheduled = _multiLifecycleTail.then((_) async {
+      try {
+        completer.complete(await operation());
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      }
+    });
+    _multiLifecycleTail = scheduled;
+    return completer.future;
   }
 
   Future<void> sendTouchToSource(
@@ -753,6 +880,7 @@ class AndroidAcquisitionPlatformService {
 
   Future<void> _disconnectAndReset() async {
     _activeSession = null;
+    _restartableSingleSession = null;
     _activeConnection = null;
     await _resetNativeSession();
   }
@@ -1017,6 +1145,7 @@ class AndroidAcquisitionPlatformService {
           detachedDevice.deviceName == _activeConnection?.usbDeviceId;
       if (matchesActive) {
         _activeSession = null;
+        _restartableSingleSession = null;
         _activeConnection = null;
         unawaited(_resetNativeSession());
       }

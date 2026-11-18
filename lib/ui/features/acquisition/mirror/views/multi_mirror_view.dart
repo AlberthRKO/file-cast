@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:file_cast/domain/models/acquisition.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
 import 'package:file_cast/ui/core/navigation/route_args/multi_mirror_route_args.dart';
@@ -6,6 +8,9 @@ import 'package:file_cast/ui/features/acquisition/mirror/view_models/multi_mirro
 import 'package:file_cast/ui/features/acquisition/mirror/widgets/interactive_mirror_texture.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_capture_controls.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_diagnostics_panel.dart';
+import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_evidence_fab.dart';
+import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_evidence_pane.dart';
+import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_status_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
@@ -41,6 +46,7 @@ class MultiMirrorView extends StatelessWidget {
   Widget build(BuildContext context) {
     final viewModel = context.watch<MultiMirrorViewModel>();
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       appBar: AppBar(
         backgroundColor: Theme.of(context).cardColor,
         elevation: 0,
@@ -69,93 +75,199 @@ class MultiMirrorView extends StatelessWidget {
           ),
         ],
       ),
+      floatingActionButton: viewModel.showEvidence
+          ? null
+          : MirrorEvidenceFab(
+              heroTag: 'multi-mirror-evidence',
+              totalCount: viewModel.totalEvidence,
+              pendingCount: viewModel.pendingEvidenceCount,
+              onPressed: viewModel.toggleEvidence,
+            ),
       body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final columns = constraints.maxWidth >= 1200
-                ? 3
-                : constraints.maxWidth >= 600
-                ? 2
-                : 1;
-            final sources = viewModel.sources;
-            final focusedSource = viewModel.focusedSource;
-            final showingOverview =
-                sources.length > 1 &&
-                viewModel.layoutMode == MultiMirrorLayoutMode.overview;
-            final mirrorContent = sources.isEmpty
-                ? const _EmptyMultiMirrorState()
-                : !showingOverview
-                ? Padding(
-                    padding: const EdgeInsets.all(AppSpace.m),
-                    child: _MultiMirrorCard(
-                      source: focusedSource ?? sources.first,
-                      viewModel: viewModel,
-                      focused: true,
-                      showFocusAction: false,
-                    ),
-                  )
-                : GridView.builder(
-                    physics: viewModel.overviewControlSourceId == null
-                        ? null
-                        : const NeverScrollableScrollPhysics(),
-                    padding: const EdgeInsets.all(AppSpace.m),
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: columns,
-                      crossAxisSpacing: AppSpace.m,
-                      mainAxisSpacing: AppSpace.m,
-                      childAspectRatio: columns == 1 ? .82 : 1.05,
-                    ),
-                    itemCount: sources.length,
-                    itemBuilder: (context, index) {
-                      final source = sources[index];
-                      return _MultiMirrorCard(
-                        source: source,
-                        viewModel: viewModel,
-                        focused:
-                            viewModel.focusedSourceId == source.sourceSessionId,
-                        showFocusAction: true,
-                      );
-                    },
-                  );
-            return Column(
+        child: _MultiMirrorBody(viewModel: viewModel),
+      ),
+    );
+  }
+}
+
+class _MultiMirrorBody extends StatelessWidget {
+  const _MultiMirrorBody({required this.viewModel});
+
+  final MultiMirrorViewModel viewModel;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final wide = constraints.maxWidth >= 840;
+      final workspace = _MultiMirrorWorkspace(viewModel: viewModel);
+      final focusedName = viewModel.focusedSource?.deviceName;
+      final evidence = MirrorEvidencePane(
+        evidence: viewModel.recentEvidence,
+        totalEvidence: viewModel.totalEvidence,
+        compact: !wide,
+        contextLabel: focusedName == null
+            ? null
+            : 'Captura activa: $focusedName',
+        onClose: viewModel.hideEvidence,
+        onRename: viewModel.renameEvidence,
+      );
+      if (wide) {
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: workspace),
+            if (viewModel.showEvidence) ...[
+              const SizedBox(width: AppSpace.s),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  0,
+                  AppSpace.m,
+                  AppSpace.m,
+                  AppSpace.m,
+                ),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    minWidth: 320,
+                    maxWidth: 420,
+                  ),
+                  child: evidence,
+                ),
+              ),
+            ],
+          ],
+        );
+      }
+      return Column(
+        children: [
+          Expanded(child: workspace),
+          if (viewModel.showEvidence) ...[
+            const SizedBox(height: AppSpace.s),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpace.s,
+                0,
+                AppSpace.s,
+                AppSpace.s,
+              ),
+              child: SizedBox(
+                height: math.min(200, constraints.maxHeight * .34),
+                child: evidence,
+              ),
+            ),
+          ],
+        ],
+      );
+    },
+  );
+}
+
+class _MultiMirrorWorkspace extends StatelessWidget {
+  const _MultiMirrorWorkspace({required this.viewModel});
+
+  final MultiMirrorViewModel viewModel;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final columns = constraints.maxWidth >= 1200
+          ? 3
+          : constraints.maxWidth >= 600
+          ? 2
+          : 1;
+      final sources = viewModel.sources;
+      final focusedSource = viewModel.focusedSource;
+      final showingOverview =
+          sources.length > 1 &&
+          viewModel.layoutMode == MultiMirrorLayoutMode.overview;
+      final mirrorContent = sources.isEmpty
+          ? const _EmptyMultiMirrorState()
+          : !showingOverview
+          ? Padding(
+              padding: const EdgeInsets.all(AppSpace.m),
+              child: _MultiMirrorCard(
+                source: focusedSource ?? sources.first,
+                viewModel: viewModel,
+                focused: true,
+                showFocusAction: false,
+              ),
+            )
+          : GridView.builder(
+              physics: viewModel.overviewControlSourceId == null
+                  ? null
+                  : const NeverScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(AppSpace.m),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: columns,
+                crossAxisSpacing: AppSpace.m,
+                mainAxisSpacing: AppSpace.m,
+                childAspectRatio: columns == 1 ? .82 : 1.05,
+              ),
+              itemCount: sources.length,
+              itemBuilder: (context, index) {
+                final source = sources[index];
+                return _MultiMirrorCard(
+                  source: source,
+                  viewModel: viewModel,
+                  focused: viewModel.focusedSourceId == source.sourceSessionId,
+                  showFocusAction: true,
+                );
+              },
+            );
+      return Column(
+        children: [
+          if (sources.length > 1)
+            _MultiMirrorModeBar(
+              viewModel: viewModel,
+              compactLayout: constraints.maxWidth < 600,
+            ),
+          Expanded(
+            child: Stack(
               children: [
-                if (sources.length > 1)
-                  _MultiMirrorModeBar(
-                    viewModel: viewModel,
-                    compactHeight: constraints.maxHeight < 480,
-                    compactLayout: constraints.maxWidth < 600,
-                  ),
-                Expanded(child: mirrorContent),
-                if (viewModel.message != null)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpace.m),
-                    child: _MessageBanner(viewModel: viewModel),
-                  ),
-                _MultiMirrorControls(viewModel: viewModel),
-                if (viewModel.showDiagnostics)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                      AppSpace.m,
-                      0,
-                      AppSpace.m,
-                      AppSpace.m,
-                    ),
-                    child: SizedBox(
-                      height: constraints.maxHeight < 480 ? 120 : 180,
-                      child: MirrorDiagnosticsPanel(
-                        log: viewModel.diagnosticLog,
-                        onRefresh: viewModel.refreshDiagnostics,
-                        onClose: viewModel.toggleDiagnostics,
+                Positioned.fill(child: mirrorContent),
+                if (viewModel.message != null &&
+                    viewModel.messageSourceId == null)
+                  Positioned(
+                    left: AppSpace.m,
+                    right: AppSpace.m,
+                    bottom: AppSpace.s,
+                    child: IgnorePointer(
+                      child: Align(
+                        alignment: Alignment.bottomCenter,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 560),
+                          child: MirrorStatusOverlay(
+                            message: viewModel.message!,
+                            isError: viewModel.messageIsError,
+                          ),
+                        ),
                       ),
                     ),
                   ),
               ],
-            );
-          },
-        ),
-      ),
-    );
-  }
+            ),
+          ),
+          _MultiMirrorControls(viewModel: viewModel),
+          if (viewModel.showDiagnostics)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpace.m,
+                0,
+                AppSpace.m,
+                AppSpace.m,
+              ),
+              child: SizedBox(
+                height: constraints.maxHeight < 480 ? 120 : 180,
+                child: MirrorDiagnosticsPanel(
+                  log: viewModel.diagnosticLog,
+                  onRefresh: viewModel.refreshDiagnostics,
+                  onClose: viewModel.toggleDiagnostics,
+                ),
+              ),
+            ),
+        ],
+      );
+    },
+  );
 }
 
 class _EmptyMultiMirrorState extends StatelessWidget {
@@ -253,11 +365,32 @@ class _MultiMirrorCard extends StatelessWidget {
                     color: Theme.of(context).colorScheme.error,
                     size: 16,
                   ),
+                IconButton(
+                  onPressed:
+                      viewModel.isRestarting(source.sourceSessionId) ||
+                          viewModel.isCapturing ||
+                          viewModel.recordingPhase(source.sourceSessionId) !=
+                              AcquisitionRecordingPhase.idle
+                      ? null
+                      : () => viewModel.restartSource(source.sourceSessionId),
+                  tooltip: 'Recargar imagen de ${source.deviceName}',
+                  icon: viewModel.isRestarting(source.sourceSessionId)
+                      ? const SizedBox.square(
+                          dimension: AppSize.iconM,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const _MirrorSvgIcon(
+                          'assets/images/icons/refresh.svg',
+                          size: 20,
+                        ),
+                ),
                 if (showFocusAction)
                   IconButton.filledTonal(
-                    onPressed: () => viewModel.toggleOverviewControl(
-                      source.sourceSessionId,
-                    ),
+                    onPressed: viewModel.isRestarting(source.sourceSessionId)
+                        ? null
+                        : () => viewModel.toggleOverviewControl(
+                            source.sourceSessionId,
+                          ),
                     tooltip:
                         viewModel.isOverviewControlEnabled(
                           source.sourceSessionId,
@@ -293,36 +426,65 @@ class _MultiMirrorCard extends StatelessWidget {
           Expanded(
             child: Padding(
               padding: const EdgeInsets.all(AppSpace.xs),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Colors.black,
-                  borderRadius: BorderRadius.circular(AppRadius.m),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(AppRadius.m),
-                  child: InteractiveMirrorTexture(
-                    textureId: source.textureId,
-                    videoSize: source.videoSize,
-                    interactionEnabled:
-                        !showFocusAction ||
-                        viewModel.isOverviewControlEnabled(
-                          source.sourceSessionId,
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.black,
+                        borderRadius: BorderRadius.circular(AppRadius.m),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(AppRadius.m),
+                        child: InteractiveMirrorTexture(
+                          textureId: source.textureId,
+                          videoSize: source.videoSize,
+                          interactionEnabled:
+                              !viewModel.isRestarting(
+                                source.sourceSessionId,
+                              ) &&
+                              (!showFocusAction ||
+                                  viewModel.isOverviewControlEnabled(
+                                    source.sourceSessionId,
+                                  )),
+                          onTouch: (action, pointerId, x, y) =>
+                              viewModel.sendTouch(
+                                source.sourceSessionId,
+                                action,
+                                pointerId,
+                                x,
+                                y,
+                              ),
+                          onScroll: (x, y, deltaY) => viewModel.sendScroll(
+                            source.sourceSessionId,
+                            x,
+                            y,
+                            deltaY,
+                          ),
                         ),
-                    onTouch: (action, pointerId, x, y) => viewModel.sendTouch(
-                      source.sourceSessionId,
-                      action,
-                      pointerId,
-                      x,
-                      y,
-                    ),
-                    onScroll: (x, y, deltaY) => viewModel.sendScroll(
-                      source.sourceSessionId,
-                      x,
-                      y,
-                      deltaY,
+                      ),
                     ),
                   ),
-                ),
+                  if (viewModel.message != null &&
+                      viewModel.messageSourceId == source.sourceSessionId)
+                    Positioned(
+                      left: AppSpace.s,
+                      right: AppSpace.s,
+                      bottom: AppSpace.s,
+                      child: IgnorePointer(
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 440),
+                            child: MirrorStatusOverlay(
+                              message: viewModel.message!,
+                              isError: viewModel.messageIsError,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -378,14 +540,17 @@ class _MultiMirrorControls extends StatelessWidget {
                 ? '00:00'
                 : viewModel.recordingDurationLabel(sourceId),
             isCapturing: viewModel.isCapturing,
-            onBack: sourceId == null
+            onBack: sourceId == null || viewModel.isRestarting(sourceId)
                 ? null
                 : () => viewModel.sendKey(sourceId, 4),
-            onHome: sourceId == null
+            onHome: sourceId == null || viewModel.isRestarting(sourceId)
                 ? null
                 : () => viewModel.sendKey(sourceId, 3),
-            onCapture: sourceId == null ? null : viewModel.captureScreenshot,
-            onToggleRecording: sourceId == null
+            onCapture: sourceId == null || viewModel.isRestarting(sourceId)
+                ? null
+                : viewModel.captureScreenshot,
+            onToggleRecording:
+                sourceId == null || viewModel.isRestarting(sourceId)
                 ? null
                 : viewModel.toggleRecording,
           ),
@@ -398,12 +563,10 @@ class _MultiMirrorControls extends StatelessWidget {
 class _MultiMirrorModeBar extends StatelessWidget {
   const _MultiMirrorModeBar({
     required this.viewModel,
-    required this.compactHeight,
     required this.compactLayout,
   });
 
   final MultiMirrorViewModel viewModel;
-  final bool compactHeight;
   final bool compactLayout;
 
   @override
@@ -460,24 +623,32 @@ class _MultiMirrorModeBar extends StatelessWidget {
                 ],
               ),
             )
-          : Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 440),
+          : SizedBox(
+              height: 56,
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 400,
                     child: _WideModeSelector(viewModel: viewModel),
                   ),
-                ),
-                if (!compactHeight &&
-                    viewModel.layoutMode == MultiMirrorLayoutMode.focused) ...[
-                  const SizedBox(height: AppSpace.s),
-                  SizedBox(
-                    height: AppSize.minTouchTarget,
-                    child: sourceSelector,
-                  ),
+                  const SizedBox(width: AppSpace.m),
+                  if (viewModel.layoutMode == MultiMirrorLayoutMode.focused)
+                    Expanded(
+                      child: SizedBox(
+                        height: AppSize.minTouchTarget,
+                        child: sourceSelector,
+                      ),
+                    )
+                  else
+                    Expanded(
+                      child: Text(
+                        '${viewModel.sources.length} mirrors activos',
+                        textAlign: TextAlign.end,
+                        style: Theme.of(context).textTheme.labelMedium,
+                      ),
+                    ),
                 ],
-              ],
+              ),
             ),
     );
   }
@@ -690,26 +861,4 @@ class _MirrorSvgIcon extends StatelessWidget {
       BlendMode.srcIn,
     ),
   );
-}
-
-class _MessageBanner extends StatelessWidget {
-  const _MessageBanner({required this.viewModel});
-
-  final MultiMirrorViewModel viewModel;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = viewModel.messageIsError
-        ? Theme.of(context).colorScheme.error
-        : Theme.of(context).colorScheme.primary;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(AppSpace.s),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: .1),
-        borderRadius: BorderRadius.circular(AppRadius.m),
-      ),
-      child: Text(viewModel.message!, style: TextStyle(color: color)),
-    );
-  }
 }

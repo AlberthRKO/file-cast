@@ -10,15 +10,19 @@ class MirrorViewModel extends ChangeNotifier {
     required AcquisitionRepository repository,
     required this.requisitionId,
     required this.sessionId,
+    required int textureId,
     required int videoWidth,
     required int videoHeight,
   }) : _repository = repository,
+       _textureId = textureId,
        _videoWidth = videoWidth,
        _videoHeight = videoHeight;
 
   final AcquisitionRepository _repository;
   final String requisitionId;
   final String sessionId;
+  int _textureId;
+  int get textureId => _textureId;
   int _videoWidth;
   int get videoWidth => _videoWidth;
   int _videoHeight;
@@ -29,10 +33,14 @@ class MirrorViewModel extends ChangeNotifier {
   AcquisitionRecordingPhase get recordingPhase => _recordingPhase;
   bool _isCapturing = false;
   bool get isCapturing => _isCapturing;
+  bool _isRestarting = false;
+  bool get isRestarting => _isRestarting;
   String? _message;
   String? get message => _message;
   bool _messageIsError = false;
   bool get messageIsError => _messageIsError;
+  bool _showEvidence = false;
+  bool get showEvidence => _showEvidence;
   bool _disposed = false;
   StreamSubscription<void>? _deviceSubscription;
   StreamSubscription<String>? _evidenceChangesSubscription;
@@ -58,6 +66,24 @@ class MirrorViewModel extends ChangeNotifier {
   }
 
   int get totalEvidence => _detail?.evidence.length ?? 0;
+  int get pendingEvidenceCount =>
+      _detail?.evidence.where((evidence) {
+        final status = evidence.uploadStatus?.toUpperCase();
+        return status == 'PENDING_UPLOAD' || status == 'UPLOADING';
+      }).length ??
+      0;
+
+  void toggleEvidence() {
+    _showEvidence = !_showEvidence;
+    _safeNotify();
+  }
+
+  void hideEvidence() {
+    if (!_showEvidence) return;
+    _showEvidence = false;
+    _safeNotify();
+  }
+
   String get recordingDurationLabel {
     final startedAt = _recordingStartedAt;
     if (startedAt == null) return '00:00';
@@ -185,7 +211,7 @@ class MirrorViewModel extends ChangeNotifier {
   }
 
   Future<void> captureScreenshot() async {
-    if (_isCapturing) return;
+    if (_isCapturing || _isRestarting) return;
     _isCapturing = true;
     _clearMessage(notify: false);
     _safeNotify();
@@ -207,6 +233,42 @@ class MirrorViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
+  Future<void> restartMirror() async {
+    if (_isRestarting ||
+        _isCapturing ||
+        _recordingPhase != AcquisitionRecordingPhase.idle) {
+      return;
+    }
+    _isRestarting = true;
+    _messageTimer?.cancel();
+    _messageTimer = null;
+    _message = 'Recargando la imagen del mirror…';
+    _messageIsError = false;
+    _safeNotify();
+    try {
+      final restarted = await _repository.restartMirror();
+      if (_disposed) return;
+      _textureId = restarted.textureId;
+      _videoWidth = restarted.videoWidth;
+      _videoHeight = restarted.videoHeight;
+      _touchErrorReported = false;
+      _showMessage('Mirror restablecido.', notify: false);
+    } catch (error) {
+      if (_disposed) return;
+      _showMessage(
+        'No se pudo recargar el mirror: ${_userFacingError(error)}',
+        isError: true,
+        duration: const Duration(seconds: 4),
+        notify: false,
+      );
+    } finally {
+      if (!_disposed) {
+        _isRestarting = false;
+        _safeNotify();
+      }
+    }
+  }
+
   Future<String?> renameEvidence(
     RequisitionEvidence evidence,
     String displayName,
@@ -225,7 +287,8 @@ class MirrorViewModel extends ChangeNotifier {
   }
 
   Future<void> toggleRecording() async {
-    if (_recordingPhase == AcquisitionRecordingPhase.starting ||
+    if (_isRestarting ||
+        _recordingPhase == AcquisitionRecordingPhase.starting ||
         _recordingPhase == AcquisitionRecordingPhase.saving) {
       return;
     }

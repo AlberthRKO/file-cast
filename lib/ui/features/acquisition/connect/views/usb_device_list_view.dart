@@ -307,6 +307,9 @@ class _DeviceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final deviceColor = device.supportsAdb ? colors.primary : colors.tertiary;
+    final selectionColor = multiSelection && !selected
+        ? colors.outline
+        : deviceColor;
     final icon = switch (device.deviceType) {
       'hub' => Icons.hub_outlined,
       'mtp' => Icons.folder_open_outlined,
@@ -375,16 +378,18 @@ class _DeviceCard extends StatelessWidget {
                 )
               else
                 Icon(
-                  authorized
+                  multiSelection
+                      ? selected
+                            ? Icons.check_circle
+                            : Icons.radio_button_unchecked
+                      : authorized
                       ? Icons.check_circle
-                      : multiSelection && selected
-                      ? Icons.radio_button_checked
                       : !device.supportsAdb
                       ? Icons.info_outline
                       : device.hasPermission
                       ? Icons.arrow_forward
                       : Icons.lock_open,
-                  color: deviceColor,
+                  color: selectionColor,
                 ),
             ],
           ),

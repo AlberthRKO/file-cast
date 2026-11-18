@@ -77,6 +77,15 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
   );
 
   @override
+  Future<AcquisitionMirrorSession> restartMirror() =>
+      _platformService.restartMirror();
+
+  @override
+  Future<AcquisitionMirrorSession> restartMultiMirrorSource(
+    String sourceSessionId,
+  ) => _platformService.restartMultiMirrorSource(sourceSessionId);
+
+  @override
   Future<void> disconnectMulti({String? sourceSessionId}) =>
       _platformService.disconnectMulti(sourceSessionId: sourceSessionId);
 

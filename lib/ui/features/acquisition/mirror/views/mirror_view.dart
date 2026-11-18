@@ -1,21 +1,18 @@
 import 'dart:math' as math;
 
 import 'package:file_cast/domain/models/acquisition.dart';
-import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
-import 'package:file_cast/domain/services/evidence_decryption_service.dart';
 import 'package:file_cast/ui/core/navigation/route_args/mirror_route_args.dart';
-import 'package:file_cast/ui/core/feedback/app_feedback.dart';
-import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
-import 'package:file_cast/ui/core/widgets/evidence_rename_sheet.dart';
-import 'package:file_cast/ui/core/widgets/evidence_sync_badge.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/view_models/mirror_view_model.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/widgets/interactive_mirror_texture.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_capture_controls.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_diagnostics_panel.dart';
-import 'package:file_cast/ui/core/widgets/evidence_thumbnail.dart';
+import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_evidence_fab.dart';
+import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_evidence_pane.dart';
+import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_status_overlay.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 
 class MirrorRoute extends StatelessWidget {
@@ -35,6 +32,7 @@ class MirrorRoute extends StatelessWidget {
       repository: context.read<AcquisitionRepository>(),
       requisitionId: requisitionId,
       sessionId: sessionId,
+      textureId: args.textureId,
       videoWidth: args.videoSize.width.round(),
       videoHeight: args.videoSize.height.round(),
     )..load(),
@@ -84,6 +82,30 @@ class MirrorView extends StatelessWidget {
                   : Icons.bug_report_outlined,
             ),
           ),
+          IconButton(
+            onPressed:
+                viewModel.isRestarting ||
+                    viewModel.isCapturing ||
+                    viewModel.recordingPhase != AcquisitionRecordingPhase.idle
+                ? null
+                : viewModel.restartMirror,
+            tooltip: 'Recargar imagen del mirror',
+            icon: viewModel.isRestarting
+                ? const SizedBox.square(
+                    dimension: AppSize.iconM,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : SvgPicture.asset(
+                    'assets/images/icons/refresh.svg',
+                    width: AppSize.iconM,
+                    height: AppSize.iconM,
+                    colorFilter: ColorFilter.mode(
+                      IconTheme.of(context).color ??
+                          Theme.of(context).colorScheme.onSurface,
+                      BlendMode.srcIn,
+                    ),
+                  ),
+          ),
           Padding(
             padding: const EdgeInsets.only(right: AppSpace.m),
             child: _ConnectionChip(
@@ -92,14 +114,25 @@ class MirrorView extends StatelessWidget {
           ),
         ],
       ),
+      floatingActionButton: viewModel.showEvidence
+          ? null
+          : MirrorEvidenceFab(
+              heroTag: 'mirror-evidence',
+              totalCount: viewModel.totalEvidence,
+              pendingCount: viewModel.pendingEvidenceCount,
+              onPressed: viewModel.toggleEvidence,
+            ),
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
             final expanded = constraints.maxWidth >= 840;
             final mirror = _MirrorPane(args: args, viewModel: viewModel);
-            final evidence = _EvidencePane(
-              viewModel: viewModel,
+            final evidence = MirrorEvidencePane(
+              evidence: viewModel.recentEvidence,
+              totalEvidence: viewModel.totalEvidence,
               compact: !expanded,
+              onClose: viewModel.hideEvidence,
+              onRename: viewModel.renameEvidence,
             );
             if (expanded) {
               return Padding(
@@ -108,14 +141,16 @@ class MirrorView extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Expanded(flex: 3, child: mirror),
-                    const SizedBox(width: AppSpace.m),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(
-                        minWidth: 320,
-                        maxWidth: 420,
+                    if (viewModel.showEvidence) ...[
+                      const SizedBox(width: AppSpace.m),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          minWidth: 320,
+                          maxWidth: 420,
+                        ),
+                        child: evidence,
                       ),
-                      child: evidence,
-                    ),
+                    ],
                   ],
                 ),
               );
@@ -130,11 +165,13 @@ class MirrorView extends StatelessWidget {
               child: Column(
                 children: [
                   Expanded(child: mirror),
-                  const SizedBox(height: AppSpace.s),
-                  SizedBox(
-                    height: math.min(190, constraints.maxHeight * .32),
-                    child: evidence,
-                  ),
+                  if (viewModel.showEvidence) ...[
+                    const SizedBox(height: AppSpace.s),
+                    SizedBox(
+                      height: math.min(200, constraints.maxHeight * .34),
+                      child: evidence,
+                    ),
+                  ],
                 ],
               ),
             );
@@ -169,7 +206,7 @@ class _MirrorPane extends StatelessWidget {
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(AppRadius.m),
                       child: InteractiveMirrorTexture(
-                        textureId: args.textureId,
+                        textureId: viewModel.textureId,
                         videoSize: Size(
                           viewModel.videoWidth > 0
                               ? viewModel.videoWidth.toDouble()
@@ -178,6 +215,7 @@ class _MirrorPane extends StatelessWidget {
                               ? viewModel.videoHeight.toDouble()
                               : args.videoSize.height,
                         ),
+                        interactionEnabled: !viewModel.isRestarting,
                         onTouch: viewModel.sendTouch,
                         onScroll: viewModel.sendScroll,
                       ),
@@ -213,7 +251,7 @@ class _MirrorPane extends StatelessWidget {
                         alignment: Alignment.bottomCenter,
                         child: ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 440),
-                          child: _MirrorStatusOverlay(
+                          child: MirrorStatusOverlay(
                             message:
                                 viewModel.message ??
                                 (viewModel.recordingPhase ==
@@ -235,239 +273,18 @@ class _MirrorPane extends StatelessWidget {
           recordingPhase: viewModel.recordingPhase,
           recordingDurationLabel: viewModel.recordingDurationLabel,
           isCapturing: viewModel.isCapturing,
-          onBack: viewModel.sendBack,
-          onHome: viewModel.sendHome,
-          onCapture: viewModel.captureScreenshot,
-          onToggleRecording: viewModel.toggleRecording,
+          onBack: viewModel.isRestarting ? null : viewModel.sendBack,
+          onHome: viewModel.isRestarting ? null : viewModel.sendHome,
+          onCapture: viewModel.isRestarting
+              ? null
+              : viewModel.captureScreenshot,
+          onToggleRecording: viewModel.isRestarting
+              ? null
+              : viewModel.toggleRecording,
         ),
       ],
     ),
   );
-}
-
-class _MirrorStatusOverlay extends StatelessWidget {
-  const _MirrorStatusOverlay({
-    required this.message,
-    required this.isError,
-  });
-
-  final String message;
-  final bool isError;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final accent = isError ? colorScheme.error : Colors.green;
-    return Material(
-      color: Theme.of(context).cardColor.withValues(alpha: .96),
-      elevation: 8,
-      borderRadius: BorderRadius.circular(AppRadius.m),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpace.m,
-          vertical: AppSpace.s,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              isError ? Icons.error_outline : Icons.check_circle,
-              color: accent,
-              size: AppSize.iconM,
-            ),
-            const SizedBox(width: AppSpace.s),
-            Flexible(
-              child: Text(
-                message,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _EvidencePane extends StatelessWidget {
-  const _EvidencePane({required this.viewModel, required this.compact});
-  final MirrorViewModel viewModel;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final evidence = viewModel.recentEvidence;
-    return Container(
-      padding: const EdgeInsets.all(AppSpace.m),
-      decoration: _cardDecoration(context),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Evidencia registrada (${viewModel.totalEvidence})',
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-              ),
-              const Icon(Icons.verified_user_outlined, size: AppSize.iconM),
-            ],
-          ),
-          const SizedBox(height: AppSpace.s),
-          Expanded(
-            child: evidence.isEmpty
-                ? const Center(child: Text('Las capturas aparecerán aquí.'))
-                : compact
-                ? ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: evidence.length,
-                    separatorBuilder: (context, index) =>
-                        const SizedBox(width: AppSpace.s),
-                    itemBuilder: (_, index) => SizedBox(
-                      width: 150,
-                      child: _EvidenceCard(
-                        key: ValueKey(evidence[index].id),
-                        evidence: evidence[index],
-                        onRename: () =>
-                            _renameEvidence(context, evidence[index]),
-                      ),
-                    ),
-                  )
-                : GridView.builder(
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          crossAxisSpacing: AppSpace.s,
-                          mainAxisSpacing: AppSpace.s,
-                          childAspectRatio: 1.2,
-                        ),
-                    itemCount: evidence.length,
-                    itemBuilder: (_, index) => _EvidenceCard(
-                      key: ValueKey(evidence[index].id),
-                      evidence: evidence[index],
-                      onRename: () => _renameEvidence(context, evidence[index]),
-                    ),
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _renameEvidence(
-    BuildContext context,
-    RequisitionEvidence evidence,
-  ) async {
-    final result = await showAppModalBottomSheet<Object?>(
-      context: context,
-      isDismissible: false,
-      enableDrag: false,
-      maxWidth: AppSize.formMaxWidth,
-      builder: (_) => EvidenceRenameSheet(
-        currentName: evidence.effectiveName,
-        originalName: evidence.name,
-        onSave: (name) => viewModel.renameEvidence(evidence, name),
-      ),
-    );
-    if (!context.mounted) return;
-    if (result is String) {
-      await showAppErrorBottomSheet(context, result);
-      return;
-    }
-    if (result != true) return;
-    await showAppSuccessBottomSheet(
-      context,
-      'Nombre de evidencia actualizado.',
-    );
-  }
-}
-
-class _EvidenceCard extends StatelessWidget {
-  const _EvidenceCard({
-    required this.evidence,
-    required this.onRename,
-    super.key,
-  });
-  final RequisitionEvidence evidence;
-  final VoidCallback onRename;
-
-  @override
-  Widget build(BuildContext context) {
-    final path = evidence.localPath;
-    final isImage = evidence.type == RequisitionEvidenceType.image;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(AppRadius.m),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          ColoredBox(
-            color: Theme.of(context).colorScheme.primary.withValues(alpha: .1),
-            child: isImage
-                ? EvidenceThumbnail(
-                    localPath: path,
-                    evidenceId: evidence.id,
-                    wrappedKey: evidence.wrappedKey,
-                    plaintextSha256: evidence.plaintextSha256,
-                    plaintextByteLength: evidence.plaintextByteLength,
-                    decryptionService: context
-                        .read<EvidenceDecryptionService>(),
-                    fallback: const Icon(Icons.image_outlined, size: 36),
-                  )
-                : Icon(
-                    evidence.type == RequisitionEvidenceType.video
-                        ? Icons.play_circle_outline
-                        : Icons.insert_drive_file_outlined,
-                    size: 36,
-                  ),
-          ),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(AppSpace.s),
-              color: Colors.black.withValues(alpha: .68),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          evidence.effectiveName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: onRename,
-                        tooltip: 'Cambiar nombre',
-                        visualDensity: VisualDensity.compact,
-                        color: Colors.white,
-                        icon: const Icon(Icons.edit_outlined, size: 16),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppSpace.xs),
-                  EvidenceSyncBadge(
-                    uploadStatus: evidence.uploadStatus,
-                    hasLocalCopy: path?.trim().isNotEmpty == true,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _ConnectionChip extends StatelessWidget {
