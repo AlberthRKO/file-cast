@@ -47,31 +47,31 @@ get_flavor_config() {
     case "$FLAVOR" in
         development)
             FLAVOR_KIND='entorno'
-            FLAVOR_LABEL='[DEV] File Cast'
+            FLAVOR_LABEL='[DEV] Inspector'
             DEFAULT_BASE_URL='https://0dpchkdj-3000.brs.devtunnels.ms'
             DEFAULT_AUTH_URL='https://auth.dev.mp.gob.bo'
             ;;
         staging)
             FLAVOR_KIND='entorno'
-            FLAVOR_LABEL='[STG] File Cast'
+            FLAVOR_LABEL='[STG] Inspector'
             DEFAULT_BASE_URL='https://staging-api.example.com'
             DEFAULT_AUTH_URL='https://auth.dev.mp.gob.bo'
             ;;
         production)
             FLAVOR_KIND='entorno'
-            FLAVOR_LABEL='File Cast'
+            FLAVOR_LABEL='Inspector'
             DEFAULT_BASE_URL='https://api.example.com'
             DEFAULT_AUTH_URL='https://auth.dev.mp.gob.bo'
             ;;
         cliente1)
             FLAVOR_KIND='cliente'
-            FLAVOR_LABEL='Cliente 1 File Cast'
+            FLAVOR_LABEL='Cliente 1 Inspector'
             DEFAULT_BASE_URL='https://api-cliente1.example.com'
             DEFAULT_AUTH_URL='https://auth.dev.mp.gob.bo'
             ;;
         cliente2)
             FLAVOR_KIND='cliente'
-            FLAVOR_LABEL='Cliente 2 File Cast'
+            FLAVOR_LABEL='Cliente 2 Inspector'
             DEFAULT_BASE_URL='https://api-cliente2.example.com'
             DEFAULT_AUTH_URL='https://auth.dev.mp.gob.bo'
             ;;

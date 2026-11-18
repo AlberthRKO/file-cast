@@ -56,9 +56,9 @@ class _AppState extends State<App> {
 
   @override
   void dispose() {
-    context
-        .read<AuthSessionController>()
-        .removeListener(_tryOpenPendingPayload);
+    context.read<AuthSessionController>().removeListener(
+      _tryOpenPendingPayload,
+    );
     _notificationSubscription?.cancel();
     super.dispose();
   }
@@ -69,7 +69,7 @@ class _AppState extends State<App> {
     final router = context.watch<GoRouter>();
 
     return MaterialApp.router(
-      title: 'File Cast',
+      title: 'Inspector',
       theme: light,
       darkTheme: dark,
       themeMode: themeController.darkMode ? ThemeMode.dark : ThemeMode.light,
@@ -86,8 +86,9 @@ class _AppState extends State<App> {
           systemNavigationBarDividerColor: Colors.transparent,
           systemNavigationBarContrastEnforced: false,
           systemStatusBarContrastEnforced: false,
-          systemNavigationBarIconBrightness:
-              isDark ? Brightness.light : Brightness.dark,
+          systemNavigationBarIconBrightness: isDark
+              ? Brightness.light
+              : Brightness.dark,
         );
 
         return AnnotatedRegion<SystemUiOverlayStyle>(

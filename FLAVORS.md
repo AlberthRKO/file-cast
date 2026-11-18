@@ -55,6 +55,23 @@ make production-apk-split-ofuscacion
 
 Los atajos equivalentes son `dev-*`, `stage-*` y `prod-*`.
 
+## Iconos por flavor
+
+Los iconos Android se generan desde los archivos
+`flutter_launcher_icons-<flavor>.yaml`. `flutter_launcher_icons-main.yaml`
+mantiene el icono común de `android/app/src/main`, que actúa como fallback
+cuando una variante no aporta un recurso propio. Todos los archivos declaran
+también la configuración adaptive para Android 8 o posterior.
+
+Para regenerar los iconos de `main` y de todos los flavors usa:
+
+```bash
+dart run flutter_launcher_icons
+```
+
+El paquete descubre automáticamente los archivos `flutter_launcher_icons-*.yaml`;
+no es necesario pasar un glob después de `-f`.
+
 Atajos disponibles: `dev-*`, `stage-*` y `prod-*`. Para ver la configuración
 resuelta de un flavor:
 

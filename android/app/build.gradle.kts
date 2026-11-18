@@ -1,5 +1,5 @@
-import java.util.Properties
 import java.io.FileInputStream
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -8,6 +8,7 @@ plugins {
 
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
+
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
@@ -24,7 +25,8 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        // TODO: Specify your own unique Application ID
+        // (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.fiscalia.file_cast"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
@@ -41,7 +43,6 @@ android {
                 keyAlias = System.getenv("ANDROID_KEYSTORE_ALIAS")
                 keyPassword = System.getenv("ANDROID_KEYSTORE_PRIVATE_KEY_PASSWORD")
                 storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
-                
             } else {
                 keyAlias = keystoreProperties["keyAlias"] as String?
                 keyPassword = keystoreProperties["keyPassword"] as String?
@@ -56,35 +57,35 @@ android {
         create("production") {
             dimension = "default"
             applicationIdSuffix = ""
-            manifestPlaceholders["appName"] = "File Cast"
+            manifestPlaceholders["appName"] = "Inspector"
             versionName = "1.0.0"
             versionCode = 1
         }
         create("staging") {
             dimension = "default"
             applicationIdSuffix = ".stg"
-            manifestPlaceholders["appName"] = "[STG] File Cast"
+            manifestPlaceholders["appName"] = "[STG] Inspector"
             versionName = "1.0.0"
             versionCode = 1
         }
         create("development") {
             dimension = "default"
             applicationIdSuffix = ".dev"
-            manifestPlaceholders["appName"] = "[DEV] File Cast"
+            manifestPlaceholders["appName"] = "[DEV] Inspector"
             versionName = "1.0.0"
             versionCode = 1
         }
         create("cliente1") {
             dimension = "default"
             applicationIdSuffix = ".cliente1"
-            manifestPlaceholders["appName"] = "Cliente 1 File Cast"
+            manifestPlaceholders["appName"] = "Cliente 1 Inspector"
             versionName = "1.0.0"
             versionCode = 1
         }
         create("cliente2") {
             dimension = "default"
             applicationIdSuffix = ".cliente2"
-            manifestPlaceholders["appName"] = "Cliente 2 File Cast"
+            manifestPlaceholders["appName"] = "Cliente 2 Inspector"
             versionName = "1.0.0"
             versionCode = 1
         }
@@ -94,27 +95,14 @@ android {
         getByName("release") {
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android.txt"),
-                "proguard-rules.pro"
-            )
+            proguardFiles(getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro")
         }
-        getByName("debug") {
-            signingConfig = signingConfigs.getByName("debug")
-        }
+        getByName("debug") { signingConfig = signingConfigs.getByName("debug") }
     }
 }
 
-flutter {
-    source = "../.."
-}
+flutter { source = "../.." }
 
-kotlin {
-    compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11
-    }
-}
+kotlin { compilerOptions { jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11 } }
 
-dependencies {
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:1.2.2")
-}
+dependencies { coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:1.2.2") }

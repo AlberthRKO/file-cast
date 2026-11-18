@@ -12,11 +12,11 @@ class Config {
       case Flavor.cliente2:
         return 'Cliente 2 App';
       case Flavor.development:
-        return 'Dev File Cast';
+        return 'Dev Inspector';
       case Flavor.production:
-        return 'File Cast';
+        return 'Inspector';
       case Flavor.staging:
-        return 'Stage File Cast';
+        return 'Stage Inspector';
     }
   }
 
@@ -27,11 +27,11 @@ class Config {
       case Flavor.cliente2:
         return 'Cliente 2 Company';
       case Flavor.development:
-        return 'Dev File Cast';
+        return 'Dev Inspector';
       case Flavor.staging:
-        return 'Stage File Cast';
+        return 'Stage Inspector';
       case Flavor.production:
-        return 'File Cast';
+        return 'Inspector';
     }
   }
 

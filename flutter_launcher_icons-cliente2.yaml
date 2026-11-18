@@ -3,3 +3,6 @@ flutter_launcher_icons:
   ios: true
   image_path_android: "assets/cliente2/development/launcher_icon/playstore.png"
   image_path_ios: "assets/cliente2/development/launcher_icon/appstore.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/cliente2/development/launcher_icon/playstore.png"
+  adaptive_icon_foreground_inset: 16
