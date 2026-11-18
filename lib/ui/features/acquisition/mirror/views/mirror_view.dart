@@ -127,13 +127,16 @@ class MirrorView extends StatelessWidget {
           builder: (context, constraints) {
             final expanded = constraints.maxWidth >= 840;
             final mirror = _MirrorPane(args: args, viewModel: viewModel);
-            final evidence = MirrorEvidencePane(
-              evidence: viewModel.recentEvidence,
-              totalEvidence: viewModel.totalEvidence,
-              compact: !expanded,
-              onClose: viewModel.hideEvidence,
-              onRename: viewModel.renameEvidence,
-            );
+            final evidence = viewModel.evidencePaneInitialized
+                ? MirrorEvidencePane(
+                    key: const ValueKey('mirror-evidence-pane'),
+                    evidence: viewModel.evidence,
+                    totalEvidence: viewModel.totalEvidence,
+                    compact: !expanded,
+                    onClose: viewModel.hideEvidence,
+                    onRename: viewModel.renameEvidence,
+                  )
+                : null;
             if (expanded) {
               return Padding(
                 padding: const EdgeInsets.all(AppSpace.m),
@@ -141,16 +144,19 @@ class MirrorView extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Expanded(flex: 3, child: mirror),
-                    if (viewModel.showEvidence) ...[
+                    if (viewModel.showEvidence)
                       const SizedBox(width: AppSpace.m),
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(
-                          minWidth: 320,
-                          maxWidth: 420,
+                    if (evidence != null)
+                      Offstage(
+                        offstage: !viewModel.showEvidence,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            minWidth: 320,
+                            maxWidth: 420,
+                          ),
+                          child: evidence,
                         ),
-                        child: evidence,
                       ),
-                    ],
                   ],
                 ),
               );
@@ -165,13 +171,16 @@ class MirrorView extends StatelessWidget {
               child: Column(
                 children: [
                   Expanded(child: mirror),
-                  if (viewModel.showEvidence) ...[
+                  if (viewModel.showEvidence)
                     const SizedBox(height: AppSpace.s),
-                    SizedBox(
-                      height: math.min(200, constraints.maxHeight * .34),
-                      child: evidence,
+                  if (evidence != null)
+                    Offstage(
+                      offstage: !viewModel.showEvidence,
+                      child: SizedBox(
+                        height: math.min(200, constraints.maxHeight * .34),
+                        child: evidence,
+                      ),
                     ),
-                  ],
                 ],
               ),
             );

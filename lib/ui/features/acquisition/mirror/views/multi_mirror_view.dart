@@ -101,60 +101,67 @@ class _MultiMirrorBody extends StatelessWidget {
       final wide = constraints.maxWidth >= 840;
       final workspace = _MultiMirrorWorkspace(viewModel: viewModel);
       final focusedName = viewModel.focusedSource?.deviceName;
-      final evidence = MirrorEvidencePane(
-        evidence: viewModel.recentEvidence,
-        totalEvidence: viewModel.totalEvidence,
-        compact: !wide,
-        contextLabel: focusedName == null
-            ? null
-            : 'Captura activa: $focusedName',
-        onClose: viewModel.hideEvidence,
-        onRename: viewModel.renameEvidence,
-      );
+      final evidence = viewModel.evidencePaneInitialized
+          ? MirrorEvidencePane(
+              key: const ValueKey('multi-mirror-evidence-pane'),
+              evidence: viewModel.evidence,
+              totalEvidence: viewModel.totalEvidence,
+              compact: !wide,
+              contextLabel: focusedName == null
+                  ? null
+                  : 'Captura activa: $focusedName',
+              onClose: viewModel.hideEvidence,
+              onRename: viewModel.renameEvidence,
+            )
+          : null;
       if (wide) {
         return Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Expanded(child: workspace),
-            if (viewModel.showEvidence) ...[
-              const SizedBox(width: AppSpace.s),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  0,
-                  AppSpace.m,
-                  AppSpace.m,
-                  AppSpace.m,
-                ),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    minWidth: 320,
-                    maxWidth: 420,
+            if (viewModel.showEvidence) const SizedBox(width: AppSpace.s),
+            if (evidence != null)
+              Offstage(
+                offstage: !viewModel.showEvidence,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    0,
+                    AppSpace.m,
+                    AppSpace.m,
+                    AppSpace.m,
                   ),
-                  child: evidence,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      minWidth: 320,
+                      maxWidth: 420,
+                    ),
+                    child: evidence,
+                  ),
                 ),
               ),
-            ],
           ],
         );
       }
       return Column(
         children: [
           Expanded(child: workspace),
-          if (viewModel.showEvidence) ...[
-            const SizedBox(height: AppSpace.s),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpace.s,
-                0,
-                AppSpace.s,
-                AppSpace.s,
-              ),
-              child: SizedBox(
-                height: math.min(200, constraints.maxHeight * .34),
-                child: evidence,
+          if (viewModel.showEvidence) const SizedBox(height: AppSpace.s),
+          if (evidence != null)
+            Offstage(
+              offstage: !viewModel.showEvidence,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpace.s,
+                  0,
+                  AppSpace.s,
+                  AppSpace.s,
+                ),
+                child: SizedBox(
+                  height: math.min(200, constraints.maxHeight * .34),
+                  child: evidence,
+                ),
               ),
             ),
-          ],
         ],
       );
     },

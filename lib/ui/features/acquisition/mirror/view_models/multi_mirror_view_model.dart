@@ -31,6 +31,8 @@ class MultiMirrorViewModel extends ChangeNotifier {
   Timer? _messageTimer;
   bool _showEvidence = false;
   bool get showEvidence => _showEvidence;
+  bool _evidencePaneInitialized = false;
+  bool get evidencePaneInitialized => _evidencePaneInitialized;
   String? _focusedSourceId;
   String? get focusedSourceId =>
       _focusedSourceId ??
@@ -66,10 +68,10 @@ class MultiMirrorViewModel extends ChangeNotifier {
   String? _overviewControlSourceId;
   String? get overviewControlSourceId => _overviewControlSourceId;
 
-  List<RequisitionEvidence> get recentEvidence {
+  List<RequisitionEvidence> get evidence {
     final items = [...?_detail?.evidence]
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    return items.take(12).toList(growable: false);
+    return List.unmodifiable(items);
   }
 
   int get totalEvidence => _detail?.evidence.length ?? 0;
@@ -241,6 +243,7 @@ class MultiMirrorViewModel extends ChangeNotifier {
 
   void toggleEvidence() {
     _showEvidence = !_showEvidence;
+    if (_showEvidence) _evidencePaneInitialized = true;
     _safeNotify();
   }
 

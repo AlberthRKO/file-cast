@@ -1,11 +1,15 @@
+import 'dart:ui' as ui;
+
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/services/evidence_decryption_service.dart';
+import 'package:file_cast/domain/services/evidence_video_thumbnail_service.dart';
 import 'package:file_cast/ui/core/feedback/app_feedback.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
 import 'package:file_cast/ui/core/widgets/evidence_rename_sheet.dart';
 import 'package:file_cast/ui/core/widgets/evidence_sync_badge.dart';
 import 'package:file_cast/ui/core/widgets/evidence_thumbnail.dart';
+import 'package:file_cast/ui/core/widgets/evidence_video_thumbnail.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -13,7 +17,7 @@ typedef RenameMirrorEvidence =
     Future<String?> Function(RequisitionEvidence evidence, String displayName);
 
 /// Evidence browser shared by individual and multi-mirror acquisition.
-class MirrorEvidencePane extends StatelessWidget {
+class MirrorEvidencePane extends StatefulWidget {
   const MirrorEvidencePane({
     required this.evidence,
     required this.totalEvidence,
@@ -32,6 +36,16 @@ class MirrorEvidencePane extends StatelessWidget {
   final String? contextLabel;
 
   @override
+  State<MirrorEvidencePane> createState() => _MirrorEvidencePaneState();
+}
+
+enum _EvidenceLayoutMode { grid, list }
+
+class _MirrorEvidencePaneState extends State<MirrorEvidencePane> {
+  _EvidenceLayoutMode _layoutMode = _EvidenceLayoutMode.grid;
+  bool _blurPreviews = false;
+
+  @override
   Widget build(BuildContext context) => Card(
     margin: EdgeInsets.zero,
     clipBehavior: Clip.antiAlias,
@@ -40,54 +54,54 @@ class MirrorEvidencePane extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.verified_user_outlined, size: AppSize.iconM),
-              const SizedBox(width: AppSpace.s),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Evidencia registrada ($totalEvidence)',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    if (contextLabel != null)
-                      Text(
-                        contextLabel!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.labelSmall,
-                      ),
-                  ],
-                ),
-              ),
-              IconButton(
-                onPressed: onClose,
-                tooltip: 'Ocultar evidencias',
-                icon: const Icon(Icons.close),
-              ),
-            ],
+          _EvidencePaneHeader(
+            totalEvidence: widget.totalEvidence,
+            contextLabel: widget.contextLabel,
+            layoutMode: _layoutMode,
+            blurPreviews: _blurPreviews,
+            onToggleLayout: () => setState(() {
+              _layoutMode = _layoutMode == _EvidenceLayoutMode.grid
+                  ? _EvidenceLayoutMode.list
+                  : _EvidenceLayoutMode.grid;
+            }),
+            onToggleBlur: (selected) => setState(() {
+              _blurPreviews = selected;
+            }),
+            onClose: widget.onClose,
           ),
           const SizedBox(height: AppSpace.s),
           Expanded(
-            child: evidence.isEmpty
+            child: widget.evidence.isEmpty
                 ? const _EmptyEvidenceState()
-                : compact
+                : _layoutMode == _EvidenceLayoutMode.list
+                ? ListView.separated(
+                    itemCount: widget.evidence.length,
+                    separatorBuilder: (_, _) =>
+                        const SizedBox(height: AppSpace.s),
+                    itemBuilder: (context, index) => _EvidenceCard(
+                      key: ValueKey('list-${widget.evidence[index].id}'),
+                      evidence: widget.evidence[index],
+                      layoutMode: _EvidenceLayoutMode.list,
+                      blurred: _blurPreviews,
+                      onRename: () =>
+                          _renameEvidence(context, widget.evidence[index]),
+                    ),
+                  )
+                : widget.compact
                 ? ListView.separated(
                     scrollDirection: Axis.horizontal,
-                    itemCount: evidence.length,
+                    itemCount: widget.evidence.length,
                     separatorBuilder: (_, _) =>
                         const SizedBox(width: AppSpace.s),
                     itemBuilder: (context, index) => SizedBox(
                       width: 150,
                       child: _EvidenceCard(
-                        key: ValueKey(evidence[index].id),
-                        evidence: evidence[index],
+                        key: ValueKey('grid-${widget.evidence[index].id}'),
+                        evidence: widget.evidence[index],
+                        layoutMode: _EvidenceLayoutMode.grid,
+                        blurred: _blurPreviews,
                         onRename: () =>
-                            _renameEvidence(context, evidence[index]),
+                            _renameEvidence(context, widget.evidence[index]),
                       ),
                     ),
                   )
@@ -99,11 +113,14 @@ class MirrorEvidencePane extends StatelessWidget {
                           mainAxisSpacing: AppSpace.s,
                           childAspectRatio: 1.2,
                         ),
-                    itemCount: evidence.length,
+                    itemCount: widget.evidence.length,
                     itemBuilder: (context, index) => _EvidenceCard(
-                      key: ValueKey(evidence[index].id),
-                      evidence: evidence[index],
-                      onRename: () => _renameEvidence(context, evidence[index]),
+                      key: ValueKey('grid-${widget.evidence[index].id}'),
+                      evidence: widget.evidence[index],
+                      layoutMode: _EvidenceLayoutMode.grid,
+                      blurred: _blurPreviews,
+                      onRename: () =>
+                          _renameEvidence(context, widget.evidence[index]),
                     ),
                   ),
           ),
@@ -124,7 +141,7 @@ class MirrorEvidencePane extends StatelessWidget {
       builder: (_) => EvidenceRenameSheet(
         currentName: item.effectiveName,
         originalName: item.name,
-        onSave: (name) => onRename(item, name),
+        onSave: (name) => widget.onRename(item, name),
       ),
     );
     if (!context.mounted) return;
@@ -138,6 +155,92 @@ class MirrorEvidencePane extends StatelessWidget {
       'Nombre de evidencia actualizado.',
     );
   }
+}
+
+class _EvidencePaneHeader extends StatelessWidget {
+  const _EvidencePaneHeader({
+    required this.totalEvidence,
+    required this.layoutMode,
+    required this.blurPreviews,
+    required this.onToggleLayout,
+    required this.onToggleBlur,
+    required this.onClose,
+    this.contextLabel,
+  });
+
+  final int totalEvidence;
+  final String? contextLabel;
+  final _EvidenceLayoutMode layoutMode;
+  final bool blurPreviews;
+  final VoidCallback onToggleLayout;
+  final ValueChanged<bool> onToggleBlur;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final showLeadingIcon = constraints.maxWidth >= 300;
+      final title = Row(
+        children: [
+          if (showLeadingIcon) ...[
+            const Icon(Icons.verified_user_outlined, size: AppSize.iconM),
+            const SizedBox(width: AppSpace.s),
+          ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Evidencia registrada ($totalEvidence)',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                if (contextLabel != null)
+                  Text(
+                    contextLabel!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+              ],
+            ),
+          ),
+        ],
+      );
+      final layoutButton = IconButton(
+        onPressed: onToggleLayout,
+        tooltip: layoutMode == _EvidenceLayoutMode.grid
+            ? 'Ver como lista'
+            : 'Ver como cuadrícula',
+        icon: Icon(
+          layoutMode == _EvidenceLayoutMode.grid
+              ? Icons.view_list_outlined
+              : Icons.grid_view_outlined,
+        ),
+      );
+      final blurButton = IconButton(
+        isSelected: blurPreviews,
+        onPressed: () => onToggleBlur(!blurPreviews),
+        tooltip: blurPreviews ? 'Quitar difuminado' : 'Difuminar evidencias',
+        icon: const Icon(Icons.blur_on),
+        selectedIcon: const Icon(Icons.blur_off),
+      );
+      final closeButton = IconButton(
+        onPressed: onClose,
+        tooltip: 'Ocultar evidencias',
+        icon: const Icon(Icons.close),
+      );
+      return Row(
+        children: [
+          Expanded(child: title),
+          layoutButton,
+          blurButton,
+          closeButton,
+        ],
+      );
+    },
+  );
 }
 
 class _EmptyEvidenceState extends StatelessWidget {
@@ -162,42 +265,73 @@ class _EmptyEvidenceState extends StatelessWidget {
 class _EvidenceCard extends StatelessWidget {
   const _EvidenceCard({
     required this.evidence,
+    required this.layoutMode,
+    required this.blurred,
     required this.onRename,
     super.key,
   });
 
   final RequisitionEvidence evidence;
+  final _EvidenceLayoutMode layoutMode;
+  final bool blurred;
   final VoidCallback onRename;
 
   @override
   Widget build(BuildContext context) {
     final path = evidence.localPath;
-    final isImage = evidence.type == RequisitionEvidenceType.image;
+    final visual = _EvidenceVisual(evidence: evidence, blurred: blurred);
+    if (layoutMode == _EvidenceLayoutMode.list) {
+      return Material(
+        color: Theme.of(context).colorScheme.primary.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(AppRadius.m),
+        clipBehavior: Clip.antiAlias,
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpace.s),
+          child: Row(
+            children: [
+              SizedBox.square(
+                dimension: 72,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(AppRadius.s),
+                  child: visual,
+                ),
+              ),
+              const SizedBox(width: AppSpace.s),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      evidence.effectiveName,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                    const SizedBox(height: AppSpace.xs),
+                    EvidenceSyncBadge(
+                      uploadStatus: evidence.uploadStatus,
+                      hasLocalCopy: path?.trim().isNotEmpty == true,
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: onRename,
+                tooltip: 'Cambiar nombre',
+                icon: const Icon(Icons.edit_outlined),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return ClipRRect(
       borderRadius: BorderRadius.circular(AppRadius.m),
       child: Stack(
         fit: StackFit.expand,
         children: [
-          ColoredBox(
-            color: Theme.of(context).colorScheme.primary.withValues(alpha: .1),
-            child: isImage
-                ? EvidenceThumbnail(
-                    localPath: path,
-                    evidenceId: evidence.id,
-                    wrappedKey: evidence.wrappedKey,
-                    plaintextSha256: evidence.plaintextSha256,
-                    plaintextByteLength: evidence.plaintextByteLength,
-                    decryptionService: context
-                        .read<EvidenceDecryptionService>(),
-                    fallback: const Icon(Icons.image_outlined, size: 36),
-                  )
-                : Icon(
-                    evidence.type == RequisitionEvidenceType.video
-                        ? Icons.play_circle_outline
-                        : Icons.insert_drive_file_outlined,
-                    size: 36,
-                  ),
-          ),
+          visual,
           Align(
             alignment: Alignment.bottomCenter,
             child: Container(
@@ -239,6 +373,60 @@ class _EvidenceCard extends StatelessWidget {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EvidenceVisual extends StatelessWidget {
+  const _EvidenceVisual({required this.evidence, required this.blurred});
+
+  final RequisitionEvidence evidence;
+  final bool blurred;
+
+  @override
+  Widget build(BuildContext context) {
+    final path = evidence.localPath;
+    final preview = switch (evidence.type) {
+      RequisitionEvidenceType.image => EvidenceThumbnail(
+        localPath: path,
+        evidenceId: evidence.id,
+        wrappedKey: evidence.wrappedKey,
+        plaintextSha256: evidence.plaintextSha256,
+        plaintextByteLength: evidence.plaintextByteLength,
+        decryptionService: context.read<EvidenceDecryptionService>(),
+        fallback: const Icon(Icons.image_outlined, size: 36),
+      ),
+      RequisitionEvidenceType.video => EvidenceVideoThumbnail(
+        localPath: path,
+        evidenceId: evidence.id,
+        wrappedKey: evidence.wrappedKey,
+        plaintextSha256: evidence.plaintextSha256,
+        plaintextByteLength: evidence.plaintextByteLength,
+        decryptionService: context.read<EvidenceDecryptionService>(),
+        thumbnailService: context.read<EvidenceVideoThumbnailService>(),
+        fallback: const Icon(Icons.play_circle_outline, size: 36),
+      ),
+      _ => const Icon(Icons.insert_drive_file_outlined, size: 36),
+    };
+    return ColoredBox(
+      color: Theme.of(context).colorScheme.primary.withValues(alpha: .1),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Positioned.fill(child: preview),
+          if (blurred)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: ClipRect(
+                  child: BackdropFilter(
+                    filter: ui.ImageFilter.blur(sigmaX: 4, sigmaY: 4),
+                    child: const ColoredBox(color: Colors.transparent),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );

@@ -12,6 +12,7 @@ import 'package:file_cast/domain/repositories/requisition_detail_repository.dart
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
 import 'package:file_cast/domain/services/evidence_decryption_service.dart';
 import 'package:file_cast/domain/services/evidence_preview_service.dart';
+import 'package:file_cast/domain/services/evidence_video_thumbnail_service.dart';
 import 'package:file_cast/ui/core/adaptive/constrained_content.dart';
 import 'package:file_cast/ui/core/feedback/app_feedback.dart';
 import 'package:file_cast/ui/core/navigation/app_route.dart';
@@ -21,6 +22,7 @@ import 'package:file_cast/ui/core/widgets/app_form_input_icon.dart';
 import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
 import 'package:file_cast/ui/core/widgets/evidence_rename_sheet.dart';
 import 'package:file_cast/ui/core/widgets/evidence_thumbnail.dart';
+import 'package:file_cast/ui/core/widgets/evidence_video_thumbnail.dart';
 import 'package:file_cast/ui/core/widgets/evidence_sync_badge.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
 import 'package:file_cast/ui/features/requisitions/detail/view_models/requisition_detail_view_model.dart';
@@ -3141,7 +3143,7 @@ class _EvidenceSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final visible = summary.items.take(5).toList();
+    final visible = summary.items.take(6).toList();
     final title = _categoryTitle(summary.category);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -3305,6 +3307,18 @@ class _EvidencePreview extends StatelessWidget {
                               errorBuilder: (_, _, _) => imageFallback,
                             )
                           : imageFallback
+                    : evidence.type == RequisitionEvidenceType.video
+                    ? EvidenceVideoThumbnail(
+                        localPath: evidence.localPath,
+                        evidenceId: evidence.id,
+                        wrappedKey: evidence.wrappedKey,
+                        plaintextSha256: evidence.plaintextSha256,
+                        plaintextByteLength: evidence.plaintextByteLength,
+                        decryptionService: decryptionService,
+                        thumbnailService: context
+                            .read<EvidenceVideoThumbnailService>(),
+                        fallback: imageFallback,
+                      )
                     : Padding(
                         padding: const EdgeInsets.all(
                           AppSpace.m - AppSpace.s,

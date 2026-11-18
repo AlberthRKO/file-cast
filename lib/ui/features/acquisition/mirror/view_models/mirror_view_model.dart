@@ -41,6 +41,8 @@ class MirrorViewModel extends ChangeNotifier {
   bool get messageIsError => _messageIsError;
   bool _showEvidence = false;
   bool get showEvidence => _showEvidence;
+  bool _evidencePaneInitialized = false;
+  bool get evidencePaneInitialized => _evidencePaneInitialized;
   bool _disposed = false;
   StreamSubscription<void>? _deviceSubscription;
   StreamSubscription<String>? _evidenceChangesSubscription;
@@ -59,10 +61,10 @@ class MirrorViewModel extends ChangeNotifier {
   Timer? _diagnosticTimer;
   bool _refreshingDiagnostics = false;
 
-  List<RequisitionEvidence> get recentEvidence {
+  List<RequisitionEvidence> get evidence {
     final items = [...?_detail?.evidence]
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    return items.take(12).toList(growable: false);
+    return List.unmodifiable(items);
   }
 
   int get totalEvidence => _detail?.evidence.length ?? 0;
@@ -75,6 +77,7 @@ class MirrorViewModel extends ChangeNotifier {
 
   void toggleEvidence() {
     _showEvidence = !_showEvidence;
+    if (_showEvidence) _evidencePaneInitialized = true;
     _safeNotify();
   }
 

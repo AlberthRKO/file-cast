@@ -544,17 +544,18 @@ class AndroidAcquisitionPlatformService {
     Future<Map<String, dynamic>> Function() connect, {
     bool collectServerLog = false,
   }) async {
-    // The shell A_OPEN only confirms that app_process was launched. On slower
-    // targets the scrcpy abstract socket is published a few hundred
-    // milliseconds later. A fixed two-second delay raced that startup and
-    // produced an immediate CLSE even though ADB/RSA were already healthy.
-    await Future<void>.delayed(const Duration(milliseconds: 2500));
+    // The shell A_OPEN only confirms that app_process was launched. Poll early
+    // for fast targets, but keep a bounded backoff for slower OEMs until the
+    // scrcpy abstract socket is actually published.
+    await Future<void>.delayed(const Duration(milliseconds: 300));
     Object? lastError;
     StackTrace? lastStackTrace;
     const retryDelays = [
-      Duration(milliseconds: 350),
+      Duration(milliseconds: 250),
+      Duration(milliseconds: 400),
       Duration(milliseconds: 650),
       Duration(seconds: 1),
+      Duration(milliseconds: 1500),
     ];
     for (var attempt = 0; attempt <= retryDelays.length; attempt++) {
       try {
@@ -647,16 +648,25 @@ class AndroidAcquisitionPlatformService {
       throw StateError('El mirror seleccionado ya no está conectado.');
     }
 
-    await _adbClient.multiStopMirror(sourceSessionId);
-    try {
-      await _adbClient.multiShellCommand(
-        sourceSessionId: sourceSessionId,
-        command:
-            "pkill -f '[c]om.genymobile.scrcpy.Server' 2>/dev/null; sleep 1.25",
+    final usbDeviceId = current.usbDeviceId;
+    if (usbDeviceId == null || usbDeviceId.isEmpty) {
+      throw StateError(
+        'No se pudo identificar el dispositivo USB seleccionado.',
       );
-    } on PlatformException {
-      // El servidor anterior puede haber terminado cuando se congeló el video.
     }
+
+    // A rejected localabstract:scrcpy socket may leave both the native stream
+    // registry and the server shell stale. Rebuild only this source transport;
+    // the other mirrors remain active and the persistent RSA key is reused.
+    await _adbClient.multiDisconnectAdb(sourceSessionId);
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    await _adbClient
+        .multiConnectAdb(
+          sourceSessionId: sourceSessionId,
+          deviceName: usbDeviceId,
+        )
+        .timeout(const Duration(seconds: 35));
+    await _prepareMultiServer(sourceSessionId);
 
     int? longestTargetEdge;
     try {

@@ -631,6 +631,30 @@ class AdbClient {
         const {};
   }
 
+  Future<String> createVideoThumbnail({
+    required String path,
+    required String cacheKey,
+  }) async {
+    final result = await _methodChannel.invokeMethod<Map>(
+      'createVideoThumbnail',
+      {'path': path, 'cacheKey': cacheKey},
+    );
+    final thumbnailPath = result?['path'] as String?;
+    if (thumbnailPath == null || thumbnailPath.isEmpty) {
+      throw StateError('createVideoThumbnail returned no path');
+    }
+    return thumbnailPath;
+  }
+
+  Future<String?> getCachedVideoThumbnail({required String cacheKey}) async {
+    final result = await _methodChannel.invokeMethod<Map>(
+      'getCachedVideoThumbnail',
+      {'cacheKey': cacheKey},
+    );
+    final thumbnailPath = result?['path'] as String?;
+    return thumbnailPath?.isNotEmpty == true ? thumbnailPath : null;
+  }
+
   /// Create a Flutter Texture backed by a SurfaceTexture.
   /// Returns the textureId to use with the Texture widget.
   Future<int> createMirrorTexture() async {

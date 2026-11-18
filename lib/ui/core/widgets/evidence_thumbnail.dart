@@ -27,7 +27,8 @@ class EvidenceThumbnail extends StatefulWidget {
   State<EvidenceThumbnail> createState() => _EvidenceThumbnailState();
 }
 
-class _EvidenceThumbnailState extends State<EvidenceThumbnail> {
+class _EvidenceThumbnailState extends State<EvidenceThumbnail>
+    with AutomaticKeepAliveClientMixin<EvidenceThumbnail> {
   String? _previewPath;
   Future<void>? _loading;
 
@@ -96,6 +97,7 @@ class _EvidenceThumbnailState extends State<EvidenceThumbnail> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final path = _previewPath;
     if (path == null) {
       if (widget.localPath == null) return widget.fallback;
@@ -117,7 +119,11 @@ class _EvidenceThumbnailState extends State<EvidenceThumbnail> {
     return Image.file(
       File(path),
       fit: BoxFit.cover,
+      cacheWidth: 480,
       errorBuilder: (context, error, stackTrace) => widget.fallback,
     );
   }
+
+  @override
+  bool get wantKeepAlive => true;
 }

@@ -4,6 +4,7 @@ import android.media.MediaCodec
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
+import android.os.SystemClock
 import java.io.File
 import java.nio.ByteBuffer
 
@@ -26,6 +27,7 @@ class ScrcpyRecorder(
     private var firstPtsUs = -1L
     private var lastPtsUs = -1L
     private var lastSampleDurationUs = 33_333L
+    private var firstSampleRealtimeNs = -1L
     private var sampleCount = 0
     private val bufferInfo = MediaCodec.BufferInfo()
     private val temporaryFile = File("${outputFile.absolutePath}.part")
@@ -67,6 +69,7 @@ class ScrcpyRecorder(
         if (payload.isEmpty()) return false
         val firstSample = waitingForKeyFrame
         waitingForKeyFrame = false
+        if (firstSample) firstSampleRealtimeNs = SystemClock.elapsedRealtimeNanos()
         val pts = headerValue and PTS_MASK
         if (firstPtsUs < 0) firstPtsUs = pts
         val normalizedPtsUs = (pts - firstPtsUs).coerceAtLeast(0)
@@ -99,10 +102,16 @@ class ScrcpyRecorder(
             check(sampleCount > 0) { "No se recibió un keyframe para crear el video" }
             // Un EOS vacío permite que MediaMuxer calcule la duración del
             // último frame. Es un marcador de contenedor, no un NAL H.264.
+            val encodedEndUs = lastPtsUs + lastSampleDurationUs
+            val wallClockEndUs = if (firstSampleRealtimeNs >= 0L) {
+                (SystemClock.elapsedRealtimeNanos() - firstSampleRealtimeNs) / 1_000L
+            } else {
+                encodedEndUs
+            }
             bufferInfo.set(
                 0,
                 0,
-                lastPtsUs + lastSampleDurationUs,
+                maxOf(encodedEndUs, wallClockEndUs),
                 MediaCodec.BUFFER_FLAG_END_OF_STREAM,
             )
             muxerToStop.writeSampleData(trackIndex, ByteBuffer.allocate(0), bufferInfo)

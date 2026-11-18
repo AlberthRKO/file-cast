@@ -28,6 +28,7 @@ class EvidenceSyncBadge extends StatelessWidget {
       _EvidenceBadgeState.failed => scheme.error,
       _EvidenceBadgeState.pending => scheme.tertiary,
       _EvidenceBadgeState.local => scheme.onSurfaceVariant,
+      _EvidenceBadgeState.remote => scheme.onSurfaceVariant,
     };
     final label = switch (state) {
       _EvidenceBadgeState.synced => 'Sincronizada',
@@ -35,6 +36,7 @@ class EvidenceSyncBadge extends StatelessWidget {
       _EvidenceBadgeState.failed => 'Error de subida',
       _EvidenceBadgeState.pending => 'Pendiente',
       _EvidenceBadgeState.local => 'Guardada localmente',
+      _EvidenceBadgeState.remote => 'En servidor',
     };
     final icon = switch (state) {
       _EvidenceBadgeState.synced => Icons.cloud_done_outlined,
@@ -42,6 +44,7 @@ class EvidenceSyncBadge extends StatelessWidget {
       _EvidenceBadgeState.failed => Icons.error_outline_rounded,
       _EvidenceBadgeState.pending => Icons.cloud_upload_outlined,
       _EvidenceBadgeState.local => Icons.phone_android_outlined,
+      _EvidenceBadgeState.remote => Icons.cloud_outlined,
     };
     if (compact) {
       return Tooltip(
@@ -79,7 +82,8 @@ class EvidenceSyncBadge extends StatelessWidget {
 
   _EvidenceBadgeState _state(String? status, bool local) =>
       switch (status?.toUpperCase()) {
-        'AVAILABLE' => _EvidenceBadgeState.synced,
+        'AVAILABLE' =>
+          local ? _EvidenceBadgeState.synced : _EvidenceBadgeState.remote,
         'UPLOADING' => _EvidenceBadgeState.uploading,
         'ERROR' => _EvidenceBadgeState.failed,
         'PENDING_UPLOAD' => _EvidenceBadgeState.pending,
@@ -87,4 +91,4 @@ class EvidenceSyncBadge extends StatelessWidget {
       };
 }
 
-enum _EvidenceBadgeState { synced, uploading, failed, pending, local }
+enum _EvidenceBadgeState { synced, uploading, failed, pending, local, remote }

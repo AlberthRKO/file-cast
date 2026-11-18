@@ -590,6 +590,12 @@ se homologa otro; no se hardcodea el software a tres.
 - workspace responsive para 1..N;
 - foco de control accesible;
 - captura/grabación ligadas a la fuente correcta;
+- panel compartido de evidencias con fuente activa visible, inventario completo,
+  miniaturas de video locales cacheadas con extractor alternativo, retención de
+  previews fuera del viewport, alternancia cuadrícula/lista y difuminado por
+  capa visual no destructiva;
+- inicialización diferida del panel y conservación de sus previews al ocultarlo,
+  sin repetir la preparación completa en cada apertura;
 - logs, diagnóstico y errores redactados;
 - fallback al Mirror singular.
 

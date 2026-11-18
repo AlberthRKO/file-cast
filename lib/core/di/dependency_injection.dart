@@ -10,6 +10,7 @@ import 'package:file_cast/data/repositories/remote_requisition_detail_repository
 import 'package:file_cast/data/repositories/requisition_creation_repository_impl.dart';
 import 'package:file_cast/data/services/requisition_creation_service.dart';
 import 'package:file_cast/data/services/android_acquisition_platform_service.dart';
+import 'package:file_cast/data/services/android_evidence_video_thumbnail_service.dart';
 import 'package:file_cast/data/services/evidence_picker_service.dart';
 import 'package:file_cast/data/services/evidence_crypto_service.dart';
 import 'package:file_cast/data/services/evidence_background_sync_service.dart';
@@ -30,6 +31,7 @@ import 'package:file_cast/domain/repositories/requisition_detail_repository.dart
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
 import 'package:file_cast/domain/services/evidence_decryption_service.dart';
 import 'package:file_cast/domain/services/evidence_preview_service.dart';
+import 'package:file_cast/domain/services/evidence_video_thumbnail_service.dart';
 import 'package:file_cast/ui/core/navigation/app_router.dart';
 import 'package:file_cast/ui/core/theme/theme_controller.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
@@ -119,100 +121,110 @@ class DependencyInjection {
       Provider<RemoteDocumentPreviewService>(
         create: (_) => const RemoteDocumentPreviewService(),
       ),
-      ProxyProvider4<Http, EvidenceCryptoService, RemoteDocumentPreviewService,
-          EvidenceKeyExchangeService, EvidencePreviewService>(
+      ProxyProvider4<
+        Http,
+        EvidenceCryptoService,
+        RemoteDocumentPreviewService,
+        EvidenceKeyExchangeService,
+        EvidencePreviewService
+      >(
         update: (_, http, crypto, documentPreview, keyExchange, previous) =>
             RemoteEvidencePreviewService(
-          http: http,
-          crypto: crypto,
-          keyExchange: keyExchange,
-          documentPreview: documentPreview,
-        ),
+              http: http,
+              crypto: crypto,
+              keyExchange: keyExchange,
+              documentPreview: documentPreview,
+            ),
       ),
       Provider<LocationService>(create: (_) => const LocationService()),
       ProxyProvider6<
-          Http,
-          LocalEvidenceDatabaseService,
-          EvidenceCryptoService,
-          EvidenceKeyExchangeService,
-          LocalNotificationService,
-          EvidenceBackgroundSyncService,
-          EvidenceSyncService>(
-        update: (
-          _,
-          http,
-          database,
-          crypto,
-          keyExchange,
-          notifications,
-          backgroundScheduler,
-          previous,
-        ) =>
-            previous ??
-            (EvidenceSyncService(
-              http: http,
-              database: database,
-              crypto: crypto,
-              keyExchange: keyExchange,
-              notifications: notifications,
-              backgroundScheduler: backgroundScheduler,
-            )..start()),
+        Http,
+        LocalEvidenceDatabaseService,
+        EvidenceCryptoService,
+        EvidenceKeyExchangeService,
+        LocalNotificationService,
+        EvidenceBackgroundSyncService,
+        EvidenceSyncService
+      >(
+        update:
+            (
+              _,
+              http,
+              database,
+              crypto,
+              keyExchange,
+              notifications,
+              backgroundScheduler,
+              previous,
+            ) =>
+                previous ??
+                (EvidenceSyncService(
+                  http: http,
+                  database: database,
+                  crypto: crypto,
+                  keyExchange: keyExchange,
+                  notifications: notifications,
+                  backgroundScheduler: backgroundScheduler,
+                )..start()),
       ),
       ProxyProvider6<
-          Http,
-          LocalEvidenceDatabaseService,
-          EvidenceCryptoService,
-          EvidenceKeyExchangeService,
-          LocalNotificationService,
-          EvidenceBackgroundSyncService,
-          EvidenceOfflineSyncService>(
-        update: (
-          _,
-          http,
-          database,
-          crypto,
-          keyExchange,
-          notifications,
-          backgroundScheduler,
-          previous,
-        ) =>
-            previous ??
-            EvidenceOfflineSyncService(
-              http: http,
+        Http,
+        LocalEvidenceDatabaseService,
+        EvidenceCryptoService,
+        EvidenceKeyExchangeService,
+        LocalNotificationService,
+        EvidenceBackgroundSyncService,
+        EvidenceOfflineSyncService
+      >(
+        update:
+            (
+              _,
+              http,
+              database,
+              crypto,
+              keyExchange,
+              notifications,
+              backgroundScheduler,
+              previous,
+            ) =>
+                previous ??
+                EvidenceOfflineSyncService(
+                  http: http,
+                  database: database,
+                  crypto: crypto,
+                  keyExchange: keyExchange,
+                  notifications: notifications,
+                  backgroundScheduler: backgroundScheduler,
+                ),
+      ),
+      ProxyProvider6<
+        RequisitionDetailService,
+        EvidencePickerService,
+        EvidenceCryptoService,
+        LocalEvidenceDatabaseService,
+        EvidenceSyncService,
+        EvidenceKeyExchangeService,
+        RequisitionDetailRepository
+      >(
+        update:
+            (
+              context,
+              detailService,
+              picker,
+              crypto,
+              database,
+              syncService,
+              keyExchange,
+              previous,
+            ) => RemoteRequisitionDetailRepository(
+              detailService: detailService,
+              pickerService: picker,
+              cryptoService: crypto,
               database: database,
-              crypto: crypto,
+              syncService: syncService,
               keyExchange: keyExchange,
-              notifications: notifications,
-              backgroundScheduler: backgroundScheduler,
+              offlineSyncService: context.read<EvidenceOfflineSyncService>(),
             ),
-      ),
-      ProxyProvider6<
-          RequisitionDetailService,
-          EvidencePickerService,
-          EvidenceCryptoService,
-          LocalEvidenceDatabaseService,
-          EvidenceSyncService,
-          EvidenceKeyExchangeService,
-          RequisitionDetailRepository>(
-        update: (
-          context,
-          detailService,
-          picker,
-          crypto,
-          database,
-          syncService,
-          keyExchange,
-          previous,
-        ) =>
-            RemoteRequisitionDetailRepository(
-          detailService: detailService,
-          pickerService: picker,
-          cryptoService: crypto,
-          database: database,
-          syncService: syncService,
-          keyExchange: keyExchange,
-          offlineSyncService: context.read<EvidenceOfflineSyncService>(),
-        ),
       ),
       ProxyProvider<Http, RequisitionCreationService>(
         update: (_, http, previous) => RequisitionCreationService(http: http),
@@ -224,32 +236,38 @@ class DependencyInjection {
         ),
       ),
       Provider<AdbClient>(create: (_) => AdbClient()),
+      ProxyProvider<AdbClient, EvidenceVideoThumbnailService>(
+        update: (_, adbClient, previous) =>
+            AndroidEvidenceVideoThumbnailService(adbClient: adbClient),
+      ),
       ProxyProvider<AdbClient, AndroidAcquisitionPlatformService>(
         update: (_, adbClient, previousService) =>
             previousService ??
             AndroidAcquisitionPlatformService(adbClient: adbClient),
       ),
       ProxyProvider4<
-          AndroidAcquisitionPlatformService,
-          RequisitionDetailRepository,
-          RemoteDocumentPreviewService,
-          EvidenceSyncService,
-          AcquisitionRepository>(
-        update: (
-          _,
-          platformService,
-          detailRepository,
-          documentPreviewService,
-          syncService,
-          previousRepository,
-        ) =>
-            previousRepository ??
-            AcquisitionRepositoryImpl(
-              platformService: platformService,
-              detailRepository: detailRepository,
-              documentPreviewService: documentPreviewService,
-              syncService: syncService,
-            ),
+        AndroidAcquisitionPlatformService,
+        RequisitionDetailRepository,
+        RemoteDocumentPreviewService,
+        EvidenceSyncService,
+        AcquisitionRepository
+      >(
+        update:
+            (
+              _,
+              platformService,
+              detailRepository,
+              documentPreviewService,
+              syncService,
+              previousRepository,
+            ) =>
+                previousRepository ??
+                AcquisitionRepositoryImpl(
+                  platformService: platformService,
+                  detailRepository: detailRepository,
+                  documentPreviewService: documentPreviewService,
+                  syncService: syncService,
+                ),
       ),
       ProxyProvider<AuthSessionController, GoRouter>(
         update: (_, sessionController, previousRouter) =>

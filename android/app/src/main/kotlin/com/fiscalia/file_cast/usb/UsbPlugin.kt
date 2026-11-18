@@ -5,12 +5,16 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Bitmap
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.media.MediaMetadataRetriever
+import android.media.ThumbnailUtils
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.util.Size
 import android.view.Surface
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -89,6 +93,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     private val recorderLock = Any()
     private var pendingRecordingStartResult: MethodChannel.Result? = null
     private var recordingStartTimeout: Runnable? = null
+    private val videoThumbnailLock = Any()
 
     /**
      * Multi-mirror sessions are deliberately isolated from the legacy single
@@ -297,6 +302,8 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                 "multiCaptureScreenshot" -> multiCaptureScreenshot(call, result)
                 "multiStartScreenRecording" -> multiStartScreenRecording(call, result)
                 "multiStopScreenRecording" -> multiStopScreenRecording(call, result)
+                "createVideoThumbnail" -> createVideoThumbnail(call, result)
+                "getCachedVideoThumbnail" -> getCachedVideoThumbnail(call, result)
                 "multiGetMirrorLog" -> multiGetMirrorLog(call, result)
                 "getMultiSessions" -> result.success(multiSessions.values.map { it.toMap() })
                 "getAdbState" -> {
@@ -2053,12 +2060,16 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     localId = localId,
                     onPacket = { headerValue, payload ->
                         decoder.feedPacket(payload, headerValue)
-                        synchronized(state.recorderLock) {
+                        val recordingStarted = synchronized(state.recorderLock) {
                             if ((headerValue and FLAG_VIDEO_CONFIG) != 0L) {
                                 state.lastCodecConfig = (state.lastCodecConfig ?: byteArrayOf()) + payload
+                                false
                             } else {
-                                state.recorder?.writePacket(headerValue, payload)
+                                state.recorder?.writePacket(headerValue, payload) == true
                             }
+                        }
+                        if (recordingStarted) {
+                            mainHandler.post { completeMultiRecordingStart(sourceSessionId) }
                         }
                     },
                     onError = { message ->
@@ -2085,10 +2096,24 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         state.transport.stopControlWriter()
         state.decoder?.stop()
         state.decoder = null
-        synchronized(state.recorderLock) {
+        val pendingRecordingResult = synchronized(state.recorderLock) {
+            state.recordingStartTimeout?.let(mainHandler::removeCallbacks)
+            state.recordingStartTimeout = null
+            val pending = state.pendingRecordingStartResult
+            state.pendingRecordingStartResult = null
             state.recorder?.abort()
             state.recorder = null
             state.lastCodecConfig = null
+            pending
+        }
+        if (pendingRecordingResult != null) {
+            mainHandler.post {
+                pendingRecordingResult.error(
+                    "RECORDING_CANCELLED",
+                    "La preparación de la grabación se canceló al reiniciar el mirror.",
+                    null,
+                )
+            }
         }
         state.textureEntry?.release()
         state.textureEntry = null
@@ -2223,14 +2248,63 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         val sessionId = call.argument<String>("sessionId") ?: "unknown"
         try {
             synchronized(state.recorderLock) {
-                if (state.recorder != null) throw IllegalStateException("Ya existe una grabación activa")
+                if (state.recorder != null || state.pendingRecordingStartResult != null) {
+                    throw IllegalStateException("Ya existe una grabación activa")
+                }
                 val file = File(evidenceDirectory(requisitionId, sessionId), "grabacion-${sourceSessionId}-${System.currentTimeMillis()}.mp4")
-                state.recorder = ScrcpyRecorder(file, state.videoWidth, state.videoHeight).also { it.start(config) }
-                result.success(evidenceMetadata(file, byteArrayOf()))
+                val nextRecorder = ScrcpyRecorder(file, state.videoWidth, state.videoHeight)
+                try {
+                    nextRecorder.start(config)
+                    state.pendingRecordingStartResult = result
+                    val timeout = Runnable { timeoutMultiRecordingStart(sourceSessionId, result) }
+                    state.recordingStartTimeout = timeout
+                    state.recorder = nextRecorder
+                    mainHandler.postDelayed(timeout, RECORDING_START_TIMEOUT_MS)
+                } catch (error: Exception) {
+                    nextRecorder.abort()
+                    throw error
+                }
             }
         } catch (error: Exception) {
             result.error("RECORDING_ERROR", error.message ?: "No se pudo iniciar la grabación", null)
         }
+    }
+
+    private fun completeMultiRecordingStart(sourceSessionId: String) {
+        val state = multiSessions[sourceSessionId] ?: return
+        val completion = synchronized(state.recorderLock) {
+            val pendingResult = state.pendingRecordingStartResult ?: return
+            val activeRecorder = state.recorder ?: return
+            state.recordingStartTimeout?.let(mainHandler::removeCallbacks)
+            state.recordingStartTimeout = null
+            state.pendingRecordingStartResult = null
+            pendingResult to activeRecorder.file()
+        }
+        val (pendingResult, file) = completion
+        pendingResult.success(evidenceMetadata(file, byteArrayOf()))
+    }
+
+    private fun timeoutMultiRecordingStart(
+        sourceSessionId: String,
+        expectedResult: MethodChannel.Result,
+    ) {
+        val state = multiSessions[sourceSessionId] ?: return
+        val timedOut = synchronized(state.recorderLock) {
+            if (state.pendingRecordingStartResult !== expectedResult) return
+            state.pendingRecordingStartResult = null
+            state.recordingStartTimeout = null
+            val activeRecorder = state.recorder
+            state.recorder = null
+            activeRecorder
+        }
+        try { timedOut?.abort() } catch (error: Exception) {
+            Log.e(TAG, "Could not abort multi recording after start timeout", error)
+        }
+        expectedResult.error(
+            "RECORDING_START_TIMEOUT",
+            "El video no entregó un frame clave para iniciar la grabación.",
+            null,
+        )
     }
 
     private fun multiStopScreenRecording(call: MethodCall, result: MethodChannel.Result) {
@@ -2240,7 +2314,9 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
             result.error("NOT_CONNECTED", "La sesión multi no está conectada", null)
             return
         }
-        val recorder = synchronized(state.recorderLock) { state.recorder.also { state.recorder = null } }
+        val recorder = synchronized(state.recorderLock) {
+            if (state.pendingRecordingStartResult != null) null else state.recorder.also { state.recorder = null }
+        }
         if (recorder == null) {
             result.error("NOT_RECORDING", "No existe una grabación activa", null)
             return
@@ -2253,6 +2329,188 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                 mainHandler.post { result.error("RECORDING_ERROR", error.message ?: "No se pudo guardar la grabación", null) }
             }
         }.apply { name = "MultiStopRecording-$sourceSessionId"; isDaemon = true; start() }
+    }
+
+    private fun createVideoThumbnail(call: MethodCall, result: MethodChannel.Result) {
+        val sourcePath = call.argument<String>("path")
+        val cacheKey = call.argument<String>("cacheKey")
+        if (sourcePath.isNullOrBlank() || cacheKey.isNullOrBlank()) {
+            result.error("INVALID_ARGS", "path and cacheKey are required", null)
+            return
+        }
+        Thread {
+            try {
+                val source = File(sourcePath)
+                check(source.isFile && source.length() > 0L) { "El video no está disponible" }
+                val output = synchronized(videoThumbnailLock) {
+                    val cachedOutput = videoThumbnailCacheFile(cacheKey)
+                    if (!cachedOutput.isFile || cachedOutput.length() == 0L) {
+                        val temporary = File(
+                            requireNotNull(cachedOutput.parentFile),
+                            "${cachedOutput.name}.part",
+                        )
+                        if (temporary.exists()) temporary.delete()
+                        val retriever = MediaMetadataRetriever()
+                        var frameToRecycle: Bitmap? = null
+                        var scaledFrameToRecycle: Bitmap? = null
+                        try {
+                            val frame = try {
+                                retriever.setDataSource(source.absolutePath)
+                                val durationMs = retriever
+                                    .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                                    ?.toLongOrNull()
+                                    ?: 0L
+                                extractVideoThumbnailFrame(retriever, durationMs)
+                            } catch (retrieverError: Exception) {
+                                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                                    throw retrieverError
+                                }
+                                ThumbnailUtils.createVideoThumbnail(
+                                    source,
+                                    Size(480, 480),
+                                    null,
+                                )
+                            }
+                            frameToRecycle = frame
+                            val longestEdge = maxOf(frame.width, frame.height)
+                            val thumbnailFrame = if (longestEdge > 480) {
+                                val scale = 480.0 / longestEdge.toDouble()
+                                Bitmap.createScaledBitmap(
+                                    frame,
+                                    (frame.width * scale).toInt().coerceAtLeast(1),
+                                    (frame.height * scale).toInt().coerceAtLeast(1),
+                                    true,
+                                ).also { scaledFrameToRecycle = it }
+                            } else {
+                                frame
+                            }
+                            FileOutputStream(temporary).use { stream ->
+                                check(thumbnailFrame.compress(Bitmap.CompressFormat.JPEG, 82, stream)) {
+                                    "No se pudo codificar la miniatura"
+                                }
+                                stream.flush()
+                                stream.fd.sync()
+                            }
+                            if (cachedOutput.exists()) cachedOutput.delete()
+                            check(temporary.renameTo(cachedOutput)) { "No se pudo instalar la miniatura" }
+                        } finally {
+                            retriever.release()
+                            scaledFrameToRecycle?.recycle()
+                            frameToRecycle?.recycle()
+                            temporary.delete()
+                        }
+                    }
+                    cachedOutput
+                }
+                mainHandler.post { result.success(mapOf("path" to output.absolutePath)) }
+            } catch (error: Exception) {
+                Log.e(TAG, "createVideoThumbnail error", error)
+                mainHandler.post {
+                    result.error(
+                        "VIDEO_THUMBNAIL_ERROR",
+                        error.message ?: "No se pudo crear la miniatura del video",
+                        null,
+                    )
+                }
+            }
+        }.apply { name = "VideoThumbnail"; isDaemon = true; start() }
+    }
+
+    private fun getCachedVideoThumbnail(call: MethodCall, result: MethodChannel.Result) {
+        val cacheKey = call.argument<String>("cacheKey")
+        if (cacheKey.isNullOrBlank()) {
+            result.error("INVALID_ARGS", "cacheKey is required", null)
+            return
+        }
+        val cached = videoThumbnailCacheFile(cacheKey)
+        result.success(
+            mapOf(
+                "path" to cached
+                    .takeIf { it.isFile && it.length() > 0L }
+                    ?.absolutePath,
+            ),
+        )
+    }
+
+    private fun videoThumbnailCacheFile(cacheKey: String): File {
+        val safeKey = cacheKey.replace(Regex("[^A-Za-z0-9_.-]"), "_").take(96)
+        val directory = File(context.cacheDir, "evidence_video_thumbnails").apply { mkdirs() }
+        return File(directory, "$safeKey.jpg")
+    }
+
+    private fun extractVideoThumbnailFrame(
+        retriever: MediaMetadataRetriever,
+        durationMs: Long,
+    ): Bitmap {
+        val durationUs = durationMs
+            .coerceAtLeast(0L)
+            .coerceAtMost(Long.MAX_VALUE / 1_000L) * 1_000L
+        val candidateTimes = linkedSetOf<Long>()
+        if (durationUs > 0L) {
+            candidateTimes += minOf(1_000_000L, durationUs / 4L)
+            candidateTimes += durationUs / 2L
+            candidateTimes += durationUs - (durationUs / 4L)
+        }
+        candidateTimes += 0L
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            val rawWidth = retriever
+                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                ?.toIntOrNull()
+                ?: 0
+            val rawHeight = retriever
+                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                ?.toIntOrNull()
+                ?: 0
+            val rotation = retriever
+                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+                ?.toIntOrNull()
+                ?: 0
+            val sourceWidth = if (rotation == 90 || rotation == 270) rawHeight else rawWidth
+            val sourceHeight = if (rotation == 90 || rotation == 270) rawWidth else rawHeight
+            val longestEdge = maxOf(sourceWidth, sourceHeight)
+            val scale = if (longestEdge > 480) 480.0 / longestEdge.toDouble() else 1.0
+            val targetWidth = (sourceWidth * scale).toInt().coerceAtLeast(1)
+            val targetHeight = (sourceHeight * scale).toInt().coerceAtLeast(1)
+            if (sourceWidth > 0 && sourceHeight > 0) {
+                for (timeUs in candidateTimes) {
+                    for (option in listOf(
+                        MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                        MediaMetadataRetriever.OPTION_CLOSEST,
+                    )) {
+                        try {
+                            retriever.getScaledFrameAtTime(
+                                timeUs,
+                                option,
+                                targetWidth,
+                                targetHeight,
+                            )?.let { return it }
+                        } catch (_: Exception) {
+                            // Algunos extractores OEM rechazan ciertos seeks.
+                        }
+                    }
+                }
+            }
+        }
+
+        for (timeUs in candidateTimes) {
+            for (option in listOf(
+                MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                MediaMetadataRetriever.OPTION_CLOSEST,
+            )) {
+                try {
+                    retriever.getFrameAtTime(timeUs, option)?.let { return it }
+                } catch (_: Exception) {
+                    // Probar el siguiente instante/modo antes del fallback.
+                }
+            }
+        }
+        try {
+            retriever.getFrameAtTime()?.let { return it }
+        } catch (_: Exception) {
+            // El error final se redacta en el bridge.
+        }
+        throw IllegalStateException("No se pudo extraer un cuadro del video")
     }
 
     private fun multiGetMirrorLog(call: MethodCall, result: MethodChannel.Result) {
@@ -2410,6 +2668,8 @@ private class MultiMirrorState(
     var screenHeight: Int = 0
     var lastCodecConfig: ByteArray? = null
     var recorder: ScrcpyRecorder? = null
+    var pendingRecordingStartResult: MethodChannel.Result? = null
+    var recordingStartTimeout: Runnable? = null
     val recorderLock = Any()
 
     fun toMap(): Map<String, Any?> = mapOf(

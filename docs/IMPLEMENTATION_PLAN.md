@@ -494,7 +494,7 @@ Salida: conectar/desconectar repetidamente sin fugas y con ledger.
 
 ### Fase 4 — evidencia de pantalla Android
 
-Estado actualizado al 9 de noviembre de 2026: screenshot binario, control táctil validado, muxer MP4, SHA-256 local, contador de grabación, feedback flotante y galería en vivo implementados. El recorder conserva SPS/PPS, solicita a scrcpy un keyframe cada segundo, espera el siguiente posterior al toque, confirma entonces el estado `recording`, normaliza PTS y valida el archivo antes de registrarlo. Ya no precarga un GOP anterior, por lo que duración, imagen y contador comparten el mismo inicio. Continúan pendientes la revalidación física del MP4 corregido, cuotas/espacio, segmentación y manifiesto.
+Estado actualizado al 18 de noviembre de 2026: screenshot binario, control táctil validado, muxer MP4, SHA-256 local, contador de grabación, feedback flotante y galería en vivo implementados. El recorder conserva SPS/PPS, solicita a scrcpy un keyframe cada segundo, espera el siguiente posterior al toque, confirma entonces el estado `recording`, normaliza PTS y valida el archivo antes de registrarlo. Ya no precarga un GOP anterior, por lo que duración, imagen y contador comparten el mismo inicio. Las miniaturas de video se generan como JPEG derivados y cacheados para el panel de mirror y el detalle de requisa; la extracción local prueba varios frames, seek escalado y un extractor Android alternativo. El panel lista todas las evidencias, se inicializa al abrirse por primera vez y después se conserva fuera de pantalla; sus previews mantienen estado al salir del viewport. Ofrece cuadrícula/lista y un difuminado mediante capa visual que no reconstruye la miniatura ni altera el archivo. El detalle resume seis elementos por categoría antes de **Ver todo**. Continúan pendientes la revalidación física del MP4 corregido y de los codecs OEM, cuotas/espacio, segmentación y manifiesto.
 
 - screenshot binario;
 - recording/muxer;
@@ -545,6 +545,13 @@ porque el proceso scrcpy terminó durante un reinicio se considera recuperable,
 el cleanup espera la liberación del encoder OEM y continúa con el siguiente
 tamaño. El transporte aplica contrapresión solo al stream H.264 para evitar
 latencia acumulada sin afectar control, shell ni transferencia.
+
+Actualización UI al 18 de noviembre de 2026: mirror individual y múltiple
+reutilizan el mismo panel de evidencias. Su estado visual y miniaturas permanecen
+montados entre aperturas repetidas dentro de la composición responsive actual; el operador puede
+alternar cuadrícula/lista y activar un difuminado moderado de previews. En
+multimirror el contexto sigue indicando la fuente enfocada, sin cambiar la
+atribución de capturas o grabaciones.
 
 Salida: N previews activos hasta `maxConcurrentMirrors`, con control dirigido a
 una fuente, acciones por objetivo y desconexión individual sin afectar las otras
