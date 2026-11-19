@@ -73,55 +73,12 @@ class _MirrorEvidencePaneState extends State<MirrorEvidencePane> {
           Expanded(
             child: widget.evidence.isEmpty
                 ? const _EmptyEvidenceState()
-                : _layoutMode == _EvidenceLayoutMode.list
-                ? ListView.separated(
-                    itemCount: widget.evidence.length,
-                    separatorBuilder: (_, _) =>
-                        const SizedBox(height: AppSpace.s),
-                    itemBuilder: (context, index) => _EvidenceCard(
-                      key: ValueKey('list-${widget.evidence[index].id}'),
-                      evidence: widget.evidence[index],
-                      layoutMode: _EvidenceLayoutMode.list,
-                      blurred: _blurPreviews,
-                      onRename: () =>
-                          _renameEvidence(context, widget.evidence[index]),
-                    ),
-                  )
-                : widget.compact
-                ? ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: widget.evidence.length,
-                    separatorBuilder: (_, _) =>
-                        const SizedBox(width: AppSpace.s),
-                    itemBuilder: (context, index) => SizedBox(
-                      width: 150,
-                      child: _EvidenceCard(
-                        key: ValueKey('grid-${widget.evidence[index].id}'),
-                        evidence: widget.evidence[index],
-                        layoutMode: _EvidenceLayoutMode.grid,
-                        blurred: _blurPreviews,
-                        onRename: () =>
-                            _renameEvidence(context, widget.evidence[index]),
-                      ),
-                    ),
-                  )
-                : GridView.builder(
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          crossAxisSpacing: AppSpace.s,
-                          mainAxisSpacing: AppSpace.s,
-                          childAspectRatio: 1.2,
-                        ),
-                    itemCount: widget.evidence.length,
-                    itemBuilder: (context, index) => _EvidenceCard(
-                      key: ValueKey('grid-${widget.evidence[index].id}'),
-                      evidence: widget.evidence[index],
-                      layoutMode: _EvidenceLayoutMode.grid,
-                      blurred: _blurPreviews,
-                      onRename: () =>
-                          _renameEvidence(context, widget.evidence[index]),
-                    ),
+                : _EvidenceCollection(
+                    evidence: widget.evidence,
+                    layoutMode: _layoutMode,
+                    compact: widget.compact,
+                    blurred: _blurPreviews,
+                    onRename: (item) => _renameEvidence(context, item),
                   ),
           ),
         ],
@@ -153,6 +110,57 @@ class _MirrorEvidencePaneState extends State<MirrorEvidencePane> {
     await showAppSuccessBottomSheet(
       context,
       'Nombre de evidencia actualizado.',
+    );
+  }
+}
+
+class _EvidenceCollection extends StatelessWidget {
+  const _EvidenceCollection({
+    required this.evidence,
+    required this.layoutMode,
+    required this.compact,
+    required this.blurred,
+    required this.onRename,
+  });
+
+  final List<RequisitionEvidence> evidence;
+  final _EvidenceLayoutMode layoutMode;
+  final bool compact;
+  final bool blurred;
+  final ValueChanged<RequisitionEvidence> onRename;
+
+  @override
+  Widget build(BuildContext context) {
+    final listMode = layoutMode == _EvidenceLayoutMode.list;
+    final horizontalGrid = compact && !listMode;
+    final indexById = <String, int>{
+      for (var index = 0; index < evidence.length; index++)
+        evidence[index].id: index,
+    };
+    return GridView.builder(
+      scrollDirection: horizontalGrid ? Axis.horizontal : Axis.vertical,
+      itemCount: evidence.length,
+      findChildIndexCallback: (key) {
+        if (key is ValueKey<String>) return indexById[key.value];
+        return null;
+      },
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: listMode || horizontalGrid ? 1 : 2,
+        crossAxisSpacing: AppSpace.s,
+        mainAxisSpacing: AppSpace.s,
+        mainAxisExtent: listMode ? 104 : (horizontalGrid ? 150 : null),
+        childAspectRatio: 1.2,
+      ),
+      itemBuilder: (context, index) {
+        final item = evidence[index];
+        return _EvidenceCard(
+          key: ValueKey(item.id),
+          evidence: item,
+          layoutMode: layoutMode,
+          blurred: blurred,
+          onRename: () => onRename(item),
+        );
+      },
     );
   }
 }
@@ -279,99 +287,102 @@ class _EvidenceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final path = evidence.localPath;
+    final listMode = layoutMode == _EvidenceLayoutMode.list;
     final visual = _EvidenceVisual(evidence: evidence, blurred: blurred);
-    if (layoutMode == _EvidenceLayoutMode.list) {
-      return Material(
-        color: Theme.of(context).colorScheme.primary.withValues(alpha: .08),
-        borderRadius: BorderRadius.circular(AppRadius.m),
-        clipBehavior: Clip.antiAlias,
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpace.s),
-          child: Row(
-            children: [
-              SizedBox.square(
-                dimension: 72,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(AppRadius.s),
-                  child: visual,
-                ),
-              ),
-              const SizedBox(width: AppSpace.s),
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      evidence.effectiveName,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.labelLarge,
-                    ),
-                    const SizedBox(height: AppSpace.xs),
-                    EvidenceSyncBadge(
-                      uploadStatus: evidence.uploadStatus,
-                      hasLocalCopy: path?.trim().isNotEmpty == true,
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                onPressed: onRename,
-                tooltip: 'Cambiar nombre',
-                icon: const Icon(Icons.edit_outlined),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    return ClipRRect(
+    return Material(
+      color: listMode
+          ? Theme.of(context).colorScheme.primary.withValues(alpha: .08)
+          : Theme.of(context).colorScheme.surface,
       borderRadius: BorderRadius.circular(AppRadius.m),
+      clipBehavior: Clip.antiAlias,
       child: Stack(
         fit: StackFit.expand,
         children: [
-          visual,
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(AppSpace.s),
-              color: Colors.black.withValues(alpha: .68),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+          Positioned(
+            left: listMode ? AppSpace.s : 0,
+            top: listMode ? AppSpace.s : 0,
+            right: listMode ? null : 0,
+            bottom: listMode ? AppSpace.s : 0,
+            width: listMode ? 72 : null,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(
+                listMode ? AppRadius.s : AppRadius.m,
+              ),
+              child: visual,
+            ),
+          ),
+          Positioned(
+            left: listMode ? 72 + (AppSpace.s * 2) : 0,
+            top: listMode ? AppSpace.s : null,
+            right: listMode ? AppSpace.s : 0,
+            bottom: listMode ? AppSpace.s : 0,
+            child: listMode
+                ? Row(
                     children: [
                       Expanded(
-                        child: Text(
-                          evidence.effectiveName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                          ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              evidence.effectiveName,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.labelLarge,
+                            ),
+                            const SizedBox(height: AppSpace.xs),
+                            EvidenceSyncBadge(
+                              uploadStatus: evidence.uploadStatus,
+                              hasLocalCopy: path?.trim().isNotEmpty == true,
+                            ),
+                          ],
                         ),
                       ),
                       IconButton(
                         onPressed: onRename,
                         tooltip: 'Cambiar nombre',
-                        visualDensity: VisualDensity.compact,
-                        color: Colors.white,
-                        icon: const Icon(Icons.edit_outlined, size: 16),
+                        icon: const Icon(Icons.edit_outlined),
                       ),
                     ],
+                  )
+                : Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(AppSpace.s),
+                    color: Colors.black.withValues(alpha: .68),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                evidence.effectiveName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: onRename,
+                              tooltip: 'Cambiar nombre',
+                              visualDensity: VisualDensity.compact,
+                              color: Colors.white,
+                              icon: const Icon(Icons.edit_outlined, size: 16),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: AppSpace.xs),
+                        EvidenceSyncBadge(
+                          uploadStatus: evidence.uploadStatus,
+                          hasLocalCopy: path?.trim().isNotEmpty == true,
+                        ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: AppSpace.xs),
-                  EvidenceSyncBadge(
-                    uploadStatus: evidence.uploadStatus,
-                    hasLocalCopy: path?.trim().isNotEmpty == true,
-                  ),
-                ],
-              ),
-            ),
           ),
         ],
       ),

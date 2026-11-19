@@ -3,6 +3,8 @@
 Fecha inicial: 27 de agosto de 2026
 Actualización de estrategia iPhone: 10 de septiembre de 2026
 
+Actualización de fuentes mixtas: 19 de noviembre de 2026
+
 Este documento distingue el **dispositivo inspector** —donde corre File Cast— del **dispositivo objetivo** —del que se adquiere información—. “Compatible con equipos nuevos y antiguos” significa mantener una matriz explícita y validada, no garantizar cualquier combinación de teléfono, cable y sistema operativo.
 
 ## Resumen de modos
@@ -11,6 +13,7 @@ Este documento distingue el **dispositivo inspector** —donde corre File Cast�
 |---|---|---|---|---|---|---|
 | A. Android directo | Android teléfono/tablet | Android 5.0+ | USB OTG/host + ADB | Sí | Sí, sujeto a fabricante | Shared storage accesible/selección |
 | A2. Android multimirror | Android inspector + hub USB de datos | N Android 5.0+ | USB-C host -> hub -> N USB-A/ADB | Dinámico; ORICO inicial 1/2/3 y matriz ampliada 4–6 | Uno enfocado a la vez | Transferencia singular por fuente |
+| A3. Multifuente mixta | Android inspector + hub USB de datos | Android ADB y/o Android/iPhone por HDMI | N USB-A con ADB/scrcpy o UVC | Dinámico; baseline ORICO 2 ADB + 1 UVC | Solo fuentes ADB enfocadas | No por UVC; ADB separado |
 | B. Capturadora HDMI/UVC | Android USB Host o iPad Air 4/iPadOS 27 | iPhone o Android con salida HDMI | Salida de video -> HDMI -> UVC | Sí, solo imagen/audio | No | No por el mismo enlace |
 | C. Archivos iPhone experimental | Android USB Host | iPhone/iPad desbloqueado y confiado | USB OTG + usbmux/lockdownd/AFC | No | No | Solo ubicaciones publicadas por iOS |
 | D. Backup lógico iPhone futuro | Android USB Host | iPhone/iPad desbloqueado y confiado | USB + MobileBackup2 | No | No | Backup lógico, no filesystem físico |
@@ -75,8 +78,10 @@ según
 
 La implementación no fija tres como máximo de software. Un hub alimentado con
 seis USB-A puede ofrecer seis candidatos ADB; File Cast calcula
-`maxConcurrentMirrors` según enumeración y recursos del inspector. El ORICO de
-tres puertos es la primera matriz, y 4/5/6 requieren una segunda homologación.
+`maxConcurrentSources` según enumeración y recursos del inspector. Esas fuentes
+pueden ser ADB/scrcpy o capturadoras UVC; el ORICO de tres puertos debe validar
+además dos ADB + una UGREEN. La matriz 4/5/6 requiere un hub alimentado y una
+segunda homologación.
 
 Usar el ORICO como OTG para **un solo** Android objetivo sí es parte de la
 matriz obligatoria de Mirror. Debe compararse con conexión directa: enumeración

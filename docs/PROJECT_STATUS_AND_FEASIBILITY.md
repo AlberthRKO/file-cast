@@ -7,6 +7,7 @@ Actualización de adquisición Android: 4 de septiembre de 2026
 Actualización de transferencia Android: 8 de septiembre de 2026
 Actualización de previews de video y ciclo de vida del mirror: 6 de octubre de 2026
 Actualización de galería de evidencias del mirror: 18 de noviembre de 2026
+Actualización de retención de previews y plan UVC unificado: 19 de noviembre de 2026
 Plan de adquisición USB iPhone: 10 de septiembre de 2026
 Actualización de cifrado local, outbox FCE y recuperación entre dispositivos: 6 de octubre de 2026
 Alcance revisado: Flutter/Dart, Android nativo Kotlin, configuración iOS, documentación, historial Git reciente, mockups adjuntos y validadores locales.
@@ -36,12 +37,13 @@ La recomendación es construir primero un MVP Android de extremo a extremo y man
 | Listado de requisas | Feature MVVM adaptativa con lista/grid/tabla, filtros y carga progresiva | Conectado a `GET /api/v1/requisitions`; cache offline y resolución de conflictos pendientes |
 | Crear requisa | Ruta `/requisitions/new` con modo CUD/persona, busquedas, fecha/hora, ubicacion visual y navegacion a conexion | Parcial; registro simulado, mapa/GPS nativo y persistencia offline reales pendientes |
 | Detalle de requisa | Cabecera fija adaptativa caso/persona, sujetos, participantes, ubicación, vínculo CUD, sesiones, evidencias y acciones | Implementado contra `GET /api/v1/requisitions/:id`; búsqueda/vínculo mediante `POST /api/v1/requisitions/:id/case-links`, creación de sesiones y sellado conectados; cabecera colapsable, estados de sincronización, miniaturas locales de imágenes/videos y preview local/remoto disponibles |
-| Archivos/evidencias por requisa | Resumen por categoría/peso, selector múltiple de imágenes, videos, audios y documentos, cifrado local, outbox, sincronización y preview | Implementado como vertical local: selección múltiple con preview antes de confirmar, sesión creada al aceptar, importación cifrada, carga en segundo plano con progreso por lote, reintento visible, miniaturas y preview de imágenes, videos, audio, PDF y texto/DOCX; el detalle resume seis elementos por categoría y **Ver todo** conserva el inventario completo; el panel compartido de mirror individual/múltiple lista todas las evidencias, conserva los previews al abrir/cerrar y al reciclar viewport, alterna cuadrícula/lista y difumina con una capa visual sin regenerarlos; las miniaturas MP4 locales usan caché y extractores nativos con respaldo, mientras las evidencias solo remotas se identifican como **En servidor**; las evidencias cifradas comparten DEK por dispositivo autorizado y descargan el FCE mediante el puente autenticado de `file-cast-back`, sin exponer URL firmada ni `x-session-token` al móvil; pendiente validación probatoria end-to-end |
+| Archivos/evidencias por requisa | Resumen por categoría/peso, selector múltiple de imágenes, videos, audios y documentos, cifrado local, outbox, sincronización y preview | Implementado como vertical local: selección múltiple con preview antes de confirmar, sesión creada al aceptar, importación cifrada, carga en segundo plano con progreso por lote, reintento visible, miniaturas y preview de imágenes, videos, audio, PDF y texto/DOCX; el detalle resume seis elementos por categoría y **Ver todo** conserva el inventario completo; el panel compartido de mirror individual/múltiple lista todas las evidencias, conserva los previews al abrir/cerrar y al reciclar viewport, alterna cuadrícula/lista sobre un único builder y, al insertar una evidencia, reubica las existentes por ID para preparar solo la nueva; el difuminado es una capa visual; las miniaturas MP4 locales usan caché y extractores nativos con respaldo, mientras las evidencias solo remotas se identifican como **En servidor**; las evidencias cifradas comparten DEK por dispositivo autorizado y descargan el FCE mediante el puente autenticado de `file-cast-back`, sin exponer URL firmada ni `x-session-token` al móvil; pendiente validación probatoria end-to-end |
 | Offline y sincronización | SQLite SQLCipher, outbox de evidencias FCE y reintento al recuperar conectividad | La subida conserva el FCE en `evidencias_locales` y usa outbox hasta recibir `msFileId`; el detalle también permite sincronizar evidencias `AVAILABLE` al almacenamiento privado de cada participante, validarlas y dejarlas como `SINCRONIZADA` sin reinsertarlas en outbox; pendiente validación probatoria end-to-end |
 | USB host Android | Detección, permisos, attach/detach | Implementado como prototipo |
 | ADB por USB | Handshake RSA compatible con `RSA_sign(NID_sha1)`, identidad persistente, streams multiplexados, shell y push | Implementado como prototipo; requiere revalidar reutilización de clave en la matriz Samsung |
 | Espejo Android | scrcpy server 2.7, H.264, `MediaCodec` y `Texture` | Demostrado en código |
-| Mirror Android N mediante hub | Registro dinámico `sourceSessionId`, transporte/decoder/textura por objetivo, selección multi, grilla y diagnóstico USB/MTP/ADB | Primera vertical de código implementada; falta validación física ORICO 1/2/3 y matriz 4–6; el ensayo USB-C más reciente enumeró MTP/galería, pero no ADB |
+| Mirror Android N mediante hub | Registro dinámico `sourceSessionId`, transporte/decoder/textura por objetivo, selección multi, grilla y diagnóstico USB/MTP/ADB | Funcional con dos fuentes en pruebas del propietario; faltan soak/homologación ORICO de tres y matriz 4–6 |
+| Capturadora HDMI/UVC | Plan Android + iPad Air 4, UGREEN confirmada, captura/grabación y topología ORICO mixta | No implementada; se integrará como adapter del selector/workspace single/multi existente. Gate principal: 2 ADB + 1 UVC con badges y capacidades por fuente, sin pantallas duplicadas |
 | Control Android | Touch, arrastre, mouse/trackpad y teclas por canal scrcpy 2.7 | Implementado y validado en hardware por el propietario; algunos fabricantes requieren un ajuste de seguridad adicional |
 | Foto de la pantalla | `exec:screencap -p`, PNG privado, validación de firma y SHA-256 | Implementado como vertical local |
 | Grabación | Inicio confirmado en keyframe posterior al toque, muestras H.264 nativas, `MediaMuxer`, contador alineado, MP4 privado y SHA-256 | Implementado en código; requiere revalidación física del MP4 generado |
@@ -117,6 +119,10 @@ La estructura Flutter activa ya usa `lib/ui`, MVVM en las pantallas de producto,
     textura, decoder, recorder y cleanup por fuente. Falta validar 1/2/3 mediante
     el ORICO y ampliar a 4/5/6 con otro hub, sin reescribir el protocolo
     ADB/scrcpy ni hardcodear la cantidad de fuentes.
+12. **Capturadora UVC pendiente.** El plan ya no propone rutas o workspaces
+    duplicados. Debe generalizar el contrato multi a fuentes/capacidades,
+    conservar registros nativos ADB y UVC aislados y homologar primero UGREEN
+    directa, luego 1 ADB + 1 UVC y finalmente 2 ADB + 1 UVC por ORICO.
 
 ### P1 — riesgos de producto y datos
 

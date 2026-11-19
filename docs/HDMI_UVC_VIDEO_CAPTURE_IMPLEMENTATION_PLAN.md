@@ -2,15 +2,19 @@
 
 Fecha de análisis: 16 de noviembre de 2026
 
+Última revisión de integración: 19 de noviembre de 2026
+
 Estado: **plan técnico; funcionalidad no implementada**
 
-Revisión de alcance: iPad Air 4 con iPadOS 27 incorporado como inspector UVC y
-capturadora UGREEN concreta identificada. Se documenta además el uso posterior
-de un hub ORICO USB-C, sin confundir enumeración de varios USB con soporte de
-varios mirrors simultáneos.
+Revisión de alcance: iPad Air 4 con iPadOS 27 incorporado como inspector UVC,
+capturadora UGREEN concreta identificada e integración obligatoria con el
+selector y workspace single/multisesión existentes. El hub ORICO USB-C debe
+admitir una colección mixta de fuentes ADB/scrcpy y HDMI/UVC sin duplicar Views.
 
-Prioridad recomendada: PoC directa con la misma capturadora UGREEN en inspector
-Android y en iPad Air 4, sin modificar el flujo estable ADB/scrcpy.
+Prioridad recomendada: cerrar la validación física leve de multisesión ADB y
+comenzar una PoC directa con la capturadora UGREEN en inspector Android. La
+integración se hará mediante un adaptador UVC aislado, conservando el protocolo
+ADB/scrcpy estable y reutilizando su flujo de selección y visualización.
 
 Este documento define la ampliación de File Cast para recibir una salida HDMI
 de un teléfono objetivo mediante una capturadora USB Video Class (UVC), mostrarla
@@ -61,6 +65,45 @@ independientes por fuente; falta la homologación física 1/2/3. La arquitectura
 es dinámica N: tres es la primera homologación por el ORICO, no el máximo de
 software; un hub de seis puertos agrega una matriz 4/5/6.
 
+## Decisión de producto vigente: fuentes de video unificadas
+
+Las cuatro acciones del launcher se conservan porque expresan intenciones
+distintas: **Mirror**, **Transferencia**, **Capturadora** e **Importar**. Sin
+embargo, Mirror y Capturadora no crearán dos familias duplicadas de pantallas.
+Ambas entradas abren el selector y el workspace de video ya existentes con una
+preferencia inicial distinta:
+
+- **Mirror** prioriza fuentes `androidAdbScrcpy`;
+- **Capturadora** prioriza fuentes `hdmiUvc`;
+- ninguna preferencia oculta la otra fuente válida conectada;
+- la variante individual selecciona una fuente;
+- la variante múltiple selecciona de una a N fuentes de cualquier transporte.
+
+La unidad operativa deja de ser “mirror Android” y pasa a ser una
+`LiveVideoSource` con transporte y capacidades. ADB/scrcpy publica preview,
+control, captura y grabación. HDMI/UVC publica preview, captura y grabación,
+pero no control ni identidad verificable del teléfono objetivo.
+
+Escenario obligatorio del ORICO:
+
+```text
+Android inspector (USB Host)
+  -> ORICO USB-C
+     |-> USB-A #1 -> Android A por ADB/scrcpy
+     |-> USB-A #2 -> Android B por ADB/scrcpy
+     `-> USB-A #3 -> UGREEN HDMI/UVC -> objetivo Android o iPhone
+
+Selector de File Cast
+  -> 3 fuentes seleccionables
+  -> 2 badges "Mirror + control · ADB/scrcpy"
+  -> 1 badge "Capturadora · HDMI/UVC · sin control"
+  -> un workspace simultáneo con las 3 fuentes
+```
+
+No se crearán `CaptureCardMultiView`, un workspace UVC paralelo ni una ruta
+separada para cada combinación. La UI común decide acciones por capacidades y
+cada adaptador conserva internamente su protocolo, lifecycle y diagnóstico.
+
 ## Garantía de no regresión de Mirror y Transferencia
 
 La feature Capturadora no reemplaza ni reescribe los verticales que ya
@@ -68,10 +111,10 @@ funcionan. El orden de implementación debe protegerlos con estas reglas:
 
 1. conservar `UsbAdbTransport`, `ScrcpyDecoder`, `ScrcpyControl`,
    `ScrcpyRecorder` y `AdbSyncClient` durante la PoC UVC;
-2. crear plugin, servicio, repositorio y rutas UVC separados antes de extraer
-   cualquier contrato común;
-3. mantener las rutas actuales de Mirror y Transferencia, incluidos
-   `requisitionId` y `sessionId`;
+2. crear plugin y servicio UVC separados, pero integrarlos mediante el contrato
+   común del repositorio y las Views actuales;
+3. mantener las rutas actuales de Mirror, multimirror y Transferencia,
+   incluidos `requisitionId` y `sessionId`;
 4. no cambiar comandos, handshake, sockets, formato H.264, coordenadas de
    control ni semántica ADB como efecto lateral de Capturadora;
 5. registrar receivers y handles por transporte y `deviceId`, de modo que
@@ -98,8 +141,8 @@ El detalle de la requisa debe presentar cuatro acciones distintas y estables:
 
 Las cuatro tarjetas pueden permanecer visibles en Android y iPad. La UI las
 habilita por capacidades observadas y muestra una explicación en las no
-disponibles; no debe ocultar el alcance ni hacer que Capturadora parezca una
-variante de Mirror.
+disponibles. Mirror y Capturadora conservan etiquetas y badges distintos, pero
+reutilizan el mismo selector y workspace de fuentes de video.
 
 Dentro de **Capturadora** existirán las mismas intenciones de evidencia que el
 workspace actual:
@@ -274,28 +317,30 @@ de alcance porque la capturadora confirmada lo declara incompatible.
 7. iOS solo registra plugins generados; no existe servicio Swift de adquisición.
 8. Las capacidades de sesión se construyen hoy a partir de
    `sourcePlatform == ANDROID`, no desde capacidades observadas del adaptador.
-9. `UsbManager.deviceList` puede enumerar varios periféricos detrás de un hub,
-   pero `UsbPlugin` conserva un solo `adbTransport`, un solo
-   `currentConnection`, un solo `ScrcpyDecoder` y una sola textura. Conectar un
-   segundo objetivo mediante `connectAdb` ejecuta `disconnectAdb()` sobre el
-   primero.
-10. El receiver actual llama `disconnectAdb()` ante el detach de cualquier USB,
-    aunque el periférico retirado sea un mouse, teclado, capturadora u otro
-    teléfono del hub.
-11. `getConnectedDevices()` devuelve todos los USB enumerados, sin clasificar
-    primero la interfaz ADB. Con un hub puede mostrar el propio hub, mouse,
-    teclado y otros periféricos como candidatos hasta que se agregue un probe
-    de capacidades.
+9. El flujo singular conserva estado ADB propio por compatibilidad, mientras la
+   API `multi*` ya mantiene un registro nativo y Dart indexado por
+   `sourceSessionId`. Cada fuente ADB tiene transporte, decoder, textura,
+   control y recorder independientes.
+10. La enumeración ya publica clasificación diagnóstica e interfaz ADB exacta;
+    la selección de Mirror habilita solamente candidatos ADB. Falta extender el
+    mismo inventario con formatos y capacidades UVC seleccionables.
+11. La UI y los argumentos de ruta multi todavía modelan todas las fuentes como
+    controlables: `controlStreamId` y las acciones ADB no son opcionales. Esa es
+    la principal frontera que debe generalizarse antes de mezclar UVC.
+12. El límite operativo sigue expresado como `maxConcurrentMirrors`; para la
+    colección mixta debe convertirse en `maxConcurrentSources` y considerar
+    ancho de banda, energía, decoders/encoders, memoria y temperatura por
+    transporte.
 
 ### Dictamen para el hub ORICO y tres mirrors
 
 | Escenario | Hardware | Código actual | Alcance de este plan |
 |---|---|---|---|
 | Un Android objetivo por un USB-A del ORICO | Viable si el inspector conserva rol host y el cable lleva datos | Debe poder funcionar después de autorizar USB/ADB | Matriz de regresión obligatoria |
-| Tres Android enumerados por el ORICO | Posible; Android expone una lista de USB conectados | Puede listarlos, pero no los clasifica de forma segura | Se agrega probe por interfaz/dispositivo |
-| Tres mirrors simultáneos | Condicionado por energía, ancho de banda y decoders | **No soportado hoy:** existe una sola sesión global | Alcance obligatorio del plan multisesión 1 -> 2 -> 3 |
+| Tres Android enumerados por el ORICO | Posible; Android expone una lista de USB conectados | Inventario y clasificación ADB implementados | Validación física pendiente |
+| Tres mirrors simultáneos | Condicionado por energía, ancho de banda y decoders | Registro multi y workspace implementados | Homologación progresiva 1 -> 2 -> 3 pendiente |
 | Una UGREEN UVC por el ORICO | Posible por un USB-A de datos usando el adaptador de la capturadora | Aún no existe adaptador UVC | Validar después de UVC directo |
-| UVC + un Android ADB conectados al ORICO | Posible de enumerar; falta homologación | El detach global y los singletons pueden romper ADB | No habilitar simultáneo hasta aislar sesiones |
+| Dos ADB + una UGREEN UVC | Posible de enumerar; falta homologación | Multisesión ADB existe; UVC aún no | Escenario mixto obligatorio tras aislar el lifecycle UVC |
 
 Que el objetivo cargue confirma VBUS, no confirma que Android haya enumerado
 una interfaz ADB. Mouse y teclado funcionando demuestran que el inspector está
@@ -381,15 +426,18 @@ de AVFoundation, Camera2, libusb/libuvc, MediaCodec o MediaMuxer.
 Se conserva la dirección obligatoria:
 
 ```text
-LiveCaptureView
-  -> LiveCaptureViewModel
+UsbDeviceListView / AcquisitionConnectViewModel
+  -> LiveVideoRepository
+    -> inventario agregado de VideoInputAdapter
+       -> ScrcpyVideoInputPlatformService
+       -> AndroidUvcVideoInputPlatformService
+       -> IpadUvcVideoInputPlatformService
+
+MirrorView o MultiMirrorView
+  -> ViewModel común orientado a capacidades
     -> CaptureLiveFrame / StartLiveRecording / StopLiveRecording
       -> LiveVideoRepository
-        -> LiveVideoRepositoryImpl
-          -> VideoInputAdapter seleccionado por capacidades
-            -> ScrcpyVideoInputPlatformService
-            -> AndroidUvcVideoInputPlatformService
-            -> IpadUvcVideoInputPlatformService
+        -> adaptador propietario de cada sourceSessionId
 ```
 
 La transferencia de archivos permanece separada:
@@ -400,7 +448,9 @@ FileTransferView -> FileTransferViewModel -> RemoteFileRepository
 ```
 
 Esto evita que UVC herede operaciones de ADB y que la UI contenga condiciones
-por sistema operativo.
+por sistema operativo. Las Views actuales se conservan; los controles se
+presentan por capacidades de la fuente, no por `if (Android)` ni por el nombre
+del dispositivo.
 
 ### Contratos de dominio propuestos
 
@@ -417,6 +467,8 @@ VideoInputCapabilities
   canControl
   canCaptureFrame
   canRecordVideo
+  canReload
+  canTransfer
   canCaptureAudio
   canReportTargetIdentity
   requiresUsbHost
@@ -446,6 +498,8 @@ LiveVideoSession
   pixelFormat
   audioFormat?
   capabilities
+  controlStreamId?
+  inputHandle
 ```
 
 `canReportTargetIdentity` será `false` para HDMI/UVC. La capturadora se
@@ -467,7 +521,10 @@ abstract interface class VideoInputAdapter
   events
 ```
 
-El adaptador devuelve rutas y metadata; nunca buffers completos de video.
+El adaptador devuelve rutas y metadata; nunca buffers completos de video. El
+repositorio agregado mantiene `Map<sourceSessionId, LiveVideoSession>` y enruta
+captura, grabación, reload y cierre al adaptador propietario. La ausencia de
+`controlStreamId` es válida para UVC.
 
 ### Estructura prevista
 
@@ -493,7 +550,7 @@ lib/ui/features/acquisition/
 │   ├── view_models/
 │   ├── views/
 │   └── widgets/
-└── live_capture/
+└── mirror/
     ├── view_models/
     ├── views/
     └── widgets/
@@ -518,8 +575,9 @@ ios/Runner/Acquisition/Video/
 ```
 
 No se moverá el protocolo ADB/scrcpy estable durante la PoC. Primero se crea un
-adaptador UVC aislado; la extracción del contrato común ocurre después de
-demostrar video estable.
+adaptador UVC aislado; después se registra en el repositorio agregado y se
+habilita en las Views actuales mediante capacidades. Reutilizar la UI no
+significa mezclar las implementaciones nativas.
 
 ## Implementación en inspector Android
 
@@ -696,38 +754,42 @@ por esta feature.
 
 ### Rutas
 
-Conservar IDs de negocio en path:
+Conservar IDs de negocio en path y extender las rutas existentes en vez de
+crear un árbol paralelo de Capturadora:
 
 ```text
-# Mirror Android existente
+# Una fuente de video
 /requisitions/:requisitionId/acquisitions/:sessionId/connect
 /requisitions/:requisitionId/acquisitions/:sessionId/mirror
+
+# Una o N fuentes de video, incluso mezcla ADB/UVC
+/requisitions/:requisitionId/acquisitions/:sessionId/mirrors/connect
+/requisitions/:requisitionId/acquisitions/:sessionId/mirrors/live
 
 # Transferencia existente
 /requisitions/:requisitionId/acquisitions/:sessionId/connect?destination=transfer
 /requisitions/:requisitionId/acquisitions/:sessionId/transfer
-
-# Capturadora nueva y explícita
-/requisitions/:requisitionId/acquisitions/:sessionId/capture-card/connect
-/requisitions/:requisitionId/acquisitions/:sessionId/capture-card/live
 ```
 
-Capturadora usa rutas propias para conservar las cuatro acciones del producto y
-no reinterpretar Mirror como un selector de transportes. El handle de textura o
-native view es efímero y viaja en argumentos tipados; si falta, la ruta muestra
-fallback y permite reconectar. El ViewModel no recibe `BuildContext` ni navega.
+El launcher puede enviar un query restaurable
+`preferredTransport=androidAdbScrcpy|hdmiUvc|all`. Es una preferencia de orden y
+explicación, nunca un filtro que haga desaparecer otra fuente de video válida.
+El handle de textura/native view es efímero y viaja en argumentos tipados junto
+con `sourceSessionId`, transporte y capacidades. Si falta, la ruta muestra el
+selector y permite reconectar. El ViewModel no recibe `BuildContext` ni navega.
 
-Las rutas actuales de Mirror y Transferencia se conservan. Importar archivos
-continúa como selector/preview desde el detalle y no necesita una ruta de sesión
-de hardware antes de confirmar.
+Las rutas singulares permanecen como compatibilidad y fallback. La ruta plural
+es la canónica para la colección 1..N y debe aceptar fuentes mixtas. Importar
+archivos continúa como selector/preview desde el detalle y no necesita una ruta
+de sesión de hardware antes de confirmar.
 
 ### Launcher de cuatro opciones
 
 - Android: las cuatro tarjetas activas según dispositivo/permisos.
 - iPad: Capturadora e Importar activas; Mirror y Transferencia visibles con
   explicación de plataforma no disponible.
-- La selección de Capturadora crea/reutiliza una sesión `HDMI_UVC` y navega a su
-  conexión específica.
+- La selección de Capturadora crea/reutiliza una sesión `HDMI_UVC` y abre el
+  mismo selector con UVC priorizado.
 - La disponibilidad se obtiene del ViewModel y repositorios, no de condiciones
   profundas en widgets.
 
@@ -745,6 +807,23 @@ de hardware antes de confirmar.
 
 No se mostrarán controles deshabilitados que sugieran que HDMI puede controlar
 el objetivo.
+
+### Selector único y badges
+
+Cada card de fuente debe mostrar:
+
+- nombre del dispositivo USB y dirección bus/device;
+- transporte (`ADB/scrcpy` o `HDMI/UVC`);
+- badge de capacidad: **Mirror + control** o **Capturadora · sin control**;
+- estado de permiso, señal/autorización y formato negociado;
+- fabricante/modelo del objetivo solo cuando el transporte pueda reportarlo;
+- para UVC, identidad declarada por el operador separada de la identidad de la
+  capturadora.
+
+Una fuente UVC es seleccionable aunque `canControl == false`. El contador debe
+decir “fuentes de video seleccionadas”, no “objetivos ADB”. En el workspace, la
+selección/foco sigue funcionando para captura y grabación; Back/Home/touch se
+ocultan únicamente en la celda UVC.
 
 ### Responsive
 
@@ -784,10 +863,13 @@ solo objetivo ADB y demo que detecta la capturadora sin abrir video.
 
 - definir las cuatro acciones `mirror`, `fileTransfer`, `captureCard` e
   `importFiles` con capacidades independientes;
-- crear modelos Freezed de transporte, dispositivo, formato, capacidades y
-  sesión;
+- crear modelos Freezed `LiveVideoSource`, `LiveVideoSession`, transporte,
+  formato y capacidades;
 - separar video en vivo de transferencia remota;
-- adaptar scrcpy detrás de `VideoInputAdapter` sin reescribir protocolo;
+- adaptar scrcpy detrás de `VideoInputAdapter` sin reescribir protocolo y hacer
+  opcionales `controlStreamId`/acciones de control;
+- extender argumentos de ruta multi con transporte y capacidades;
+- renombrar la admisión conceptual a `maxConcurrentSources`;
 - reemplazar capacidades derivadas de `ANDROID` por capacidades observadas;
 - registrar dependencias con `provider`;
 - definir errores tipados.
@@ -835,17 +917,25 @@ HDMI/UVC explícito.
 **Salida:** Capturadora muestra, captura y graba la misma señal en iPad Air 4,
 ligada a requisa/sesión.
 
-### Fase 5 — launcher, workspace y navegación
+### Fase 5 — integración en selector, workspace y navegación existentes
 
 - launcher con las cuatro opciones y disponibilidad explicada;
-- rutas `capture-card/connect` y `capture-card/live` separadas de Mirror;
-- workspace común de Capturadora para Android/iPad;
-- ocultar control y transferencia en UVC;
+- Mirror abre el selector común con ADB priorizado y Capturadora con UVC
+  priorizado;
+- reutilizar `connect`, `mirror` y `mirrors/live`; no crear rutas ni Views
+  `capture-card/*` ni una variante “capturadora múltiple”;
+- permitir seleccionar una mezcla 0..N de fuentes ADB/UVC hasta el límite de
+  admisión;
+- mostrar badges por transporte/capacidad y ocultar control/transferencia solo
+  en fuentes UVC;
+- hacer que captura, grabación, reload, detach y error se enruten por
+  `sourceSessionId` al adaptador correcto;
 - estados `loading`, `noSignal`, `content`, `detached`, `unsupported`, `error`;
 - fallback restaurable y responsive.
 
 **Salida:** operador distingue Mirror, Transferencia, Capturadora e Importar sin
-confundir sus transportes o alcances.
+confundir sus transportes o alcances y puede operar ADB/UVC juntos en el mismo
+workspace.
 
 ### Fase 6 — audio opcional
 
@@ -872,14 +962,13 @@ confundir sus transportes o alcances.
 
 **Salida:** piloto limitado a combinaciones exactas aprobadas.
 
-### Fase 8 obligatoria de producto — hub USB y N entradas
+### Fase 8 obligatoria de producto — hub USB y N fuentes mixtas
 
 Esta fase no bloquea el primer piloto de Capturadora, pero sí forma parte del
 alcance final de File Cast. Su ejecución detallada está en
 [ANDROID_MULTI_MIRROR_USB_HUB_IMPLEMENTATION_PLAN.md](ANDROID_MULTI_MIRROR_USB_HUB_IMPLEMENTATION_PLAN.md)
-y progresa obligatoriamente de un mirror a dos y finalmente a tres.
-Después elimina el límite fijo y valida 4/5/6 con un hub alimentado de seis
-puertos.
+y progresa obligatoriamente de una fuente a dos y finalmente a tres. Después
+elimina el límite fijo y valida 4/5/6 con un hub alimentado de seis puertos.
 
 - registrar modelo impreso, ASIN `B0BYS4D3KR`, chipset si está disponible,
   puertos de datos, PD, firmware y topología real del ORICO;
@@ -887,24 +976,43 @@ puertos.
   sola capturadora UVC a través del hub;
 - clasificar dispositivos por interfaces ADB, UVC/UAC, HID, almacenamiento y
   hub; no ofrecer HID o el propio hub como objetivo;
-- reemplazar los singletons nativos por un registro de sesiones indexado por
-  `deviceId`/handle, cada una con conexión, transporte, streams, decoder,
-  recorder, textura, requisa y sesión propios;
+- conservar el registro multisesión ADB ya implementado y añadir un registro
+  UVC indexado por `deviceId`/handle; el repositorio Dart los agrega por
+  `sourceSessionId`, con decoder/recorder/textura/requisa/sesión propios;
 - hacer que attach/detach, permisos, errores y cleanup afecten solo al handle
   correspondiente;
 - limitar concurrencia según decoders H.264 disponibles, memoria, temperatura,
   ancho de banda USB y energía observada;
-- definir si el producto permite varias fuentes dentro de una misma sesión de
-  adquisición o exige una sesión por objetivo;
-- crear un workspace multivista separado; no convertir silenciosamente el
-  Mirror actual en una cuadrícula;
-- validar escalonadamente 1, 2 y 3 mirrors durante 60 minutos, con control,
-  captura, grabación, detach individual y reconexión.
+- conservar una sesión de adquisición con fuentes hijas identificadas por
+  `sourceSessionId`, sin perder atribución probatoria por fuente;
+- reutilizar el workspace multivista existente y volverlo orientado a
+  capacidades; no crear otro workspace UVC;
+- validar escalonadamente 1 ADB, 2 ADB, 1 UVC, 1 ADB + 1 UVC y el caso
+  obligatorio 2 ADB + 1 UVC durante 60 minutos;
+- validar control solamente en ADB y captura/grabación, detach individual,
+  reconexión y recuperación de señal en todas las fuentes.
 
-**Salida:** multisesión dinámica hasta `maxConcurrentMirrors`, con ORICO
-homologado para tres y una matriz ampliada homologada para seis. Si un inspector
-no sostiene la cantidad requerida, se reduce perfil o se sustituye por uno
-homologable. El hub por sí solo no aporta esa capacidad al software.
+**Salida:** multisesión dinámica hasta `maxConcurrentSources`, con ORICO
+homologado para tres fuentes mixtas y una matriz ampliada homologada para seis.
+Si un inspector no sostiene la cantidad requerida, se reduce perfil o se
+sustituye por uno homologable. El hub por sí solo no aporta esa capacidad al
+software.
+
+### Matriz funcional del selector y workspace unificados
+
+| Conexión al inspector | Lista esperada | Selección | Workspace | Control |
+|---|---|---|---|---|
+| 1 Android ADB directo/OTG | 1 `ADB/scrcpy` | Single o plural | 1 preview | Sí |
+| 1 UGREEN directa | 1 `HDMI/UVC` | Single o plural | 1 preview | No |
+| 1 Android ADB + 1 UGREEN en hub | 2 fuentes con badges distintos | Ambas | 2 previews | Solo ADB |
+| 2 Android ADB + 1 UGREEN en ORICO | 3 fuentes | Las tres | 3 previews simultáneos | En ADB enfocada |
+| 3 Android ADB | 3 `ADB/scrcpy` | 1..3 | Actual multimirror | En ADB enfocada |
+| Hub de 6 con mezcla ADB/UVC | N fuentes hasta admisión | 1..`maxConcurrentSources` | Grid adaptativo | Solo fuentes capaces |
+
+Para cada fila se debe comprobar que capturar o grabar afecta exclusivamente a
+la fuente enfocada, que el badge de confirmación incluye su etiqueta, que
+retirar una fuente no detiene las demás y que la evidencia conserva transporte,
+`sourceSessionId`, dispositivo de entrada y objetivo declarado.
 
 ## Errores mínimos
 
@@ -1008,7 +1116,7 @@ o un SDK de accesorio aprobado. Mientras no exista, permanece fuera de alcance.
 | Audio usa reloj distinto | Desincronización A/V | Fase separada con timestamp/drift explícitos |
 | Detach global rompe ADB | Sesión incorrecta cerrada | Sesiones por handle/deviceId y receivers separados |
 | Hub enumera HID y hub junto a teléfonos | El operador selecciona un periférico sin ADB | Probe de interfaces y filtro por capacidades antes de mostrar candidatos |
-| N mirrors comparten recursos | Saturación USB, falta de decoders, calor o cierres | `maxConcurrentMirrors`, calidad adaptativa y homologación progresiva 1..N |
+| N fuentes comparten recursos | Saturación USB, falta de decoders/encoders, calor o cierres | `maxConcurrentSources`, presupuesto por transporte y homologación progresiva 1..N |
 
 ## Criterio de finalización
 
@@ -1021,13 +1129,17 @@ La captura HDMI/UVC estará lista para piloto cuando:
 - preview, captura y grabación sobrevivan a la prueba de duración y lifecycle;
 - cada archivo se valide, hashee, cifre y registre contra requisa/sesión;
 - la UI no ofrezca control ni transferencia donde UVC no los provee;
+- el selector único liste a la vez fuentes ADB y UVC con badges inequívocos;
+- 2 fuentes ADB y 1 UVC puedan convivir en el workspace ORICO sin cerrar o
+  confundir sesiones;
 - la metadata describa la cadena completa y el método `HDMI_UVC`;
 - los límites de HDCP, salida de video y procedencia estén visibles;
 - licencias, SBOM y procedimiento operativo estén aprobados;
 - el piloto se limite a combinaciones exactas validadas.
 
-Además, el launcher debe conservar las cuatro opciones como contratos separados:
-Mirror, Transferencia, Capturadora e Importar archivos.
+Además, el launcher debe conservar las cuatro opciones como intenciones
+separadas: Mirror, Transferencia, Capturadora e Importar archivos. Mirror y
+Capturadora convergen después en el selector/workspace común de video.
 
 El soporte de iPhone como inspector **no forma parte de este criterio** mientras
 Apple no exponga UVC genérico en iPhone o no exista un accesorio/SDK específico

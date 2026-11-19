@@ -2,7 +2,11 @@
 
 Fecha: 16 de noviembre de 2026
 
-Estado: **primera vertical de código implementada; pendiente validación física**
+Última revisión: 19 de noviembre de 2026
+
+Estado: **vertical ADB multisesión funcional con dos fuentes según pruebas del
+propietario; pendiente soak/homologación de tres a N y extensión HDMI/UVC
+mixta**
 
 Hardware inicial: hub/docking ORICO enlazado por el propietario, ASIN
 `B0BYS4D3KR`, conectado por USB-C al Android inspector y con tres puertos USB-A
@@ -19,6 +23,10 @@ La arquitectura no tendrá un máximo fijo de tres. El ORICO define la primera
 matriz 1/2/3 porque posee tres USB-A; un hub alimentado de seis puertos debe
 poder solicitar 4/5/6 mirrors sin reescribir el plugin, sujeto a la capacidad
 real del inspector y a una homologación separada.
+
+La siguiente ampliación no crea otra multisesión: el mismo selector y workspace
+deben aceptar fuentes `androidAdbScrcpy` y `hdmiUvc`. El escenario de aceptación
+principal será dos Android ADB y una capturadora UGREEN conectados al ORICO.
 
 Debe leerse junto con:
 
@@ -58,45 +66,47 @@ La meta de producto queda fijada así:
 
 | Etapa | Objetivos conectados | Mirrors activos | Control | Estado actual | Gate |
 |---|---:|---:|---:|---|---|
-| M1 | 1 | 1 | Independiente | Código listo; prueba inicial histórica solo cargó | Enumeración y ADB por ORICO |
-| M2 | 2 | 2 | Independiente por mirror | Código listo; pendiente laboratorio | Dos sesiones sin cerrar la primera |
+| M1 | 1 | 1 | Independiente | Funcional en pruebas del propietario | Repetibilidad por cada puerto |
+| M2 | 2 | 2 | Independiente por mirror | Funcional con USB-C/Micro-USB; falta soak | Dos sesiones 60 min sin cierre |
 | M3 | 3 | 3 | Independiente por mirror | Código listo; pendiente laboratorio | Recursos, energía y estabilidad |
-| MN | 4–N | Hasta `maxConcurrentMirrors` | Una fuente enfocada a la vez | Registro dinámico listo; pendiente hub ampliado | Capacidad homologada |
+| MN | 4–N | Hasta `maxConcurrentSources` | Una fuente enfocada a la vez | Registro dinámico listo; pendiente hub ampliado | Capacidad homologada |
 
 La implementación no salta etapas: M2 no comienza hasta aprobar M1 y M3 no
 comienza hasta aprobar M2.
 
-## Principio de diseño: N fuentes, no tres hardcodeadas
+## Principio de diseño: N fuentes de video, no tres hardcodeadas
 
 El software no usará campos `deviceA/deviceB/deviceC`, tres variables de
 conexión ni una lista con longitud fija. El contrato será una colección
 dinámica indexada por `sourceSessionId`.
 
 ```text
-enumeratedAdbDeviceCount
-requestedMirrorCount
-maxConcurrentMirrors
-activeMirrorCount
-sources: Map<sourceSessionId, MirrorSourceSession>
+enumeratedVideoSourceCount
+requestedSourceCount
+maxConcurrentSources
+activeSourceCount
+sources: Map<sourceSessionId, LiveVideoSourceSession>
 ```
 
-`maxConcurrentMirrors` es una capacidad calculada, no una constante universal.
+`maxConcurrentSources` es una capacidad calculada, no una constante universal.
 Es el mínimo entre:
 
-- dispositivos ADB enumerados y autorizados;
+- fuentes ADB/UVC enumeradas y autorizadas;
 - límite operativo configurado para la matriz homologada;
 - conexiones USB estables observadas;
 - decoders H.264 concurrentes que el inspector puede sostener;
 - presupuesto de memoria, temperatura, energía y ancho de banda;
 - política de grabaciones simultáneas.
 
-| Hardware conectado | ADB enumerados | Capacidad homologada del inspector | Mirrors ofrecidos |
+| Hardware conectado | Fuentes enumeradas | Capacidad homologada del inspector | Fuentes ofrecidas |
 |---|---:|---:|---:|
 | ORICO de 3 puertos | 3 | 3 | 3 |
 | Hub de 6 puertos | 6 | 3 | 3, con explicación de capacidad |
 | Hub de 6 puertos | 6 | 6 | 6 |
 | Hub de 6 puertos | 4 | 6 | 4 |
 
+El nombre `maxConcurrentMirrors` puede conservarse transitoriamente en APIs
+existentes durante la migración, pero no debe propagarse a contratos nuevos.
 El objetivo de arquitectura es permitir N. La compatibilidad operativa se
 declara por combinación exacta de inspector, hub, cargador, cables, objetivos y
 perfil de video.
@@ -121,42 +131,52 @@ Para M1 se conecta solamente el objetivo A. Para M2 se agregan A y B. Para M3
 se usan A, B y C. Mouse, teclado, Ethernet, memorias y capturadora permanecen
 desconectados durante la caracterización inicial.
 
+### Topología mixta obligatoria después de caracterizar ADB y UVC directo
+
+```text
+Cargador USB-C PD homologado -> PD IN del ORICO
+
+Android inspector USB-C, rol host
+  -> USB-C upstream del ORICO
+     |-> USB-A #1 -> Android A -> ADB/scrcpy
+     |-> USB-A #2 -> Android B -> ADB/scrcpy
+     `-> USB-A #3 -> adaptador USB-A de UGREEN -> UVC
+                       <- HDMI <- adaptador de video <- objetivo C
+```
+
+El inventario debe publicar tres fuentes seleccionables, no “dos teléfonos y
+un periférico desconocido”. El teléfono detrás de HDMI no se identifica por
+USB; File Cast identifica la capturadora y solicita/recupera una etiqueta
+declarada para el objetivo conectado a ella.
+
 ## Hallazgos del código actual
 
-El flujo funcional actual está concentrado en
-`android/app/src/main/kotlin/com/fiscalia/file_cast/usb/UsbPlugin.kt` y mantiene:
+El flujo funcional sigue concentrando el bridge en
+`android/app/src/main/kotlin/com/fiscalia/file_cast/usb/UsbPlugin.kt`, pero la
+vertical multi ya añadió un registro source-scoped:
 
-- un `adbTransport`;
-- un `currentConnection`;
-- un `pendingHandshakeDevice`;
-- un `ScrcpyDecoder`;
-- una `SurfaceTextureEntry`;
-- un `controlStreamLocalId`;
-- un `ScrcpyRecorder`;
-- dimensiones y logs globales.
+- los métodos `multi*` mantienen ADB, shell scrcpy, sockets, textura, decoder,
+  control y recorder por `sourceSessionId`;
+- `AndroidAcquisitionPlatformService` conserva `_activeSession` para
+  compatibilidad singular y `_multiSessions` para la colección;
+- `getConnectedDevices()` publica clasificación diagnóstica
+  (`android_adb`, `mtp`, `hub`, `hid`, `video`, `other`) y la interfaz exacta
+  `255/66/1` decide si una fuente ADB es seleccionable;
+- captura, grabación, reload y control multi ya reciben la fuente concreta;
+- los argumentos y ViewModels multi todavía suponen que toda fuente es ADB y
+  controlable;
+- no existe aún un adaptador UVC que publique formato, señal, textura y recorder
+  propios.
 
-Consecuencias:
-
-1. `connectAdb()` ejecuta `disconnectAdb()` cuando existe otra conexión;
-2. conectar B cierra A;
-3. existe una sola textura de Mirror;
-4. eventos, logs, captura y grabación no identifican una fuente concurrente;
-5. retirar cualquier USB ejecuta el cleanup ADB global;
-6. `getConnectedDevices()` devuelve todos los USB con clasificación
-   diagnóstica (`android_adb`, `mtp`, `hub`, `hid`, `video`, `other`);
-7. `findAdbInterface()` usa primero la interfaz exacta `255/66/1`, pero termina
-   con un fallback que puede intentar la primera interfaz de un periférico que
-   no es ADB;
-8. `AndroidAcquisitionPlatformService` conserva una sola `_activeSession` para
-   el flujo singular, pero ya mantiene `_multiSessions` para la colección multi;
-9. `AcquisitionMirrorSession` ahora tiene un identificador estable de fuente y
-   `usbDeviceId`.
+Por tanto, el trabajo pendiente no es volver a enumerar ADB ni crear otra
+grilla. Debe generalizarse el modelo de fuente/capacidades y agregar UVC sin
+reescribir el protocolo ADB ya funcional.
 
 El protocolo ADB y scrcpy dentro de cada conexión ya funcionan y se conservan.
 El cambio necesario es de **propiedad y ciclo de vida por dispositivo**, no una
 reescritura del protocolo.
 
-## Implementación entregada en esta iteración
+## Implementación ADB entregada
 
 - `UsbPlugin.kt` conserva las APIs singulares y añade métodos `multi*` con un
   estado nativo por fuente: ADB, shell scrcpy, sockets, textura, decoder,
@@ -343,7 +363,7 @@ MultiMirrorSession
   requisitionId
   sessionId
   requestedSourceCount
-  maxConcurrentMirrors
+  maxConcurrentSources
   sources[]
   focusedSourceSessionId
   startedAtUtc
@@ -363,12 +383,52 @@ acquisitionMethod
 
 Una captura de A no puede quedar registrada como si proviniera de B o C.
 
+### Extensión obligatoria a fuentes mixtas
+
+Antes de registrar UVC, `MirrorSource` debe evolucionar sin depender de Flutter
+a un contrato equivalente a:
+
+```text
+LiveVideoSource
+  sourceSessionId
+  acquisitionSessionId
+  inputDeviceId
+  displayName/slotLabel
+  transport: androidAdbScrcpy | hdmiUvc
+  capabilities
+  textureId/nativeViewId?
+  videoWidth/videoHeight/fps/format
+  targetIdentityKind: reported | operatorDeclared
+  controlStreamId?
+  status/diagnostics
+
+LiveVideoCapabilities
+  canPreview
+  canControl
+  canCaptureFrame
+  canRecordVideo
+  canReload
+  canTransfer
+  canReportTargetIdentity
+```
+
+El registro ADB nativo y el registro UVC nativo permanecen separados. Un
+repositorio Dart agrega ambos inventarios y conserva la relación
+`sourceSessionId -> adapter`. Así `sendTouch` solo existe para ADB, mientras
+`captureFrame`, `startRecording`, `stopRecording`, `reload` y `close` se
+despachan al adaptador correspondiente.
+
+La UI no pregunta “¿es Android?”: consulta capacidades. El selector muestra
+badges **Mirror + control · ADB/scrcpy** y **Capturadora · HDMI/UVC · sin
+control**. Una celda sin control sigue siendo seleccionable y participa en
+captura, grabación, evidencias, diagnóstico y lifecycle.
+
 ## Orquestación de conexiones
 
 Para reducir fallos durante la primera implementación:
 
 1. enumerar N candidatos ADB;
-2. calcular `maxConcurrentMirrors` y permitir seleccionar hasta ese límite;
+2. calcular `maxConcurrentSources` y permitir seleccionar hasta ese límite;
 3. asignar slots/alias estables por orden de selección;
 4. solicitar permisos de forma secuencial;
 5. completar handshake y scrcpy de cada fuente sin detener las anteriores;
@@ -443,7 +503,7 @@ Perfil inicial recomendado:
 | 4–6 | perfil reducido obtenido por matriz | aumentar por fuente solo si todas permanecen estables |
 
 Los valores finales se obtienen por matriz; no se codifican por marca o tipo de
-pantalla. La app publica `maxConcurrentMirrors` y no falla silenciosamente al
+pantalla. La app publica `maxConcurrentSources` y no falla silenciosamente al
 abrir una fuente por encima de la capacidad homologada.
 
 ## Navegación
@@ -472,8 +532,11 @@ Se agregan rutas explícitas para multimirror:
 - los ViewModels no navegan ni reciben `BuildContext`.
 
 Al finalizar la migración, la tarjeta **Mirror** permite seleccionar entre uno y
-`maxConcurrentMirrors` objetivos. La ruta singular se conserva como
-compatibilidad y fallback.
+`maxConcurrentSources` objetivos. La tarjeta **Capturadora** abre las mismas
+rutas con `preferredTransport=hdmiUvc`; Mirror usa
+`preferredTransport=androidAdbScrcpy`. Esa preferencia ordena y explica, pero no
+oculta la otra clase conectada. La ruta singular se conserva como compatibilidad
+y fallback. No se crean rutas `capture-card/multi` ni otro workspace.
 
 ## Workspace responsive
 
@@ -499,9 +562,10 @@ SafeArea, escalado de texto, mouse, teclado, foco y targets mínimos de 48 dp.
 Cada celda muestra:
 
 - número/alias dinámico y nombre del objetivo;
+- badge de transporte/capacidad;
 - fase de conexión;
 - preview o error local;
-- indicador de fuente controlada;
+- indicador de fuente controlada solamente si `canControl`;
 - FPS/drops/temperatura cuando esté disponible;
 - Capturar y Grabar/Detener;
 - Reconectar o Cerrar solamente esa fuente.
@@ -569,7 +633,7 @@ inspector capaz de sostenerlos.
 ### Fase MM5 — escalado dinámico y hub de seis puertos
 
 - retirar cualquier constante funcional de máximo tres;
-- derivar `maxConcurrentMirrors` por capacidades y política homologada;
+- derivar `maxConcurrentSources` por capacidades y política homologada;
 - conectar progresivamente 4, 5 y 6 objetivos en un hub alimentado de seis
   USB-A de datos;
 - verificar que cada nueva fuente usa su propia conexión, transporte, streams,
@@ -617,6 +681,30 @@ se homologa otro; no se hardcodea el software a tres.
 **Salida:** combinación exacta inspector + hub + cargador + cables + objetivos
 homologada para operación, primero con ORICO/3 y luego con hub ampliado/6.
 
+### Fase MM8 — unificación con Capturadora HDMI/UVC
+
+Esta es la siguiente fase de producto después de los ajustes leves y la
+validación física ADB pendiente. Su implementación se divide en gates para no
+poner en riesgo el flujo actual:
+
+1. introducir `LiveVideoSource`, transporte y capabilities, adaptando las
+   fuentes ADB existentes sin cambiar handshake, scrcpy, decoder o recorder;
+2. extender argumentos y estado multi para que control y `controlStreamId` sean
+   opcionales;
+3. implementar y homologar una UGREEN directa mediante el adapter Android UVC;
+4. agregar esa fuente al inventario/selector existentes con badge propio;
+5. abrir una UVC sola en el workspace single y plural;
+6. validar 1 ADB + 1 UVC por ORICO;
+7. validar 2 ADB + 1 UVC por ORICO durante 60 minutos;
+8. probar captura/grabación por fuente, reload, pérdida de señal, detach y
+   reconexión sin afectar las otras;
+9. actualizar admisión a `maxConcurrentSources` y repetir 4/5/6 con mezcla en
+   un hub alimentado cuando exista hardware homologado.
+
+**Salida:** Mirror y Capturadora conservan entradas distintas en el launcher,
+pero llegan al mismo selector/workspace. El ORICO presenta dos fuentes
+controlables ADB y una fuente UVC no controlable, todas operativas a la vez.
+
 ## Matriz de pruebas obligatoria
 
 | Prueba | 1 mirror | 2 mirrors | 3 mirrors ORICO | 4–6 mirrors hub ampliado |
@@ -633,6 +721,21 @@ homologada para operación, primero con ORICO/3 y luego con hub ampliado/6.
 | Transferencia singular sin regresión | Obligatoria | Obligatoria | Obligatoria | Obligatoria |
 | PD y estabilidad de energía | Obligatoria | Obligatoria | Obligatoria | Obligatoria |
 
+### Matriz adicional de mezcla UVC
+
+| Prueba | 1 UVC directa | 1 ADB + 1 UVC | 2 ADB + 1 UVC ORICO | Mezcla 4–6 |
+|---|---:|---:|---:|---:|
+| Inventario y badge correctos | Obligatoria | Obligatoria | Obligatoria | Obligatoria |
+| Preview 60 min | Obligatoria | Obligatoria | Obligatoria | Obligatoria por cantidad |
+| Control oculto en UVC | Obligatoria | Obligatoria | Obligatoria | Obligatoria |
+| Control ADB no afectado | N/A | Obligatoria | Obligatoria | Obligatoria |
+| Captura por fuente y atribución | Obligatoria | Obligatoria | Obligatoria | Obligatoria |
+| Grabación UVC y ADB | Obligatoria | Obligatoria | Obligatoria | Gate de capacidad |
+| Pérdida HDMI sin cerrar ADB | Obligatoria | Obligatoria | Obligatoria | Obligatoria |
+| Detach de UVC sin cerrar ADB | Obligatoria | Obligatoria | Obligatoria | Obligatoria |
+| Detach ADB sin cerrar UVC | N/A | Obligatoria | Obligatoria | Obligatoria |
+| Reload solo de la fuente elegida | Obligatoria | Obligatoria | Obligatoria | Obligatoria |
+
 ## Riesgos y mitigaciones
 
 | Riesgo | Impacto | Mitigación |
@@ -642,10 +745,10 @@ homologada para operación, primero con ORICO/3 y luego con hub ampliado/6.
 | Detach global cierra todo | Pérdida de todas las fuentes | Registro por `deviceId` y cleanup source-scoped |
 | Reenumeración vincula el teléfono equivocado | Control/evidencia mal atribuida | Correlación por identidad USB y confirmación del operador |
 | Energía insuficiente | Resets, carga intermitente | PD homologado, conectar secuencialmente, medir estabilidad |
-| N decoders no disponibles | Una fuente adicional falla | Admission control, `maxConcurrentMirrors` y calidad adaptativa |
+| N decoders no disponibles | Una fuente adicional falla | Admission control, `maxConcurrentSources` y calidad adaptativa |
 | Temperatura/throttling | Drops y cierres | Bitrate/resolución escalables y límites operativos |
 | Grabaciones concurrentes saturan IO | MP4 corrupto/drops | Gates progresivos 1..N y límite visible de recorders |
-| El código asume tres fuentes | Hub de 6 exige reescritura | Map/lista dinámica y `maxConcurrentMirrors` calculado |
+| El código asume tres fuentes | Hub de 6 exige reescritura | Map/lista dinámica y `maxConcurrentSources` calculado |
 | Evidencia atribuida al slot incorrecto | Riesgo probatorio | `sourceSessionId` obligatorio en toda operación |
 | Refactor rompe Mirror singular | Regresión funcional | Adaptar singular como sesión de tamaño 1 y matriz de regresión |
 
@@ -665,7 +768,10 @@ La funcionalidad se considera completa cuando:
 8. la UI se adapta sin perder fuentes ni acciones;
 9. el inspector ORICO homologado sostiene tres fuentes y el inspector/hub
    ampliado sostiene seis; otros inspectores publican su límite visible;
-10. Mirror singular y Capturadora no sufren regresiones.
+10. el selector lista a la vez ADB/scrcpy y HDMI/UVC con capacidades correctas;
+11. dos fuentes ADB y una UVC funcionan simultáneamente en el ORICO, sin que
+    detach, error, reload, captura o grabación de una afecte a las otras;
+12. Mirror singular, Transferencia y evidencias no sufren regresiones.
 
 ## Fuentes
 

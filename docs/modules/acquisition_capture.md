@@ -8,6 +8,8 @@ El workspace muestra el CUD de la requisa, el espejo táctil, controles Android 
 
 Durante una grabación, el botón cambia a estado de detención y muestra `mm:ss` actualizado cada segundo. Las confirmaciones de captura/video y los errores se presentan como un overlay dentro del espejo: no alteran la altura de los controles y desaparecen automáticamente (1 segundo para confirmaciones y 4 segundos para errores).
 
+El panel de evidencias compartido por el mirror individual y múltiple mantiene cada preview por `evidenceId`. Insertar una captura o grabación nueva conserva las miniaturas ya preparadas y procesa solamente el elemento incorporado. Lista y cuadrícula comparten el mismo builder y el mismo subárbol de preview, por lo que alternar la presentación no repite descifrado ni extracción de frames.
+
 La sesión es reutilizable mientras ADB, textura y decoder continúen activos. Volver desde el workspace y seleccionar nuevamente el mismo dispositivo no reinicia el handshake ni crea otro decoder. Cada intento de handshake tiene una generación propia para impedir que el timeout de un intento anterior cierre una conexión posterior.
 
 ## Estructura
@@ -95,6 +97,7 @@ La conexión base ADB se separó del arranque del mirror. `connectForTransfer` p
 - Manejo completo de background, extracción de cable y recuperación del proceso; la rotación del objetivo ya actualiza el tamaño táctil, pero debe cubrirse en la matriz física.
 - IDs y errores tipados; los modelos manuales deben migrar a Freezed junto con el generador acordado.
 - Validación física del MP4 corregido, reproducción tras desconexión y matriz Android.
+- La entrada HDMI/UVC todavía no está implementada. Se integrará como otro adaptador de video en el selector y workspace individual/múltiple existentes: ADB/scrcpy conservará control y UVC publicará preview/captura/grabación sin control. No se crearán pantallas redundantes de “capturadora múltiple”.
 
 ## Validación
 

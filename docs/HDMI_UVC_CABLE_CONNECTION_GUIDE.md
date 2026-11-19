@@ -2,6 +2,8 @@
 
 Fecha: 16 de noviembre de 2026
 
+Última revisión: 19 de noviembre de 2026
+
 Estado: **guía de laboratorio; conexiones pendientes de validación física**
 
 Esta guía describe cómo conectar los dispositivos para las cuatro acciones de
@@ -15,8 +17,8 @@ File Cast:
 El docking UGREEN Revodok y el docking Vention quedan fuera de esta versión. Las
 pruebas de capturadora deben comenzar con conexión directa al inspector. El hub
 ORICO enlazado por el propietario se documenta como variante de laboratorio
-posterior: primero con un solo objetivo y, solo tras aislar sesiones en código,
-con varios objetivos.
+posterior: primero con un solo objetivo, luego ADB 1/2/3 y finalmente la mezcla
+obligatoria de dos ADB más una capturadora UVC.
 
 Debe leerse junto con
 [HDMI_UVC_VIDEO_CAPTURE_IMPLEMENTATION_PLAN.md](HDMI_UVC_VIDEO_CAPTURE_IMPLEMENTATION_PLAN.md),
@@ -301,8 +303,9 @@ Probar primero sin mouse, teclado, Ethernet ni otros teléfonos. Cuando ADB
 funcione, conectar PD y verificar que el inspector continúa como host; algunos
 teléfonos o hubs cambian roles al negociar carga.
 
-Resultado esperado con el código actual: **un solo mirror activo**. El objetivo
-puede cargar y aun así no exponer datos/ADB.
+Resultado esperado: **un mirror activo** porque hay una sola fuente conectada.
+El registro multisesión ya existe; el objetivo de esta prueba es homologar ese
+puerto/cable. El objetivo puede cargar y aun así no exponer datos/ADB.
 
 Esta conexión de un solo objetivo es parte obligatoria del plan. La
 implementación debe mostrar si el teléfono fue enumerado, si contiene la
@@ -324,9 +327,8 @@ Cargador USB-C PD
 ```
 
 Primero conectar y autorizar A. Después conectar B y aceptar su huella RSA sin
-cerrar A. El resultado final esperado es mantener ambos previews y seleccionar
-cuál recibe control. Hasta implementar el registro multisesión, el código actual
-cerrará A al abrir B.
+cerrar A. El código multi ya puede mantener ambos previews y seleccionar cuál
+recibe control; todavía debe superarse la matriz física y de recursos.
 
 ### M5 — Tres Android conectados físicamente al ORICO
 
@@ -341,15 +343,13 @@ Cargador USB-C PD
   -> PD IN del ORICO
 ```
 
-Esta topología es el objetivo físico final. **File Cast no puede mostrar tres
-mirrors simultáneos hoy**, porque el plugin conserva una sola conexión ADB, un
-decoder, una textura y una sesión; al conectar otro objetivo cierra el anterior.
-Además, retirar cualquier USB actualmente puede cerrar la sesión ADB activa.
+Esta topología es la primera meta física. File Cast ya dispone de registro,
+decoder, textura, control y recorder por `sourceSessionId`; falta demostrar tres
+mirrors simultáneos estables en el ORICO y verificar detach individual.
 
-La implementación obligatoria progresa M1 -> M2 -> M3: primero enumerar y abrir
+La homologación obligatoria progresa M1 -> M2 -> M3: primero enumerar y abrir
 uno, luego mantener dos sin cerrar el primero y finalmente mantener tres. Hasta
-completarla, usar M5 solo como diagnóstico de enumeración. Después de homologar
-la multisesión, esta misma conexión será el procedimiento operativo.
+completarla, M5 sigue siendo laboratorio y no una garantía operativa.
 
 ### M6 — Hub alimentado con seis USB-A y hasta seis Android
 
@@ -371,8 +371,8 @@ Cargador USB-C PD homologado
 ```
 
 Se prueba progresivamente 1, 2, 3, 4, 5 y 6. File Cast enumera N candidatos y
-ofrece hasta `maxConcurrentMirrors`; no contiene tres slots hardcodeados. Seis
-mirrors solo se declaran compatibles cuando la combinación exacta de inspector,
+ofrece hasta `maxConcurrentSources`; no contiene tres slots hardcodeados. Seis
+fuentes solo se declaran compatibles cuando la combinación exacta de inspector,
 hub, cargador, cables y perfil H.264 supera la matriz de estabilidad.
 
 ### Por qué un objetivo puede quedarse solo cargando
@@ -425,10 +425,25 @@ upstream, energía y recursos del inspector.
 
 ### H2 — Capturadora y ADB conectados al mismo ORICO
 
-Físicamente se puede intentar UGREEN en un USB-A y un Android objetivo ADB en
-otro, pero no es un escenario habilitado por el plan inicial. Primero deben
-separarse receivers y sesiones por `deviceId`; con el código actual, retirar uno
-de los periféricos puede desconectar el otro.
+Esta es una topología obligatoria del plan unificado después de aprobar ADB
+multi y la UGREEN directa:
+
+```text
+Android inspector USB-C
+  -> USB-C upstream del ORICO
+     |-> USB-A #1 -> cable de datos -> Android objetivo A (ADB/scrcpy)
+     |-> USB-A #2 -> cable de datos -> Android objetivo B (ADB/scrcpy)
+     `-> USB-A #3 -> adaptador USB-A de la UGREEN (HDMI/UVC)
+                       <- HDMI <- adaptador de video <- objetivo C
+
+Cargador USB-C PD homologado
+  -> PD IN del ORICO
+```
+
+La lista debe mostrar tres fuentes con badges distintos: dos **Mirror + control
+· ADB/scrcpy** y una **Capturadora · HDMI/UVC · sin control**. Se seleccionan
+las tres y se abren en el mismo workspace multisesión. Retirar la capturadora no
+debe cerrar A/B; retirar A o B no debe cerrar UVC ni la otra fuente ADB.
 
 ## Escenarios de Transferencia de archivos
 
@@ -516,7 +531,11 @@ simular compatibilidad.
 
 ## Orden recomendado para conectar Capturadora
 
-1. Cerrar cualquier sesión Mirror o Transferencia activa.
+Para la PoC directa inicial, cerrar sesiones activas para aislar el diagnóstico.
+En la fase mixta homologada no se cierran los mirrors ADB: se agrega la UGREEN
+como otra fuente del mismo workspace.
+
+1. Detener cualquier grabación que no deba continuar durante el cambio físico.
 2. Desbloquear el objetivo.
 3. Conectar el adaptador de video al objetivo.
 4. Conectar el HDMI al adaptador y al HDMI IN de la capturadora.

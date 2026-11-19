@@ -13,8 +13,9 @@ salida HDMI y capturadora UVC están en
 [HDMI_UVC_VIDEO_CAPTURE_IMPLEMENTATION_PLAN.md](HDMI_UVC_VIDEO_CAPTURE_IMPLEMENTATION_PLAN.md).
 Las conexiones físicas de Mirror, Transferencia, Capturadora e Importar están en
 [HDMI_UVC_CABLE_CONNECTION_GUIDE.md](HDMI_UVC_CABLE_CONNECTION_GUIDE.md).
-El soporte multisesión dinámico de N mirrors Android, con ORICO 1/2/3 como
-primera matriz y un hub de seis puertos como ampliación 4/5/6, está en
+El soporte multisesión dinámico de N fuentes de video, con ORICO ADB 1/2/3,
+mezcla obligatoria 2 ADB + 1 UVC y un hub de seis puertos como ampliación
+4/5/6, está en
 [ANDROID_MULTI_MIRROR_USB_HUB_IMPLEMENTATION_PLAN.md](ANDROID_MULTI_MIRROR_USB_HUB_IMPLEMENTATION_PLAN.md).
 
 > Límite de ejecución: las pruebas, compilaciones y validadores mencionados en este plan son criterios de aceptación a cargo del propietario o de una tarea futura que los autorice expresamente. Las sesiones de reestructuración deben limitarse al código y a la inspección del diff.
@@ -494,7 +495,7 @@ Salida: conectar/desconectar repetidamente sin fugas y con ledger.
 
 ### Fase 4 — evidencia de pantalla Android
 
-Estado actualizado al 18 de noviembre de 2026: screenshot binario, control táctil validado, muxer MP4, SHA-256 local, contador de grabación, feedback flotante y galería en vivo implementados. El recorder conserva SPS/PPS, solicita a scrcpy un keyframe cada segundo, espera el siguiente posterior al toque, confirma entonces el estado `recording`, normaliza PTS y valida el archivo antes de registrarlo. Ya no precarga un GOP anterior, por lo que duración, imagen y contador comparten el mismo inicio. Las miniaturas de video se generan como JPEG derivados y cacheados para el panel de mirror y el detalle de requisa; la extracción local prueba varios frames, seek escalado y un extractor Android alternativo. El panel lista todas las evidencias, se inicializa al abrirse por primera vez y después se conserva fuera de pantalla; sus previews mantienen estado al salir del viewport. Ofrece cuadrícula/lista y un difuminado mediante capa visual que no reconstruye la miniatura ni altera el archivo. El detalle resume seis elementos por categoría antes de **Ver todo**. Continúan pendientes la revalidación física del MP4 corregido y de los codecs OEM, cuotas/espacio, segmentación y manifiesto.
+Estado actualizado al 19 de noviembre de 2026: screenshot binario, control táctil validado, muxer MP4, SHA-256 local, contador de grabación, feedback flotante y galería en vivo implementados. El recorder conserva SPS/PPS, solicita a scrcpy un keyframe cada segundo, espera el siguiente posterior al toque, confirma entonces el estado `recording`, normaliza PTS y valida el archivo antes de registrarlo. Ya no precarga un GOP anterior, por lo que duración, imagen y contador comparten el mismo inicio. Las miniaturas de video se generan como JPEG derivados y cacheados para el panel de mirror y el detalle de requisa; la extracción local prueba varios frames, seek escalado y un extractor Android alternativo. El panel lista todas las evidencias, se inicializa al abrirse por primera vez y después se conserva fuera de pantalla. Sus celdas se identifican por `evidenceId`; insertar una captura/grabación reubica las existentes sin desmontarlas y solo prepara la nueva. Cuadrícula/lista comparten builder y subárbol de preview, mientras el difuminado sigue siendo una capa visual. El detalle resume seis elementos por categoría antes de **Ver todo**. Continúan pendientes la revalidación física del MP4 corregido y de los codecs OEM, cuotas/espacio, segmentación y manifiesto.
 
 - screenshot binario;
 - recording/muxer;
@@ -512,20 +513,23 @@ de seis puertos valida después 4/5/6 sin cambiar la arquitectura. La secuencia,
 arquitectura y matriz completas están en
 [ANDROID_MULTI_MIRROR_USB_HUB_IMPLEMENTATION_PLAN.md](ANDROID_MULTI_MIRROR_USB_HUB_IMPLEMENTATION_PLAN.md).
 
-- MM0: distinguir host inactivo, MTP sin ADB y ADB listo; la prueba USB-C
-  actual ya alcanza MTP/galería y queda pendiente exponer/autorizar ADB;
-- MM1: homologar un mirror a través de cada USB-A del ORICO (código multi listo;
-  pendiente hardware);
+- MM0: distinguir host inactivo, MTP sin ADB y ADB listo; diagnóstico y permiso
+  por dispositivo implementados;
+- MM1: un mirror por ORICO funciona en pruebas del propietario; falta repetir
+  sistemáticamente por cada USB-A;
 - MM2: registro de sesiones por `sourceSessionId` y `deviceId` implementado,
   preservando la API singular;
-- MM3: selección múltiple, dos mirrors, control por foco y detach independiente
-  implementados en código;
+- MM3: selección múltiple y dos mirrors implementados y funcionales en pruebas
+  del propietario; faltan soak y matriz de detach/reconnect;
 - MM4: mantener tres mirrors con admisión de recursos y calidad adaptativa;
 - MM5: retirar límites fijos y homologar progresivamente 4/5/6 en un hub de seis
   USB-A;
 - MM6: rutas plurales y workspace responsive 1..N;
 - MM7: soak tests, PD, permutación de puertos, capturas, grabaciones y
   atribución probatoria por fuente.
+- MM8: generalizar la colección a `LiveVideoSource`, incorporar UVC por
+  capacidades y homologar 1 UVC, 1 ADB + 1 UVC y 2 ADB + 1 UVC sin crear otro
+  selector o workspace.
 
 Rutas previstas:
 
@@ -546,16 +550,17 @@ el cleanup espera la liberación del encoder OEM y continúa con el siguiente
 tamaño. El transporte aplica contrapresión solo al stream H.264 para evitar
 latencia acumulada sin afectar control, shell ni transferencia.
 
-Actualización UI al 18 de noviembre de 2026: mirror individual y múltiple
+Actualización UI al 19 de noviembre de 2026: mirror individual y múltiple
 reutilizan el mismo panel de evidencias. Su estado visual y miniaturas permanecen
-montados entre aperturas repetidas dentro de la composición responsive actual; el operador puede
-alternar cuadrícula/lista y activar un difuminado moderado de previews. En
+montados entre aperturas repetidas dentro de la composición responsive actual;
+las inserciones y el cambio cuadrícula/lista conservan los previews existentes
+por ID. El operador puede activar un difuminado moderado de previews. En
 multimirror el contexto sigue indicando la fuente enfocada, sin cambiar la
 atribución de capturas o grabaciones.
 
-Salida: N previews activos hasta `maxConcurrentMirrors`, con control dirigido a
-una fuente, acciones por objetivo y desconexión individual sin afectar las otras
-sesiones; primera homologación de tres y ampliación de seis.
+Salida: N previews activos hasta `maxConcurrentSources`, con control dirigido
+solo a fuentes capaces, acciones por objetivo y desconexión individual sin
+afectar las otras sesiones; primera homologación de tres y ampliación de seis.
 
 ### Fase 5 — transferencia Android
 
@@ -584,8 +589,11 @@ Salida: prueba offline -> reconnect -> sync -> seal sin pérdida ni duplicado.
   HDMI;
 - conservar sin cambios funcionales el transporte ADB/scrcpy, decoder,
   recorder, control y ADB Sync ya operativos mientras se demuestra UVC;
-- reutilizar el ORICO homologado en la Fase 4A para probar después una sola
-  capturadora, manteniendo Capturadora y multimirror como adaptadores distintos;
+- reutilizar el ORICO homologado en la Fase 4A para probar una capturadora sola,
+  luego 1 ADB + 1 UVC y finalmente 2 ADB + 1 UVC;
+- conservar Mirror y Capturadora como acciones distintas del launcher, pero
+  integrarlas en el selector y workspace single/multi existentes mediante
+  transporte y capabilities; no crear Views `capture-card` duplicadas;
 - PoC `libimobiledevice` en inspector Android para pairing y AFC de solo lectura;
 - gate legal de LGPL/GPL y SBOM del stack nativo;
 - pruebas en iPhone Lightning/USB-C y versiones soportadas;
@@ -657,15 +665,18 @@ Ejecutar cada capacidad en la matriz de [HARDWARE_REQUIREMENTS.md](HARDWARE_REQU
 
 ## Orden inmediato recomendado
 
-1. Migrar Started y Login con los prompts directos, manteniendo Home/listado como referencia de la arquitectura nueva.
-2. Migrar Offline y Settings; decidir el shell solo con destinos reales.
-3. Implementar crear/detalle de requisa antes de conectar adquisición a IDs reales.
-4. Congelar el prototipo ADB como referencia y migrar Connect/Mirror sin reescribir el protocolo.
-5. Implementar dominio/almacenamiento/ledger antes de los botones probatorios.
-6. Implementar screenshot, recording y pull Android.
-7. Ejecutar la PoC iOS USB/UVC definida en `IOS_USB_LIBIMOBILEDEVICE_PLAN.md`.
-8. Cumplir el gate y ejecutar la limpieza global final del responsive/tema/rutas legacy.
-9. Corregir el SDK reproducible, aplicar hardening, validación y piloto según autorización del propietario.
+1. Revalidar en hardware los ajustes leves de mirror individual/múltiple,
+   grabación, previews y detach; completar ORICO ADB 1/2/3.
+2. Crear el contrato `LiveVideoSource`/capabilities sin modificar el protocolo
+   ADB/scrcpy y adaptar la sesión multi actual.
+3. Implementar la PoC UGREEN directa en Android a 1080p30, con preview, captura,
+   grabación y cleanup propios.
+4. Registrar UVC en el selector/workspace existente y validar una sola fuente.
+5. Homologar por ORICO 1 ADB + 1 UVC y 2 ADB + 1 UVC, incluyendo pérdida de
+   HDMI, detach, reload y evidencia atribuida por fuente.
+6. Implementar el adapter iPad Air 4/AVFoundation sobre el mismo contrato Dart.
+7. Mantener AFC/libimobiledevice como PoC separada de archivos y continuar
+   ledger, hardening, CI y validación probatoria antes del piloto.
 
 ## Referencias
 
