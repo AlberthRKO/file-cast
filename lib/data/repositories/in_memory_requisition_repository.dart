@@ -86,6 +86,17 @@ class InMemoryRequisitionRepository implements RequisitionRepository {
   }
 
   @override
+  Future<void> changeParticipantRole({
+    required String requisitionId,
+    required String actorId,
+    required RequisitionParticipantRole role,
+  }) {
+    throw UnsupportedError(
+      'El cambio de rol requiere el repositorio remoto.',
+    );
+  }
+
+  @override
   Future<void> linkCase({
     required String requisitionId,
     required int? externalCaseId,

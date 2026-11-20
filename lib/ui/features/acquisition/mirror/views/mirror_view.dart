@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:file_cast/core/constants/complemento.dart';
 import 'package:file_cast/domain/models/acquisition.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
 import 'package:file_cast/ui/core/navigation/route_args/mirror_route_args.dart';
@@ -96,7 +97,7 @@ class MirrorView extends StatelessWidget {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : SvgPicture.asset(
-                    'assets/images/icons/refresh.svg',
+                    '${assetImgIcon}refresh.svg',
                     width: AppSize.iconM,
                     height: AppSize.iconM,
                     colorFilter: ColorFilter.mode(
@@ -236,10 +237,10 @@ class _MirrorPane extends StatelessWidget {
                     top: AppSpace.s,
                     right: AppSpace.s,
                     width: math.min(
-                      420.0,
-                      math.max(0.0, constraints.maxWidth - AppSpace.m),
+                      420,
+                      math.max(0, constraints.maxWidth - AppSpace.m),
                     ),
-                    height: math.min(260.0, constraints.maxHeight * .55),
+                    height: math.min(260, constraints.maxHeight * .55),
                     child: MirrorDiagnosticsPanel(
                       log: viewModel.diagnosticLog,
                       onRefresh: viewModel.refreshDiagnostics,

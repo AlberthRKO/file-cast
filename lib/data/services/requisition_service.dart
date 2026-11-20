@@ -145,13 +145,45 @@ class RequisitionService {
     switch (result) {
       case Left(leftValue: final error):
         throw StateError(
-          error.message ?? 'No se pudo agregar el participante.',
+          error.message ?? 'No se pudo agregar al fiscal investigador.',
         );
       case Right():
         return;
       case Either():
         throw StateError(
-          'Respuesta inesperada al agregar el participante.',
+          'Respuesta inesperada al agregar al fiscal investigador.',
+        );
+    }
+  }
+
+  Future<void> changeParticipantRole({
+    required String requisitionId,
+    required String actorId,
+    required RequisitionParticipantRole role,
+  }) async {
+    final result = await _http.request<void>(
+      '/api/v1/requisitions/$requisitionId/accesses/${Uri.encodeComponent(actorId)}',
+      method: HttpMethod.patch,
+      headers: {
+        'Idempotency-Key': _idempotencyKey(
+          'change-participant-role',
+          requisitionId,
+        ),
+      },
+      body: {'role': role.apiValue},
+      onSucces: (_) {},
+    );
+
+    switch (result) {
+      case Left(leftValue: final error):
+        throw StateError(
+          error.message ?? 'No se pudo cambiar el rol del fiscal investigador.',
+        );
+      case Right():
+        return;
+      case Either():
+        throw StateError(
+          'Respuesta inesperada al cambiar el rol del fiscal investigador.',
         );
     }
   }

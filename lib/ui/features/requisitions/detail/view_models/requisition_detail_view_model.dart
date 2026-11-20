@@ -70,6 +70,8 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   bool _isFinalizing = false;
   bool _isLinkingCase = false;
   bool _isAddingParticipant = false;
+  final Set<String> _changingParticipantRoleActorIds = <String>{};
+  final Map<String, String> _participantRoleErrors = <String, String>{};
   int _caseLinkSearchToken = 0;
   String _caseLinkQuery = '';
   List<EcosystemCaseSummary> _caseLinkResults = const [];
@@ -200,6 +202,10 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   String? get caseLinkError => _caseLinkError;
   bool get isLinkingCase => _isLinkingCase;
   bool get isAddingParticipant => _isAddingParticipant;
+  Set<String> get changingParticipantRoleActorIds =>
+      Set.unmodifiable(_changingParticipantRoleActorIds);
+  Map<String, String> get participantRoleErrors =>
+      Map.unmodifiable(_participantRoleErrors);
   String get participantQuery => _participantQuery;
   RequisitionParticipantUser? get participantCandidate => _participantCandidate;
   ParticipantSearchPhase get participantSearchPhase => _participantSearchPhase;
@@ -219,6 +225,13 @@ class RequisitionDetailViewModel extends ChangeNotifier {
         false;
   }
 
+  bool canChangeParticipantRole(RequisitionParticipantSummary participant) {
+    final role = participant.role.toUpperCase();
+    return canManageParticipants &&
+        participant.actorId != currentActorId &&
+        (role == 'EDITOR' || role == 'VIEWER');
+  }
+
   bool get canLinkCase =>
       _detail?.requisition.cud == null &&
       (_detail?.requisition.status == RequisitionStatus.draft ||
@@ -233,7 +246,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
       return currentActorName!.trim();
     }
     return _knownParticipants[participant.actorId]?.fullName ??
-        'Participante asignado';
+        'Fiscal investigador asignado';
   }
 
   bool isParticipantAlreadyAdded(RequisitionParticipantUser user) {
@@ -1018,9 +1031,11 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   }) async {
     final candidate = _participantCandidate;
     if (_disposed) return 'El detalle de la requisa ya no está disponible.';
-    if (_isAddingParticipant) return 'Ya hay un participante en proceso.';
+    if (_isAddingParticipant) {
+      return 'Ya hay un fiscal investigador en proceso.';
+    }
     if (!canManageParticipants) {
-      return 'Solo el propietario puede agregar participantes.';
+      return 'Solo el propietario puede agregar fiscales investigadores.';
     }
     if (candidate == null) {
       return 'Busca un usuario por CI antes de agregarlo.';
@@ -1046,12 +1061,104 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     } catch (error) {
       final message = _messageFromError(
         error,
-        fallback: 'No se pudo agregar el participante.',
+        fallback: 'No se pudo agregar al fiscal investigador.',
       );
       _participantError = message;
       return message;
     } finally {
       _isAddingParticipant = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  Future<String?> changeParticipantRole({
+    required RequisitionParticipantSummary participant,
+    required RequisitionParticipantRole role,
+  }) async {
+    if (_disposed) return 'El detalle de la requisa ya no está disponible.';
+    if (!canManageParticipants) {
+      return 'Solo el propietario puede cambiar roles de fiscales investigadores.';
+    }
+    if (_changingParticipantRoleActorIds.isNotEmpty) {
+      return 'Espera a que termine el cambio de rol en curso.';
+    }
+    RequisitionParticipantSummary? currentParticipant;
+    for (final item
+        in _detail?.participants ?? const <RequisitionParticipantSummary>[]) {
+      if (item.actorId == participant.actorId) {
+        currentParticipant = item;
+        break;
+      }
+    }
+    if (currentParticipant == null) {
+      return 'No se puede cambiar el rol de este fiscal investigador.';
+    }
+    final target = currentParticipant;
+    if (!canChangeParticipantRole(target)) {
+      return 'No se puede cambiar el rol de este fiscal investigador.';
+    }
+    if (target.role.toUpperCase() == role.apiValue) return null;
+
+    _changingParticipantRoleActorIds.add(target.actorId);
+    _participantRoleErrors.remove(target.actorId);
+    if (!_disposed) notifyListeners();
+    try {
+      await _requisitionRepository.changeParticipantRole(
+        requisitionId: requisitionId,
+        actorId: target.actorId,
+        role: role,
+      );
+      if (_disposed) return null;
+
+      final currentDetail = _detail;
+      if (currentDetail != null) {
+        _detail = currentDetail.withParticipantRole(
+          actorId: target.actorId,
+          role: role.apiValue,
+        );
+      }
+      notifyListeners();
+
+      try {
+        final refreshed = await _repository.refreshDetail(requisitionId);
+        if (_disposed) return null;
+        _detail = refreshed;
+        _updateUploadStatusPolling();
+        _phase = RequisitionDetailPhase.content;
+      } catch (_) {
+        // El PATCH confirmó el cambio; conserva ese rol hasta la próxima lectura.
+      }
+      return null;
+    } catch (error) {
+      final message = _participantRoleErrorMessage(
+        error,
+      );
+      var roleWasApplied = false;
+      if (!_disposed) {
+        try {
+          final refreshed = await _repository.refreshDetail(requisitionId);
+          if (!_disposed) {
+            _detail = refreshed;
+            _updateUploadStatusPolling();
+            _phase = RequisitionDetailPhase.content;
+            roleWasApplied = refreshed.participants.any(
+              (item) =>
+                  item.actorId == target.actorId &&
+                  item.role.toUpperCase() == role.apiValue,
+            );
+          }
+        } catch (_) {
+          // Conserva el snapshot local si también falla la lectura remota.
+        }
+      }
+      if (roleWasApplied) {
+        _participantRoleErrors.remove(target.actorId);
+        return null;
+      }
+      _participantRoleErrors[target.actorId] = message;
+      return message;
+    } finally {
+      _changingParticipantRoleActorIds.remove(target.actorId);
       if (!_disposed) notifyListeners();
     }
   }
@@ -1069,6 +1176,22 @@ class RequisitionDetailViewModel extends ChangeNotifier {
           'y vuelve a intentar; la evidencia remota no se eliminó.';
     }
     return message.isEmpty ? fallback : message;
+  }
+
+  String _participantRoleErrorMessage(Object error) {
+    final message = error.toString().replaceFirst('Bad state: ', '').trim();
+    final normalized = message.toLowerCase();
+    if (normalized.contains('timeout') ||
+        normalized.contains('socket') ||
+        normalized.contains('network') ||
+        normalized.contains('connection') ||
+        normalized.contains('conexión')) {
+      return 'No se pudo confirmar el cambio de rol. Revisa la conexión; '
+          'vuelve a cargar los fiscales investigadores y revisa el rol vigente.';
+    }
+    return message.isEmpty
+        ? 'No se pudo cambiar el rol del fiscal investigador.'
+        : message;
   }
 
   void _safeNotify() {

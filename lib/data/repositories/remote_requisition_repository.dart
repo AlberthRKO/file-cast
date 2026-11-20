@@ -56,6 +56,19 @@ class RemoteRequisitionRepository implements RequisitionRepository {
   }
 
   @override
+  Future<void> changeParticipantRole({
+    required String requisitionId,
+    required String actorId,
+    required RequisitionParticipantRole role,
+  }) {
+    return _service.changeParticipantRole(
+      requisitionId: requisitionId,
+      actorId: actorId,
+      role: role,
+    );
+  }
+
+  @override
   Future<void> linkCase({
     required String requisitionId,
     required int? externalCaseId,

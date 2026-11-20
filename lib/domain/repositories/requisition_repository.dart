@@ -31,6 +31,12 @@ abstract interface class RequisitionRepository {
     required RequisitionParticipantRole role,
   });
 
+  Future<void> changeParticipantRole({
+    required String requisitionId,
+    required String actorId,
+    required RequisitionParticipantRole role,
+  });
+
   Future<void> linkCase({
     required String requisitionId,
     required int? externalCaseId,

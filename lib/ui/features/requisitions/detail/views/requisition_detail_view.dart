@@ -21,13 +21,16 @@ import 'package:file_cast/ui/core/widgets/app_action_button.dart';
 import 'package:file_cast/ui/core/widgets/app_form_input_icon.dart';
 import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
 import 'package:file_cast/ui/core/widgets/evidence_rename_sheet.dart';
+import 'package:file_cast/ui/core/widgets/evidence_sync_badge.dart';
 import 'package:file_cast/ui/core/widgets/evidence_thumbnail.dart';
 import 'package:file_cast/ui/core/widgets/evidence_video_thumbnail.dart';
-import 'package:file_cast/ui/core/widgets/evidence_sync_badge.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
 import 'package:file_cast/ui/features/requisitions/detail/view_models/requisition_detail_view_model.dart';
+import 'package:file_cast/ui/features/requisitions/detail/widgets/case_detail_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/detail/widgets/evidence_preview_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/detail/widgets/import_evidence_preview_dialog.dart';
+import 'package:file_cast/ui/features/requisitions/detail/widgets/participant_role_dropdown.dart';
+import 'package:file_cast/ui/features/requisitions/detail/widgets/participants_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_location_viewer.dart';
 import 'package:file_cast/ui/features/requisitions/widgets/case_subjects_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/widgets/requisition_case_card.dart';
@@ -37,7 +40,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:searchfield/searchfield.dart';
 
@@ -153,9 +155,11 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
         scrolledUnderElevation: 0,
         actions: [
           _RequisitionDetailActionsMenu(
+            canViewCase: detail.requisition.cud?.trim().isNotEmpty ?? false,
             canAddParticipant: viewModel.canManageParticipants,
             canFinalize: viewModel.canFinalize,
             canLinkCase: viewModel.canLinkCase,
+            onViewCase: () => _showCaseDetail(context),
             onAddParticipant: () => _showParticipantForm(context),
             onFinalize: () => _finalize(context),
             onLinkCase: () => _showCaseLink(context),
@@ -221,6 +225,31 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
                           MediaQuery.viewPaddingOf(context).bottom,
                     ),
                     children: [
+                      _SummaryFooter(
+                        sessionsLabel: '${detail.sessions.length} sesiones',
+                        evidenceLabel: viewModel.failedEvidenceCount > 0
+                            ? 'Evidencias con errores'
+                            : viewModel.pendingEvidenceCount > 0
+                            ? 'Evidencias pendientes'
+                            : 'Evidencias sincronizadas',
+                        uploadProgress: viewModel.uploadProgress,
+                        offlineSyncProgress: viewModel.offlineSyncProgress,
+                        offlineSyncError: viewModel.offlineSyncError,
+                        offlineSyncErrors: viewModel.offlineSyncErrors,
+                        isImporting: viewModel.isImporting,
+                        isSyncing: viewModel.isSyncing,
+                        isOfflineSyncing: viewModel.isOfflineSyncing,
+                        offlineAvailableCount:
+                            viewModel.offlineEvidenceAvailableCount,
+                        offlineTotalCount: viewModel.offlineEvidenceTotalCount,
+                        pendingCount: viewModel.pendingEvidenceCount,
+                        failedCount: viewModel.failedEvidenceCount,
+                        onRetry: viewModel.retryPendingEvidence,
+                        onCancelUpload: viewModel.cancelPendingEvidenceSync,
+                        isCancellingUpload: viewModel.isCancellingUpload,
+                        onSyncOffline: viewModel.syncEvidenceForOffline,
+                      ),
+                      const SizedBox(height: AppSpace.m),
                       _EvidenceTotals(categories: categories),
                       for (final category in categories) ...[
                         const SizedBox(height: AppSpace.m),
@@ -410,17 +439,38 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
         context: context,
         useSafeArea: true,
         maxWidth: 560,
-        builder: (_) => _PeopleSheet(
-          title: 'Participantes de la requisa',
-          people: detail.participants
-              .map(
-                (participant) => _DisplayPerson(
-                  name: viewModel.participantName(participant),
-                  secondary: participant.documentNumber,
-                  badgeLabel: _participantRoleLabel(participant.role),
-                ),
-              )
-              .toList(growable: false),
+        builder: (_) => ListenableBuilder(
+          listenable: viewModel,
+          builder: (context, _) {
+            final participants =
+                viewModel.detail?.participants ?? detail.participants;
+            final changingActorIds = viewModel.changingParticipantRoleActorIds;
+            return ParticipantsSheet(
+              participants: participants,
+              participantName: viewModel.participantName,
+              currentActorId: viewModel.currentActorId,
+              canManageRoles:
+                  viewModel.canManageParticipants && changingActorIds.isEmpty,
+              changingActorIds: changingActorIds,
+              roleErrors: viewModel.participantRoleErrors,
+              onChangeRole: (participant, role) async {
+                await viewModel.changeParticipantRole(
+                  participant: participant,
+                  role: role,
+                );
+              },
+            );
+          },
+        ),
+      );
+
+  Future<void> _showCaseDetail(BuildContext context) =>
+      showAppModalBottomSheet<void>(
+        context: context,
+        useSafeArea: true,
+        maxWidth: AppSize.formMaxWidth,
+        builder: (_) => CaseDetailSheet(
+          detail: viewModel.detail ?? detail,
         ),
       );
 
@@ -434,12 +484,12 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
     if (!context.mounted || added != true) return;
     await showAppSuccessBottomSheet(
       context,
-      'El participante fue agregado a la requisa.',
+      'El fiscal investigador fue agregado a la requisa.',
     );
   }
 
   Future<void> _showLocation(BuildContext context) {
-    final location = detail.location;
+    final location = _detailLocation(detail);
     if (location == null) return Future<void>.value();
     return showAppModalBottomSheet<void>(
       context: context,
@@ -628,26 +678,31 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
   }
 }
 
-enum _RequisitionDetailAction { addParticipant, finalize, linkCase }
+enum _RequisitionDetailAction { viewCase, addParticipant, finalize, linkCase }
 
 class _RequisitionDetailActionsMenu extends StatelessWidget {
   const _RequisitionDetailActionsMenu({
+    required this.canViewCase,
     required this.canAddParticipant,
     required this.canFinalize,
     required this.canLinkCase,
+    required this.onViewCase,
     required this.onAddParticipant,
     required this.onFinalize,
     required this.onLinkCase,
   });
 
+  final bool canViewCase;
   final bool canAddParticipant;
   final bool canFinalize;
   final bool canLinkCase;
+  final VoidCallback onViewCase;
   final VoidCallback onAddParticipant;
   final VoidCallback onFinalize;
   final VoidCallback onLinkCase;
 
-  bool get _hasActions => canAddParticipant || canFinalize || canLinkCase;
+  bool get _hasActions =>
+      canViewCase || canAddParticipant || canFinalize || canLinkCase;
 
   @override
   Widget build(BuildContext context) {
@@ -683,12 +738,21 @@ class _RequisitionDetailActionsMenu extends StatelessWidget {
               ),
             ),
             items: [
+              if (canViewCase)
+                DropdownMenuItem<_RequisitionDetailAction>(
+                  value: _RequisitionDetailAction.viewCase,
+                  child: _DetailActionMenuRow(
+                    iconAsset: 'eye.svg',
+                    label: 'Ver detalle del caso',
+                    color: iconColor,
+                  ),
+                ),
               if (canAddParticipant)
                 DropdownMenuItem<_RequisitionDetailAction>(
                   value: _RequisitionDetailAction.addParticipant,
                   child: _DetailActionMenuRow(
                     iconAsset: 'user_plus.svg',
-                    label: 'Agregar participante',
+                    label: 'Agregar fiscal investigador',
                     color: iconColor,
                   ),
                 ),
@@ -714,6 +778,8 @@ class _RequisitionDetailActionsMenu extends StatelessWidget {
             onChanged: (action) {
               if (action == null) return;
               switch (action) {
+                case _RequisitionDetailAction.viewCase:
+                  onViewCase();
                 case _RequisitionDetailAction.addParticipant:
                   onAddParticipant();
                 case _RequisitionDetailAction.finalize:
@@ -740,10 +806,8 @@ class _RequisitionDetailActionsMenu extends StatelessWidget {
                   ),
                 ],
               ),
-              useSafeArea: true,
             ),
             menuItemStyleData: const MenuItemStyleData(
-              height: AppSize.minTouchTarget,
               padding: EdgeInsets.symmetric(horizontal: AppSpace.m),
             ),
             barrierColor: Colors.transparent,
@@ -869,8 +933,6 @@ class _RequisitionSummaryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final requisition = detail.requisition;
-    final caseInfo = detail.caseInfo;
-    final personInfo = detail.personInfo;
     final hasCase = requisition.cud?.trim().isNotEmpty ?? false;
     final subjects = _subjectPeople(detail);
     final participants = detail.participants
@@ -881,8 +943,14 @@ class _RequisitionSummaryCard extends StatelessWidget {
           ),
         )
         .toList(growable: false);
-    final location = detail.location;
-    final hasCoordinates = detail.latitude != null || detail.longitude != null;
+    final location = _detailLocation(detail);
+    final locationLabel = _detailLocationLabel(detail);
+    final locationLatitude = location?.latitude;
+    final locationLongitude = location?.longitude;
+    final hasLocation =
+        (locationLabel?.isNotEmpty ?? false) ||
+        locationLatitude != null ||
+        locationLongitude != null;
     final primaryPerson = subjects.length == 1 ? subjects.single : null;
 
     return Column(
@@ -933,153 +1001,11 @@ class _RequisitionSummaryCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: AppSpace.s),
-            _StatusBadge(
-              status: caseInfo?.status ?? _statusLabel(requisition.status),
-            ),
+            _StatusBadge(status: _statusLabel(requisition.status)),
           ],
         ),
-        if (detail.description?.isNotEmpty ?? false) ...[
-          const SizedBox(height: AppSpace.s),
-          Text(
-            detail.description!,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ],
-        if (detail.procedureAt != null) ...[
-          const SizedBox(height: AppSpace.s),
-          _SummaryLine(
-            asset: 'assets/images/icons/calendarDay.svg',
-            label: 'Fecha del procedimiento',
-            value: DateFormat(
-              'dd/MM/yyyy HH:mm',
-            ).format(detail.procedureAt!),
-          ),
-        ],
-        if (hasCase) ...[
-          const SizedBox(height: AppSpace.s),
-          _SummaryLine(
-            asset: 'assets/images/icons/sync.svg',
-            label: 'Estado de la requisa',
-            value: _statusLabel(requisition.status),
-          ),
-        ],
         const SizedBox(height: AppSpace.s),
-        if (hasCase) ...[
-          _SummaryPair(
-            left: _SummaryLine(
-              asset: 'assets/images/icons/contrato.svg',
-              label: 'Delito',
-              value: [
-                caseInfo?.primaryCrime?.name ?? requisition.caseName,
-                caseInfo?.primaryCrime?.priorityName,
-              ].whereType<String>().join(' · '),
-            ),
-            right: _SummaryLine(
-              asset: 'assets/images/icons/marca.svg',
-              label: 'Tipo',
-              value: caseInfo?.complaintType ?? 'Sin tipo registrado',
-            ),
-          ),
-          if ((caseInfo?.division?.isNotEmpty ?? false) ||
-              (caseInfo?.stage?.isNotEmpty ?? false)) ...[
-            const SizedBox(height: AppSpace.s),
-            _SummaryPair(
-              left: _SummaryLine(
-                asset: 'assets/images/icons/marca.svg',
-                label: 'División',
-                value: caseInfo?.division ?? detail.division,
-              ),
-              right: _SummaryLine(
-                asset: 'assets/images/icons/contrato.svg',
-                label: 'Etapa',
-                value: caseInfo?.stage ?? 'Sin etapa registrada',
-              ),
-            ),
-          ],
-          if (caseInfo?.factAt != null ||
-              (caseInfo?.factAddress?.isNotEmpty ?? false)) ...[
-            const SizedBox(height: AppSpace.s),
-            _SummaryPair(
-              left: _SummaryLine(
-                asset: 'assets/images/icons/calendarDay.svg',
-                label: 'Fecha del hecho',
-                value: caseInfo?.factAt == null
-                    ? 'Sin fecha registrada'
-                    : DateFormat(
-                        'dd/MM/yyyy HH:mm',
-                      ).format(caseInfo!.factAt!),
-              ),
-              right: _SummaryLine(
-                asset: 'assets/images/icons/marca.svg',
-                label: 'Lugar del hecho',
-                value:
-                    [
-                          caseInfo?.factAddress,
-                          caseInfo?.factMunicipality,
-                          caseInfo?.factZone,
-                        ]
-                        .whereType<String>()
-                        .where((value) => value.isNotEmpty)
-                        .join(', '),
-              ),
-            ),
-          ],
-          if (caseInfo?.story?.isNotEmpty ?? false) ...[
-            const SizedBox(height: AppSpace.s),
-            Text(
-              caseInfo!.story!,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-          if (caseInfo?.officials.isNotEmpty ?? false) ...[
-            const SizedBox(height: AppSpace.s),
-            _SummaryLine(
-              asset: 'assets/images/icons/users.svg',
-              label: caseInfo!.officials.length == 1
-                  ? 'Funcionario del caso'
-                  : 'Funcionarios del caso',
-              value: caseInfo!.officials
-                  .map((official) => official.fullName)
-                  .join(', '),
-            ),
-          ],
-        ],
-        if (!hasCase && personInfo != null) ...[
-          if (personInfo.birthDate != null) ...[
-            const SizedBox(height: AppSpace.s),
-            _SummaryLine(
-              asset: 'assets/images/icons/calendarDay.svg',
-              label: 'Fecha de nacimiento',
-              value: DateFormat('dd/MM/yyyy').format(personInfo.birthDate!),
-            ),
-          ],
-          if ((personInfo.address?.isNotEmpty ?? false) ||
-              (personInfo.phone?.isNotEmpty ?? false)) ...[
-            const SizedBox(height: AppSpace.s),
-            _SummaryPair(
-              left: _SummaryLine(
-                asset: 'assets/images/icons/marca.svg',
-                label: 'Dirección',
-                value: personInfo.address ?? 'Sin dirección registrada',
-              ),
-              right: _SummaryLine(
-                asset: 'assets/images/icons/users.svg',
-                label: 'Teléfono',
-                value: personInfo.phone ?? 'Sin teléfono registrado',
-              ),
-            ),
-          ],
-        ],
         if (hasCase && subjects.isNotEmpty && participants.isNotEmpty) ...[
-          const SizedBox(height: AppSpace.s),
           _PeoplePair(
             left: _PeopleSummary(
               title: subjects.length == 1 ? 'Sujeto' : 'Sujetos',
@@ -1088,60 +1014,39 @@ class _RequisitionSummaryCard extends StatelessWidget {
             ),
             right: _PeopleSummary(
               title: participants.length == 1
-                  ? 'Participante'
-                  : 'Participantes',
+                  ? 'Fiscal investigador'
+                  : 'Fiscales investigadores',
               people: participants,
-              onView: participants.length > 1 ? onShowParticipants : null,
+              onView: participants.length > 1 || viewModel.canManageParticipants
+                  ? onShowParticipants
+                  : null,
             ),
           ),
         ] else if (hasCase && subjects.isNotEmpty) ...[
-          const SizedBox(height: AppSpace.s),
           _PeopleSummary(
             title: subjects.length == 1 ? 'Sujeto' : 'Sujetos',
             people: subjects,
             onView: subjects.length > 1 ? onShowSubjects : null,
           ),
         ] else if (participants.isNotEmpty) ...[
-          const SizedBox(height: AppSpace.s),
           _PeopleSummary(
-            title: participants.length == 1 ? 'Participante' : 'Participantes',
+            title: participants.length == 1
+                ? 'Fiscal investigador'
+                : 'Fiscales investigadores',
             people: participants,
-            onView: participants.length > 1 ? onShowParticipants : null,
+            onView: participants.length > 1 || viewModel.canManageParticipants
+                ? onShowParticipants
+                : null,
           ),
         ],
-        if (location != null ||
-            hasCoordinates ||
-            (detail.locationLabel?.isNotEmpty ?? false)) ...[
+        if (hasLocation) ...[
           _LocationSummary(
-            label: detail.locationLabel,
-            latitude: detail.latitude,
-            longitude: detail.longitude,
+            label: locationLabel,
+            latitude: locationLatitude,
+            longitude: locationLongitude,
             onView: location == null ? null : onShowLocation,
           ),
         ],
-        _SummaryFooter(
-          sessionsLabel: '${detail.sessions.length} sesiones',
-          evidenceLabel: viewModel.failedEvidenceCount > 0
-              ? 'Evidencias con errores'
-              : viewModel.pendingEvidenceCount > 0
-              ? 'Evidencias pendientes'
-              : 'Evidencias sincronizadas',
-          uploadProgress: viewModel.uploadProgress,
-          offlineSyncProgress: viewModel.offlineSyncProgress,
-          offlineSyncError: viewModel.offlineSyncError,
-          offlineSyncErrors: viewModel.offlineSyncErrors,
-          isImporting: viewModel.isImporting,
-          isSyncing: viewModel.isSyncing,
-          isOfflineSyncing: viewModel.isOfflineSyncing,
-          offlineAvailableCount: viewModel.offlineEvidenceAvailableCount,
-          offlineTotalCount: viewModel.offlineEvidenceTotalCount,
-          pendingCount: viewModel.pendingEvidenceCount,
-          failedCount: viewModel.failedEvidenceCount,
-          onRetry: viewModel.retryPendingEvidence,
-          onCancelUpload: viewModel.cancelPendingEvidenceSync,
-          isCancellingUpload: viewModel.isCancellingUpload,
-          onSyncOffline: viewModel.syncEvidenceForOffline,
-        ),
       ],
     );
   }
@@ -1789,39 +1694,6 @@ class _SummaryLine extends StatelessWidget {
   }
 }
 
-class _SummaryPair extends StatelessWidget {
-  const _SummaryPair({required this.left, required this.right});
-
-  final Widget left;
-  final Widget right;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth < 520) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              left,
-              const SizedBox(height: AppSpace.xs),
-              right,
-            ],
-          );
-        }
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: left),
-            const SizedBox(width: AppSpace.m),
-            Expanded(child: right),
-          ],
-        );
-      },
-    );
-  }
-}
-
 class _SummaryIconButton extends StatelessWidget {
   const _SummaryIconButton({
     required this.asset,
@@ -1961,10 +1833,21 @@ class _PeopleSummary extends StatelessWidget {
       final value = person.secondary?.isNotEmpty ?? false
           ? '${person.name} - ${person.secondary}'
           : person.name;
-      return _SummaryLine(
+      final summary = _SummaryLine(
         asset: 'assets/images/icons/users.svg',
         label: title,
         value: value,
+      );
+      if (onView == null) return summary;
+      return Row(
+        children: [
+          Expanded(child: summary),
+          _SummaryIconButton(
+            asset: 'assets/images/icons/eye.svg',
+            tooltip: 'Ver $title',
+            onPressed: onView!,
+          ),
+        ],
       );
     }
     return Row(
@@ -2035,44 +1918,20 @@ class _DisplayPerson {
   const _DisplayPerson({
     required this.name,
     this.secondary,
-    this.details,
-    this.badgeLabel,
   });
 
   final String name;
   final String? secondary;
-  final String? details;
-  final String? badgeLabel;
 }
 
 List<_DisplayPerson> _subjectPeople(RequisitionDetail detail) {
   if (detail.subjectDetails.isNotEmpty) {
     return detail.subjectDetails
         .map(
-          (subject) {
-            final details = <String>[
-              if (subject.role != null && subject.documentNumber != null)
-                'Rol: ${subject.role}',
-              if (subject.personId != null) 'personaId: ${subject.personId}',
-              if (subject.caseSubjectId != null)
-                'Sujeto del caso: ${subject.caseSubjectId}',
-              if (subject.subjectTypeId != null && subject.role == null)
-                'Tipo de sujeto: ${subject.subjectTypeId}',
-              if (subject.legalSituationId != null)
-                'Situación jurídica: ${subject.legalSituationId}',
-              if (subject.alias?.isNotEmpty == true) 'Alias: ${subject.alias}',
-              if (subject.legalEntityName?.isNotEmpty == true)
-                'Entidad: ${subject.legalEntityName}',
-              if (subject.identityReserved) 'Identidad reservada',
-              if (subject.currentSubjectState?.isNotEmpty == true)
-                'Estado: ${subject.currentSubjectState}',
-            ];
-            return _DisplayPerson(
-              name: subject.name,
-              secondary: subject.documentNumber ?? subject.role,
-              details: details.isEmpty ? null : details.join(' · '),
-            );
-          },
+          (subject) => _DisplayPerson(
+            name: subject.name,
+            secondary: subject.documentNumber ?? subject.role,
+          ),
         )
         .toList(growable: false);
   }
@@ -2087,242 +1946,6 @@ String _participantRoleLabel(String role) => switch (role.toUpperCase()) {
   'VIEWER' => 'Lector',
   _ => role,
 };
-
-class _PeopleSheet extends StatelessWidget {
-  const _PeopleSheet({required this.title, required this.people});
-
-  final String title;
-  final List<_DisplayPerson> people;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Material(
-      color: theme.cardColor,
-      borderRadius: const BorderRadius.vertical(
-        top: Radius.circular(AppRadius.l),
-      ),
-      child: SafeArea(
-        top: false,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 620),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpace.m,
-              AppSpace.s,
-              AppSpace.m,
-              AppSpace.m,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _PeopleSheetHeader(
-                  title: title,
-                  subtitle:
-                      '${people.length} ${people.length == 1 ? 'participante' : 'participantes'}',
-                ),
-                const SizedBox(height: AppSpace.s),
-                Flexible(
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    keyboardDismissBehavior:
-                        ScrollViewKeyboardDismissBehavior.onDrag,
-                    itemCount: people.isEmpty ? 1 : people.length,
-                    separatorBuilder: (_, _) =>
-                        const SizedBox(height: AppSpace.s),
-                    itemBuilder: (context, index) {
-                      if (people.isEmpty) {
-                        return Padding(
-                          padding: const EdgeInsets.all(AppSpace.l),
-                          child: Text(
-                            'No hay participantes registrados en la requisa.',
-                            textAlign: TextAlign.center,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        );
-                      }
-                      final person = people[index];
-                      return _PeopleSheetCard(person: person);
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _PeopleSheetHeader extends StatelessWidget {
-  const _PeopleSheetHeader({required this.title, required this.subtitle});
-
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Row(
-      children: [
-        Container(
-          width: AppSize.minTouchTarget,
-          height: AppSize.minTouchTarget,
-          decoration: BoxDecoration(
-            color: theme.colorScheme.primaryContainer,
-            borderRadius: BorderRadius.circular(AppRadius.m),
-          ),
-          child: Icon(
-            Icons.groups_2_outlined,
-            color: theme.colorScheme.onPrimaryContainer,
-          ),
-        ),
-        const SizedBox(width: AppSpace.s),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              Text(
-                subtitle,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-        IconButton(
-          tooltip: 'Cerrar',
-          onPressed: () => Navigator.of(context).pop(),
-          icon: const Icon(Icons.close_rounded),
-        ),
-      ],
-    );
-  }
-}
-
-class _PeopleSheetCard extends StatelessWidget {
-  const _PeopleSheetCard({required this.person});
-
-  final _DisplayPerson person;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(AppSpace.m),
-      decoration: BoxDecoration(
-        color: theme.cardColor,
-        borderRadius: BorderRadius.circular(AppRadius.m),
-        border: Border.all(
-          color: theme.colorScheme.outline.withValues(alpha: .16),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: .04),
-            blurRadius: 12,
-            offset: const Offset(0, 5),
-          ),
-        ],
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: AppSize.minTouchTarget,
-            height: AppSize.minTouchTarget,
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primary.withValues(alpha: .08),
-              shape: BoxShape.circle,
-            ),
-            alignment: Alignment.center,
-            child: SvgPicture.asset(
-              'assets/images/icons/cardEmployee.svg',
-              width: AppSize.iconL,
-              height: AppSize.iconL,
-              colorFilter: ColorFilter.mode(
-                theme.colorScheme.primary,
-                BlendMode.srcIn,
-              ),
-            ),
-          ),
-          const SizedBox(width: AppSpace.m),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (person.secondary?.trim().isNotEmpty == true) ...[
-                  Text(
-                    'C.I. ${person.secondary}',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: AppSpace.xs),
-                ],
-                Text(
-                  person.name.toUpperCase(),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                if (person.badgeLabel?.trim().isNotEmpty == true) ...[
-                  const SizedBox(height: AppSpace.s),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primary.withValues(alpha: .14),
-                        borderRadius: BorderRadius.circular(AppRadius.pill),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpace.s,
-                          vertical: AppSpace.xs,
-                        ),
-                        child: Text(
-                          person.badgeLabel!,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: theme.colorScheme.primary,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-                if (person.details?.trim().isNotEmpty == true) ...[
-                  const SizedBox(height: AppSpace.xs),
-                  Text(
-                    person.details!,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class _ParticipantSheet extends StatefulWidget {
   const _ParticipantSheet({required this.viewModel});
@@ -2425,7 +2048,7 @@ class _ParticipantSheetState extends State<_ParticipantSheet> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'Agregar participante',
+                                  'Agregar fiscal investigador',
                                   style: theme.textTheme.titleMedium?.copyWith(
                                     fontWeight: FontWeight.w700,
                                   ),
@@ -2575,36 +2198,13 @@ class _ParticipantSheetState extends State<_ParticipantSheet> {
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
-                                          DropdownButtonFormField<
-                                            RequisitionParticipantRole
-                                          >(
-                                            value: _role,
-                                            style: theme.textTheme.bodyLarge,
-                                            dropdownColor: theme.cardColor,
-                                            iconEnabledColor:
-                                                theme.colorScheme.primary,
-                                            decoration: const InputDecoration(
-                                              labelText: 'Nivel de acceso',
-                                            ),
-                                            items: RequisitionParticipantRole
-                                                .values
-                                                .map(
-                                                  (role) => DropdownMenuItem(
-                                                    value: role,
-                                                    child: Text(role.label),
-                                                  ),
-                                                )
-                                                .toList(growable: false),
-                                            onChanged:
-                                                viewModel.isAddingParticipant
-                                                ? null
-                                                : (value) {
-                                                    if (value != null) {
-                                                      setState(
-                                                        () => _role = value,
-                                                      );
-                                                    }
-                                                  },
+                                          ParticipantRoleDropdown(
+                                            role: _role,
+                                            enabled:
+                                                !viewModel.isAddingParticipant,
+                                            onChanged: (value) {
+                                              setState(() => _role = value);
+                                            },
                                           ),
                                           const SizedBox(height: AppSpace.m),
                                           SizedBox(
@@ -2632,7 +2232,7 @@ class _ParticipantSheetState extends State<_ParticipantSheet> {
                                               label: Text(
                                                 viewModel.isAddingParticipant
                                                     ? 'Agregando...'
-                                                    : 'Agregar ${_role.label.toLowerCase()}',
+                                                    : 'Agregar fiscal investigador',
                                               ),
                                             ),
                                           ),
@@ -2847,7 +2447,6 @@ class _CaseLinkSheetState extends State<_CaseLinkSheet> {
                                 controller: _controller,
                                 focusNode: _focusNode,
                                 suggestionState: Suggestion.hidden,
-                                suggestionDirection: SuggestionDirection.down,
                                 maxSuggestionsInViewPort: maxVisibleSuggestions,
                                 itemHeight: 76,
                                 suggestions: suggestions,
@@ -3364,7 +2963,7 @@ class _EvidencePreview extends StatelessWidget {
                       EvidenceSyncBadge(
                         uploadStatus: evidence.uploadStatus,
                         hasLocalCopy:
-                            evidence.localPath?.trim().isNotEmpty == true,
+                            evidence.localPath?.trim().isNotEmpty ?? false,
                         compact: true,
                       ),
                     ],
@@ -4148,3 +3747,27 @@ String _statusLabel(RequisitionStatus status) => switch (status) {
   RequisitionStatus.finalized => 'Finalizada',
   RequisitionStatus.cancelled => 'Cancelada',
 };
+
+RequisitionLocation? _detailLocation(RequisitionDetail detail) {
+  final latitude = detail.caseInfo?.factLatitude ?? detail.latitude;
+  final longitude = detail.caseInfo?.factLongitude ?? detail.longitude;
+  if (latitude == null || longitude == null) return null;
+  final location = RequisitionLocation(
+    latitude: latitude,
+    longitude: longitude,
+    label: _detailLocationLabel(detail),
+  );
+  return location.isValid ? location : null;
+}
+
+String? _detailLocationLabel(RequisitionDetail detail) {
+  final caseLocation = [
+    detail.caseInfo?.factAddress,
+    detail.caseInfo?.factZone,
+    detail.caseInfo?.factMunicipality,
+  ].whereType<String>().where((value) => value.trim().isNotEmpty).join(', ');
+  if (caseLocation.isNotEmpty) return caseLocation;
+  return detail.locationLabel?.trim().isNotEmpty ?? false
+      ? detail.locationLabel!.trim()
+      : null;
+}

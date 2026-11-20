@@ -478,4 +478,42 @@ final class RequisitionDetail {
     );
     return value.isValid ? value : null;
   }
+
+  RequisitionDetail withParticipantRole({
+    required String actorId,
+    required String role,
+  }) {
+    return RequisitionDetail(
+      requisition: requisition,
+      division: division,
+      subjects: subjects,
+      subjectDetails: subjectDetails,
+      caseSubjects: caseSubjects,
+      participants: List.unmodifiable(
+        participants.map(
+          (participant) => participant.actorId == actorId
+              ? RequisitionParticipantSummary(
+                  actorId: participant.actorId,
+                  role: role,
+                  fullName: participant.fullName,
+                  documentNumber: participant.documentNumber,
+                )
+              : participant,
+        ),
+      ),
+      caseInfo: caseInfo,
+      personInfo: personInfo,
+      sessionId: sessionId,
+      evidence: evidence,
+      sessions: sessions,
+      description: description,
+      procedureAt: procedureAt,
+      locationLabel: locationLabel,
+      latitude: latitude,
+      longitude: longitude,
+      version: version,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+    );
+  }
 }
