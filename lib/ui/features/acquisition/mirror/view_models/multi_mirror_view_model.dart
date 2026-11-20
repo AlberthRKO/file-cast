@@ -54,6 +54,9 @@ class MultiMirrorViewModel extends ChangeNotifier {
   final Set<String> _restartingSourceIds = {};
   final Map<String, AcquisitionRecordingPhase> _recordingPhases = {};
   final Map<String, DateTime> _recordingStartedAt = {};
+  final Map<String, int> _selectedSubjectPersonIds = {};
+  final Map<String, List<int>> _recordingSubjectPersonIds = {};
+  final Map<String, String> _deviceKeysBySourceId = {};
   Timer? _recordingTimer;
   String? _message;
   String? get message => _message;
@@ -67,6 +70,55 @@ class MultiMirrorViewModel extends ChangeNotifier {
   bool get showDiagnostics => _showDiagnostics;
   String? _overviewControlSourceId;
   String? get overviewControlSourceId => _overviewControlSourceId;
+
+  List<RequisitionSubjectSummary> get availableSubjects =>
+      _detail?.anchorableSubjects ?? const [];
+
+  int? selectedSubjectPersonId(String sourceId) =>
+      _selectedSubjectPersonIds[sourceId];
+
+  RequisitionSubjectSummary? selectedSubject(String sourceId) {
+    final selectedId = _selectedSubjectPersonIds[sourceId];
+    if (selectedId == null) return null;
+    for (final subject in availableSubjects) {
+      if (subject.personId == selectedId) return subject;
+    }
+    return null;
+  }
+
+  bool canChangeSubject(String sourceId) =>
+      availableSubjects.isNotEmpty &&
+      !isRestarting(sourceId) &&
+      !_isCapturing &&
+      recordingPhase(sourceId) == AcquisitionRecordingPhase.idle;
+
+  void selectSubject(String sourceId, int? personId) {
+    if (!canChangeSubject(sourceId)) return;
+    if (personId == null) {
+      _selectedSubjectPersonIds.remove(sourceId);
+    } else if (availableSubjects.any(
+      (subject) => subject.personId == personId,
+    )) {
+      _selectedSubjectPersonIds[sourceId] = personId;
+    } else {
+      return;
+    }
+    final deviceKey = _deviceKeysBySourceId[sourceId];
+    if (deviceKey != null) {
+      _repository.setSubjectForDevice(
+        requisitionId: requisitionId,
+        sessionId: sessionId,
+        deviceKey: deviceKey,
+        personId: personId,
+      );
+    }
+    _safeNotify();
+  }
+
+  List<int> _subjectIdsFor(String sourceId) {
+    final personId = selectedSubject(sourceId)?.personId;
+    return personId == null ? const [] : [personId];
+  }
 
   List<RequisitionEvidence> get evidence {
     final items = [...?_detail?.evidence]
@@ -174,6 +226,16 @@ class MultiMirrorViewModel extends ChangeNotifier {
         sessionId: sessionId,
       );
       if (_disposed) return;
+      _deviceKeysBySourceId
+        ..clear()
+        ..addEntries(
+          active.map(
+            (source) => MapEntry(
+              source.sourceSessionId,
+              source.usbDeviceId ?? source.sourceSessionId,
+            ),
+          ),
+        );
       _sources = active
           .map(
             (source) => MultiMirrorSourceArgs(
@@ -190,10 +252,40 @@ class MultiMirrorViewModel extends ChangeNotifier {
       final activeSourceIds = _sources
           .map((source) => source.sourceSessionId)
           .toSet();
+      for (final sourceId in activeSourceIds) {
+        final deviceKey = _deviceKeysBySourceId[sourceId];
+        if (deviceKey == null) continue;
+        final personId = _repository.subjectPersonIdForDevice(
+          requisitionId: requisitionId,
+          sessionId: sessionId,
+          deviceKey: deviceKey,
+        );
+        if (personId != null &&
+            (_detail == null ||
+                availableSubjects.any(
+                  (subject) => subject.personId == personId,
+                ))) {
+          _selectedSubjectPersonIds[sourceId] = personId;
+        } else if (personId != null) {
+          _repository.setSubjectForDevice(
+            requisitionId: requisitionId,
+            sessionId: sessionId,
+            deviceKey: deviceKey,
+            personId: null,
+          );
+          _selectedSubjectPersonIds.remove(sourceId);
+        }
+      }
       _recordingPhases.removeWhere(
         (sourceId, _) => !activeSourceIds.contains(sourceId),
       );
       _recordingStartedAt.removeWhere(
+        (sourceId, _) => !activeSourceIds.contains(sourceId),
+      );
+      _selectedSubjectPersonIds.removeWhere(
+        (sourceId, _) => !activeSourceIds.contains(sourceId),
+      );
+      _recordingSubjectPersonIds.removeWhere(
         (sourceId, _) => !activeSourceIds.contains(sourceId),
       );
       if (_recordingStartedAt.isEmpty) {
@@ -296,6 +388,7 @@ class MultiMirrorViewModel extends ChangeNotifier {
         sourceSessionId: sourceId,
         requisitionId: requisitionId,
         sessionId: sessionId,
+        subjectPersonIds: _subjectIdsFor(sourceId),
       );
       _showMessage(
         'Captura de $sourceName guardada.',
@@ -354,6 +447,19 @@ class MultiMirrorViewModel extends ChangeNotifier {
           deviceName: restarted.deviceName,
         );
         _sources = updated;
+        if (restarted.sourceSessionId != sourceId) {
+          final selectedPersonId = _selectedSubjectPersonIds.remove(sourceId);
+          if (selectedPersonId != null) {
+            _selectedSubjectPersonIds[restarted.sourceSessionId] =
+                selectedPersonId;
+          }
+          if (_focusedSourceId == sourceId) {
+            _focusedSourceId = restarted.sourceSessionId;
+          }
+        }
+        _deviceKeysBySourceId.remove(sourceId);
+        _deviceKeysBySourceId[restarted.sourceSessionId] =
+            restarted.usbDeviceId ?? restarted.sourceSessionId;
       }
       _showMessage(
         'Mirror de ${restarted.deviceName} restablecido.',
@@ -409,15 +515,18 @@ class MultiMirrorViewModel extends ChangeNotifier {
           sourceSessionId: sourceId,
           requisitionId: requisitionId,
           sessionId: sessionId,
+          subjectPersonIds: _recordingSubjectPersonIds[sourceId] ?? const [],
         );
         _recordingPhases[sourceId] = AcquisitionRecordingPhase.idle;
         _recordingStartedAt.remove(sourceId);
+        _recordingSubjectPersonIds.remove(sourceId);
         _showMessage(
           'Video de $sourceName guardado.',
           sourceSessionId: sourceId,
         );
       } else {
         _recordingPhases[sourceId] = AcquisitionRecordingPhase.starting;
+        _recordingSubjectPersonIds[sourceId] = _subjectIdsFor(sourceId);
         _safeNotify();
         await _repository.startRecordingForSource(
           sourceSessionId: sourceId,
@@ -437,6 +546,9 @@ class MultiMirrorViewModel extends ChangeNotifier {
       }
     } catch (error) {
       _recordingPhases[sourceId] = previousPhase;
+      if (previousPhase == AcquisitionRecordingPhase.idle) {
+        _recordingSubjectPersonIds.remove(sourceId);
+      }
       _showMessage(
         _friendlyError(error),
         isError: true,

@@ -11,6 +11,7 @@ import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_diagnost
 import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_evidence_fab.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_evidence_pane.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_status_overlay.dart';
+import 'package:file_cast/ui/features/acquisition/shared/widgets/acquisition_subject_picker_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
@@ -359,11 +360,28 @@ class _MultiMirrorCard extends StatelessWidget {
                 const Icon(Icons.circle, size: 8, color: Colors.green),
                 const SizedBox(width: AppSpace.xs),
                 Expanded(
-                  child: Text(
-                    source.deviceName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleSmall,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        source.deviceName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      if (viewModel.selectedSubject(source.sourceSessionId)
+                          case final subject?)
+                        Text(
+                          subject.name.toUpperCase(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(
+                                color: Theme.of(context).colorScheme.primary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                    ],
                   ),
                 ),
                 if (viewModel.isRecording(source.sourceSessionId))
@@ -390,6 +408,36 @@ class _MultiMirrorCard extends StatelessWidget {
                           'assets/images/icons/refresh.svg',
                           size: 20,
                         ),
+                ),
+                IconButton(
+                  onPressed:
+                      viewModel.canChangeSubject(
+                        source.sourceSessionId,
+                      )
+                      ? () => showAcquisitionSubjectPicker(
+                          context: context,
+                          subjects: viewModel.availableSubjects,
+                          selectedPersonId: viewModel.selectedSubjectPersonId(
+                            source.sourceSessionId,
+                          ),
+                          onSelected: (personId) => viewModel.selectSubject(
+                            source.sourceSessionId,
+                            personId,
+                          ),
+                          deviceName: source.deviceName,
+                        )
+                      : null,
+                  tooltip: viewModel.availableSubjects.isEmpty
+                      ? 'La requisa no tiene sujetos de un CUD para vincular'
+                      : viewModel.selectedSubject(source.sourceSessionId) ==
+                            null
+                      ? 'Vincular dispositivo a un sujeto'
+                      : 'Cambiar sujeto vinculado',
+                  icon: Icon(
+                    viewModel.selectedSubject(source.sourceSessionId) == null
+                        ? Icons.person_add_alt_1_outlined
+                        : Icons.person_pin_circle_rounded,
+                  ),
                 ),
                 if (showFocusAction)
                   IconButton.filledTonal(

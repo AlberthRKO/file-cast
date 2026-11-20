@@ -23,6 +23,44 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
   final RequisitionDetailRepository _detailRepository;
   final RemoteDocumentPreviewService _documentPreviewService;
   final EvidenceSyncService? _syncService;
+  final Map<String, int> _subjectByDevice = {};
+
+  String _subjectDeviceKey({
+    required String requisitionId,
+    required String sessionId,
+    required String deviceKey,
+  }) => '$requisitionId\u0000$sessionId\u0000$deviceKey';
+
+  @override
+  int? subjectPersonIdForDevice({
+    required String requisitionId,
+    required String sessionId,
+    required String deviceKey,
+  }) =>
+      _subjectByDevice[_subjectDeviceKey(
+        requisitionId: requisitionId,
+        sessionId: sessionId,
+        deviceKey: deviceKey,
+      )];
+
+  @override
+  void setSubjectForDevice({
+    required String requisitionId,
+    required String sessionId,
+    required String deviceKey,
+    required int? personId,
+  }) {
+    final key = _subjectDeviceKey(
+      requisitionId: requisitionId,
+      sessionId: sessionId,
+      deviceKey: deviceKey,
+    );
+    if (personId == null) {
+      _subjectByDevice.remove(key);
+    } else {
+      _subjectByDevice[key] = personId;
+    }
+  }
 
   @override
   Stream<void> get deviceChanges => _platformService.deviceChanges;
@@ -121,6 +159,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
     required String sourceSessionId,
     required String requisitionId,
     required String sessionId,
+    List<int> subjectPersonIds = const [],
   }) async {
     final captured = await _platformService.captureScreenshotForSource(
       sourceSessionId: sourceSessionId,
@@ -132,6 +171,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
       sessionId: sessionId,
       captured: captured,
       type: RequisitionEvidenceType.image,
+      subjectPersonIds: subjectPersonIds,
     );
   }
 
@@ -153,6 +193,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
     required String sourceSessionId,
     required String requisitionId,
     required String sessionId,
+    List<int> subjectPersonIds = const [],
   }) async {
     final captured = await _platformService.stopRecordingForSource(
       sourceSessionId,
@@ -162,6 +203,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
       sessionId: sessionId,
       captured: captured,
       type: RequisitionEvidenceType.video,
+      subjectPersonIds: subjectPersonIds,
     );
     return detail;
   }
@@ -222,6 +264,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
   Future<RequisitionDetail> captureScreenshot({
     required String requisitionId,
     required String sessionId,
+    List<int> subjectPersonIds = const [],
   }) async {
     final captured = await _platformService.captureScreenshot(
       requisitionId: requisitionId,
@@ -232,6 +275,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
       sessionId: sessionId,
       captured: captured,
       type: RequisitionEvidenceType.image,
+      subjectPersonIds: subjectPersonIds,
     );
   }
 
@@ -250,6 +294,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
   Future<RequisitionDetail> stopRecording({
     required String requisitionId,
     required String sessionId,
+    List<int> subjectPersonIds = const [],
   }) async {
     final captured = await _platformService.stopRecording();
     return _register(
@@ -257,6 +302,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
       sessionId: sessionId,
       captured: captured,
       type: RequisitionEvidenceType.video,
+      subjectPersonIds: subjectPersonIds,
     );
   }
 
@@ -265,6 +311,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
     required String sessionId,
     required CapturedEvidence captured,
     required RequisitionEvidenceType type,
+    required List<int> subjectPersonIds,
   }) async {
     final detail = await _detailRepository.addImportedEvidence(
       requisitionId: requisitionId,
@@ -280,6 +327,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
       acquisitionMethod: type == RequisitionEvidenceType.image
           ? 'SCREEN_CAPTURE'
           : 'SCREEN_RECORDING',
+      subjectPersonIds: subjectPersonIds,
     );
     _triggerBackgroundSync();
     return detail;
@@ -343,6 +391,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
     required String requisitionId,
     required String sessionId,
     required List<RemoteFileEntry> files,
+    List<int> subjectPersonIds = const [],
   }) async {
     final result = await _platformService.transferRemoteFiles(
       requisitionId: requisitionId,
@@ -368,6 +417,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
                   captured.name,
                 ),
                 acquisitionMethod: 'DEVICE_TRANSFER',
+                subjectPersonIds: subjectPersonIds,
               ),
             )
             .toList(growable: false),

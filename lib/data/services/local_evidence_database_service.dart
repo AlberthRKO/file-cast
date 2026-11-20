@@ -59,7 +59,7 @@ class LocalEvidenceDatabaseService {
       return await openDatabase(
         path,
         password: key,
-        version: 6,
+        version: 7,
         onCreate: (db, _) async {
           await db.execute('''
             CREATE TABLE evidencias_locales (
@@ -84,6 +84,7 @@ class LocalEvidenceDatabaseService {
               estado TEXT NOT NULL,
               ms_archivo_id TEXT,
               ruta_origen TEXT,
+              sujeto_person_ids TEXT NOT NULL DEFAULT '[]',
               client_operation_id TEXT NOT NULL,
               creado_at TEXT NOT NULL,
               actualizado_at TEXT NOT NULL
@@ -150,6 +151,14 @@ class LocalEvidenceDatabaseService {
               table: 'evidencias_locales',
               column: 'nombre_mostrado',
               definition: 'TEXT',
+            );
+          }
+          if (oldVersion < 7) {
+            await _ensureColumn(
+              db,
+              table: 'evidencias_locales',
+              column: 'sujeto_person_ids',
+              definition: "TEXT NOT NULL DEFAULT '[]'",
             );
           }
         },
@@ -782,6 +791,7 @@ final class LocalEvidenceRecord {
     required this.clientOperationId,
     required this.createdAt,
     this.sourcePath,
+    this.subjectPersonIds = const [],
     this.msFileId,
     this.displayName,
   });
@@ -808,6 +818,7 @@ final class LocalEvidenceRecord {
   final String clientOperationId;
   final DateTime createdAt;
   final String? sourcePath;
+  final List<int> subjectPersonIds;
   final String? msFileId;
 
   Map<String, Object?> toMap() => {
@@ -832,6 +843,7 @@ final class LocalEvidenceRecord {
     'estado': state,
     'ms_archivo_id': msFileId,
     'ruta_origen': sourcePath,
+    'sujeto_person_ids': jsonEncode(subjectPersonIds),
     'client_operation_id': clientOperationId,
     'creado_at': createdAt.toUtc().toIso8601String(),
     'actualizado_at': createdAt.toUtc().toIso8601String(),
@@ -861,7 +873,21 @@ final class LocalEvidenceRecord {
       clientOperationId: map['client_operation_id']! as String,
       createdAt: DateTime.parse(map['creado_at']! as String),
       sourcePath: map['ruta_origen'] as String?,
+      subjectPersonIds: _decodeSubjectPersonIds(
+        map['sujeto_person_ids'] as String?,
+      ),
       msFileId: map['ms_archivo_id'] as String?,
     );
+  }
+
+  static List<int> _decodeSubjectPersonIds(String? value) {
+    if (value == null || value.isEmpty) return const [];
+    try {
+      final decoded = jsonDecode(value);
+      if (decoded is! List) return const [];
+      return decoded.whereType<num>().map((item) => item.toInt()).toList();
+    } on FormatException {
+      return const [];
+    }
   }
 }

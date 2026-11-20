@@ -11,6 +11,7 @@ import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
 import 'package:file_cast/ui/features/acquisition/transfer/view_models/file_transfer_view_model.dart';
 import 'package:file_cast/ui/features/acquisition/transfer/widgets/file_transfer_widgets.dart';
 import 'package:file_cast/ui/features/acquisition/transfer/widgets/remote_file_preview_sheet.dart';
+import 'package:file_cast/ui/features/acquisition/shared/widgets/acquisition_subject_picker_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -178,6 +179,18 @@ class _BrowserPane extends StatelessWidget {
         items: viewModel.breadcrumbs,
         onTap: viewModel.openPath,
         onRefresh: viewModel.refresh,
+        subjectSelectionEnabled: viewModel.canChangeSubject,
+        subjectLinked: viewModel.selectedSubject != null,
+        onChooseSubject: viewModel.availableSubjects.isEmpty
+            ? null
+            : () => showAcquisitionSubjectPicker(
+                context: context,
+                subjects: viewModel.availableSubjects,
+                selectedPersonId: viewModel.selectedSubjectPersonId,
+                onSelected: viewModel.selectSubject,
+                deviceName:
+                    viewModel.connection?.deviceName ?? 'Dispositivo conectado',
+              ),
       ),
       const SizedBox(height: AppSpace.s),
       Expanded(child: _BrowserContent(viewModel: viewModel)),

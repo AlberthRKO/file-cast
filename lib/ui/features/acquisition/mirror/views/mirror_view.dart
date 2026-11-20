@@ -12,6 +12,7 @@ import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_diagnost
 import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_evidence_fab.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_evidence_pane.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_status_overlay.dart';
+import 'package:file_cast/ui/features/acquisition/shared/widgets/acquisition_subject_picker_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
@@ -107,12 +108,35 @@ class MirrorView extends StatelessWidget {
                     ),
                   ),
           ),
-          Padding(
-            padding: const EdgeInsets.only(right: AppSpace.m),
-            child: _ConnectionChip(
-              deviceName: compactWindow ? 'Conectado' : args.deviceName,
+          IconButton(
+            onPressed: viewModel.canChangeSubject
+                ? () => showAcquisitionSubjectPicker(
+                    context: context,
+                    subjects: viewModel.availableSubjects,
+                    selectedPersonId: viewModel.selectedSubjectPersonId,
+                    onSelected: viewModel.selectSubject,
+                    deviceName: args.deviceName,
+                  )
+                : null,
+            tooltip: viewModel.availableSubjects.isEmpty
+                ? 'La requisa no tiene sujetos de un CUD para vincular'
+                : viewModel.selectedSubject == null
+                ? 'Vincular dispositivo a un sujeto'
+                : 'Cambiar sujeto vinculado',
+            icon: Icon(
+              viewModel.selectedSubject == null
+                  ? Icons.person_add_alt_1_outlined
+                  : Icons.person_pin_circle_rounded,
             ),
           ),
+          if (!compactWindow)
+            Padding(
+              padding: const EdgeInsets.only(right: AppSpace.m),
+              child: _ConnectionChip(
+                deviceName: args.deviceName,
+                subjectName: viewModel.selectedSubject?.name.toUpperCase(),
+              ),
+            ),
         ],
       ),
       floatingActionButton: viewModel.showEvidence
@@ -127,7 +151,11 @@ class MirrorView extends StatelessWidget {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final expanded = constraints.maxWidth >= 840;
-            final mirror = _MirrorPane(args: args, viewModel: viewModel);
+            final mirror = _MirrorPane(
+              args: args,
+              viewModel: viewModel,
+              showDeviceLabel: compactWindow,
+            );
             final evidence = viewModel.evidencePaneInitialized
                 ? MirrorEvidencePane(
                     key: const ValueKey('mirror-evidence-pane'),
@@ -193,9 +221,14 @@ class MirrorView extends StatelessWidget {
 }
 
 class _MirrorPane extends StatelessWidget {
-  const _MirrorPane({required this.args, required this.viewModel});
+  const _MirrorPane({
+    required this.args,
+    required this.viewModel,
+    required this.showDeviceLabel,
+  });
   final MirrorRouteArgs args;
   final MirrorViewModel viewModel;
+  final bool showDeviceLabel;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -203,6 +236,16 @@ class _MirrorPane extends StatelessWidget {
     decoration: _cardDecoration(context),
     child: Column(
       children: [
+        if (showDeviceLabel) ...[
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _ConnectionChip(
+              deviceName: args.deviceName,
+              subjectName: viewModel.selectedSubject?.name.toUpperCase(),
+            ),
+          ),
+          const SizedBox(height: AppSpace.s),
+        ],
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) => Stack(
@@ -298,8 +341,9 @@ class _MirrorPane extends StatelessWidget {
 }
 
 class _ConnectionChip extends StatelessWidget {
-  const _ConnectionChip({required this.deviceName});
+  const _ConnectionChip({required this.deviceName, this.subjectName});
   final String deviceName;
+  final String? subjectName;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -315,10 +359,27 @@ class _ConnectionChip extends StatelessWidget {
         const Icon(Icons.circle, size: 8, color: Colors.green),
         const SizedBox(width: AppSpace.xs),
         Flexible(
-          child: Text(
-            deviceName,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.labelSmall,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                deviceName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+              if (subjectName != null)
+                Text(
+                  subjectName!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+            ],
           ),
         ),
       ],

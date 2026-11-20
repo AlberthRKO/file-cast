@@ -14,6 +14,7 @@ class CaseSubjectsSheet extends StatefulWidget {
   }) : title = title,
        subtitle = subtitle,
        selectionEnabled = false,
+       singleSelection = false,
        confirmLabel = 'Aceptar',
        initialSelectedPersonIds = const {},
        onConfirm = null,
@@ -39,13 +40,15 @@ class CaseSubjectsSheet extends StatefulWidget {
     String title = 'Sujetos del caso',
     String? subtitle,
     bool selectionEnabled = false,
+    bool singleSelection = false,
     Set<int> initialSelectedPersonIds = const {},
-    String confirmLabel = 'Anclar',
+    String confirmLabel = 'Guardar',
     Future<String?> Function(List<int> personIds)? onConfirm,
     super.key,
   }) : title = title,
        subtitle = subtitle,
        selectionEnabled = selectionEnabled,
+       singleSelection = singleSelection,
        confirmLabel = confirmLabel,
        initialSelectedPersonIds = initialSelectedPersonIds,
        onConfirm = onConfirm,
@@ -69,6 +72,7 @@ class CaseSubjectsSheet extends StatefulWidget {
   final String? subtitle;
   final List<_CaseSubjectItem> _subjects;
   final bool selectionEnabled;
+  final bool singleSelection;
   final Set<int> initialSelectedPersonIds;
   final String confirmLabel;
   final Future<String?> Function(List<int> personIds)? onConfirm;
@@ -104,9 +108,12 @@ class _CaseSubjectsSheetState extends State<CaseSubjectsSheet> {
         .map((subject) => subject.personId)
         .whereType<int>()
         .toSet();
-    _selectedPersonIds = widget.initialSelectedPersonIds
+    final selectedPersonIds = widget.initialSelectedPersonIds
         .where(availablePersonIds.contains)
         .toSet();
+    _selectedPersonIds = widget.singleSelection && selectedPersonIds.length > 1
+        ? {selectedPersonIds.first}
+        : selectedPersonIds;
   }
 
   @override
@@ -202,6 +209,7 @@ class _CaseSubjectsSheetState extends State<CaseSubjectsSheet> {
                                   return _SubjectCard(
                                     subject: subject,
                                     selectable: widget.selectionEnabled,
+                                    singleSelection: widget.singleSelection,
                                     selected: selected,
                                     onPressed:
                                         _isConfirming ||
@@ -215,8 +223,10 @@ class _CaseSubjectsSheetState extends State<CaseSubjectsSheet> {
                       ),
                       if (widget.selectionEnabled) ...[
                         const SizedBox(height: AppSpace.s),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
+                        Wrap(
+                          alignment: WrapAlignment.end,
+                          spacing: AppSpace.s,
+                          runSpacing: AppSpace.s,
                           children: [
                             TextButton(
                               onPressed: _isConfirming
@@ -224,9 +234,13 @@ class _CaseSubjectsSheetState extends State<CaseSubjectsSheet> {
                                   : () => Navigator.of(context).pop(),
                               child: const Text('Cancelar'),
                             ),
-                            const SizedBox(width: AppSpace.s),
                             FilledButton.icon(
-                              onPressed: _isConfirming ? null : _confirm,
+                              onPressed:
+                                  _isConfirming ||
+                                      (widget.singleSelection &&
+                                          _selectedPersonIds.isEmpty)
+                                  ? null
+                                  : _confirm,
                               icon: _isConfirming
                                   ? const SizedBox.square(
                                       dimension: AppSize.iconS,
@@ -234,7 +248,11 @@ class _CaseSubjectsSheetState extends State<CaseSubjectsSheet> {
                                         strokeWidth: 2,
                                       ),
                                     )
-                                  : const Icon(Icons.link_rounded),
+                                  : Icon(
+                                      widget.singleSelection
+                                          ? Icons.person_outline_rounded
+                                          : Icons.link_rounded,
+                                    ),
                               label: Text(
                                 _isConfirming
                                     ? 'Guardando…'
@@ -257,6 +275,12 @@ class _CaseSubjectsSheetState extends State<CaseSubjectsSheet> {
 
   void _toggle(int personId) {
     setState(() {
+      if (widget.singleSelection) {
+        _selectedPersonIds
+          ..clear()
+          ..add(personId);
+        return;
+      }
       if (!_selectedPersonIds.add(personId)) {
         _selectedPersonIds.remove(personId);
       }
@@ -343,12 +367,14 @@ class _SubjectCard extends StatelessWidget {
   const _SubjectCard({
     required this.subject,
     required this.selectable,
+    required this.singleSelection,
     required this.selected,
     this.onPressed,
   });
 
   final _CaseSubjectItem subject;
   final bool selectable;
+  final bool singleSelection;
   final bool selected;
   final VoidCallback? onPressed;
 
@@ -455,9 +481,19 @@ class _SubjectCard extends StatelessWidget {
               ),
               if (selectable) ...[
                 const SizedBox(width: AppSpace.s),
-                Checkbox(
-                  value: selected,
-                  onChanged: onPressed == null ? null : (_) => onPressed!(),
+                Icon(
+                  singleSelection
+                      ? selected
+                            ? Icons.radio_button_checked_rounded
+                            : Icons.radio_button_unchecked_rounded
+                      : selected
+                      ? Icons.check_box_rounded
+                      : Icons.check_box_outline_blank_rounded,
+                  color: onPressed == null
+                      ? theme.disabledColor
+                      : selected
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurfaceVariant,
                 ),
               ],
             ],

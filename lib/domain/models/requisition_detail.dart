@@ -252,6 +252,7 @@ final class ImportedEvidenceDraft {
     this.aadHash,
     this.wrappedKey,
     this.keyVersion,
+    this.subjectPersonIds = const [],
     this.preserveSource = false,
   });
 
@@ -273,10 +274,12 @@ final class ImportedEvidenceDraft {
   final String? aadHash;
   final String? wrappedKey;
   final int? keyVersion;
+  final List<int> subjectPersonIds;
   final bool preserveSource;
 
   ImportedEvidenceDraft copyWith({
     String? sessionId,
+    List<int>? subjectPersonIds,
     bool? preserveSource,
   }) {
     return ImportedEvidenceDraft(
@@ -298,6 +301,7 @@ final class ImportedEvidenceDraft {
       aadHash: aadHash,
       wrappedKey: wrappedKey,
       keyVersion: keyVersion,
+      subjectPersonIds: subjectPersonIds ?? this.subjectPersonIds,
       preserveSource: preserveSource ?? this.preserveSource,
     );
   }
@@ -466,6 +470,16 @@ final class RequisitionDetail {
   final int version;
   final DateTime? createdAt;
   final DateTime? updatedAt;
+
+  List<RequisitionSubjectSummary> get anchorableSubjects {
+    if (caseInfo == null || caseSubjects.isEmpty) return const [];
+    final byPersonId = <int, RequisitionSubjectSummary>{};
+    for (final subject in caseSubjects) {
+      final personId = subject.personId;
+      if (personId != null) byPersonId.putIfAbsent(personId, () => subject);
+    }
+    return List.unmodifiable(byPersonId.values);
+  }
 
   RequisitionLocation? get location {
     final lat = latitude;

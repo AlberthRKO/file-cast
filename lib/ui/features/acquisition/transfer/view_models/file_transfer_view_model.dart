@@ -76,6 +76,8 @@ class FileTransferViewModel extends ChangeNotifier {
   StreamSubscription<void>? _deviceSubscription;
   FileBrowserPhase _phase = FileBrowserPhase.loading;
   RequisitionDetail? _detail;
+  int? _selectedSubjectPersonId;
+  String? _deviceKey;
   AcquisitionConnectionSession? _connection;
   String? _currentPath;
   List<RemoteFileEntry> _entries = const [];
@@ -91,6 +93,7 @@ class FileTransferViewModel extends ChangeNotifier {
 
   FileBrowserPhase get phase => _phase;
   RequisitionDetail? get detail => _detail;
+  int? get selectedSubjectPersonId => _selectedSubjectPersonId;
   AcquisitionConnectionSession? get connection => _connection;
   String? get currentPath => _currentPath;
   List<RemoteFileEntry> get entries => _entries;
@@ -111,6 +114,45 @@ class FileTransferViewModel extends ChangeNotifier {
     0,
     (total, file) => total + file.byteLength,
   );
+
+  List<RequisitionSubjectSummary> get availableSubjects =>
+      _detail?.anchorableSubjects ?? const [];
+
+  RequisitionSubjectSummary? get selectedSubject {
+    final selectedId = _selectedSubjectPersonId;
+    if (selectedId == null) return null;
+    for (final subject in availableSubjects) {
+      if (subject.personId == selectedId) return subject;
+    }
+    return null;
+  }
+
+  bool get canChangeSubject =>
+      availableSubjects.isNotEmpty && !_isTransferring && !_isPreparingPreview;
+
+  void selectSubject(int? personId) {
+    if (!canChangeSubject) return;
+    if (personId != null &&
+        !availableSubjects.any((subject) => subject.personId == personId)) {
+      return;
+    }
+    _selectedSubjectPersonId = personId;
+    final deviceKey = _deviceKey;
+    if (deviceKey != null) {
+      _repository.setSubjectForDevice(
+        requisitionId: requisitionId,
+        sessionId: sessionId,
+        deviceKey: deviceKey,
+        personId: personId,
+      );
+    }
+    _safeNotify();
+  }
+
+  List<int> get _selectedSubjectIds {
+    final personId = selectedSubject?.personId;
+    return personId == null ? const [] : [personId];
+  }
 
   List<FileBreadcrumb> get breadcrumbs {
     final path = _currentPath;
@@ -175,6 +217,8 @@ class FileTransferViewModel extends ChangeNotifier {
         requisitionId: requisitionId,
         sessionId: sessionId,
       );
+      final connection = _connection;
+      if (connection != null) _restoreSubjectAssociation(connection);
       if (_connection == null) {
         _phase = FileBrowserPhase.disconnected;
         _message =
@@ -372,6 +416,7 @@ class FileTransferViewModel extends ChangeNotifier {
         requisitionId: requisitionId,
         sessionId: sessionId,
         files: selectedFiles,
+        subjectPersonIds: _selectedSubjectIds,
       );
       for (final file in result.files) {
         final sourcePath = file.sourcePath;
@@ -418,11 +463,38 @@ class FileTransferViewModel extends ChangeNotifier {
       requisitionId: requisitionId,
       sessionId: sessionId,
     );
+    if (connection != null) {
+      _connection = connection;
+      _restoreSubjectAssociation(connection);
+      return;
+    }
     if (connection == null && !_isTransferring) {
       _connection = null;
       _phase = FileBrowserPhase.disconnected;
       _message = 'El dispositivo objetivo fue desconectado.';
       _safeNotify();
+    }
+  }
+
+  void _restoreSubjectAssociation(AcquisitionConnectionSession connection) {
+    final deviceKey = connection.usbDeviceId ?? connection.deviceName;
+    _deviceKey = deviceKey;
+    final personId = _repository.subjectPersonIdForDevice(
+      requisitionId: requisitionId,
+      sessionId: sessionId,
+      deviceKey: deviceKey,
+    );
+    if (personId == null ||
+        availableSubjects.any((subject) => subject.personId == personId)) {
+      _selectedSubjectPersonId = personId;
+    } else {
+      _repository.setSubjectForDevice(
+        requisitionId: requisitionId,
+        sessionId: sessionId,
+        deviceKey: deviceKey,
+        personId: null,
+      );
+      _selectedSubjectPersonId = null;
     }
   }
 

@@ -567,6 +567,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     String? aadHash,
     String? wrappedKey,
     int? keyVersion,
+    List<int> subjectPersonIds = const [],
     bool preserveSource = false,
   }) async {
     return addImportedEvidenceBatch(
@@ -591,6 +592,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
           aadHash: aadHash,
           wrappedKey: wrappedKey,
           keyVersion: keyVersion,
+          subjectPersonIds: subjectPersonIds,
           preserveSource: preserveSource,
         ),
       ],
@@ -644,6 +646,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
             clientOperationId: _uuid(),
             createdAt: timestamp,
             sourcePath: normalized.sourcePath,
+            subjectPersonIds: normalized.subjectPersonIds,
           ),
         );
       }
@@ -670,6 +673,10 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
           wrappedKey: normalized.wrappedKey,
           keyVersion: normalized.keyVersion,
           uploadStatus: 'PENDING_UPLOAD',
+          linkedSubjects: _localLinkedSubjects(
+            requisitionId,
+            normalized.subjectPersonIds,
+          ),
         ),
       );
     }
@@ -747,8 +754,37 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       aadHash: encrypted.aadHash,
       wrappedKey: encrypted.wrappedKey,
       keyVersion: encrypted.keyVersion,
+      subjectPersonIds: draft.subjectPersonIds,
       preserveSource: false,
     );
+  }
+
+  List<RequisitionEvidenceSubject> _localLinkedSubjects(
+    String requisitionId,
+    List<int> personIds,
+  ) {
+    if (personIds.isEmpty) return const [];
+    final detail = _cachedRemoteDetails[requisitionId];
+    if (detail == null) return const [];
+    final subjects = {
+      for (final subject in detail.anchorableSubjects)
+        if (subject.personId != null) subject.personId!: subject,
+    };
+    return personIds
+        .map((personId) => subjects[personId])
+        .whereType<RequisitionSubjectSummary>()
+        .map(
+          (subject) => RequisitionEvidenceSubject(
+            personId: subject.personId!,
+            name: subject.name,
+            documentNumber: subject.documentNumber,
+            caseSubjectId: subject.caseSubjectId,
+            subjectTypeName: subject.role,
+            subjectTypeColorHex: subject.subjectTypeColorHex,
+            source: 'MANUAL',
+          ),
+        )
+        .toList(growable: false);
   }
 
   String _backendKind(RequisitionEvidenceType type) => switch (type) {
@@ -807,6 +843,10 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       wrappedKey: record.wrappedKey,
       keyVersion: record.keyVersion,
       uploadStatus: _uploadStatusForLocalState(record.state),
+      linkedSubjects: _localLinkedSubjects(
+        record.requisitionId,
+        record.subjectPersonIds,
+      ),
     );
   }
 

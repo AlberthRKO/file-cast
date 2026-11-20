@@ -39,6 +39,18 @@ class TransferSessionHeader extends StatelessWidget {
                     color: scheme.onSurfaceVariant,
                   ),
                 ),
+                if (viewModel.selectedSubject case final subject?) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    subject.name.toUpperCase(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: scheme.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -239,12 +251,18 @@ class RemoteFileBreadcrumbs extends StatelessWidget {
     required this.items,
     required this.onTap,
     required this.onRefresh,
+    required this.onChooseSubject,
+    required this.subjectSelectionEnabled,
+    required this.subjectLinked,
     super.key,
   });
 
   final List<FileBreadcrumb> items;
   final ValueChanged<String?> onTap;
   final VoidCallback onRefresh;
+  final VoidCallback? onChooseSubject;
+  final bool subjectSelectionEnabled;
+  final bool subjectLinked;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -270,6 +288,19 @@ class RemoteFileBreadcrumbs extends StatelessWidget {
               ],
             ],
           ),
+        ),
+      ),
+      IconButton(
+        onPressed: subjectSelectionEnabled ? onChooseSubject : null,
+        tooltip: onChooseSubject == null
+            ? 'La requisa no tiene sujetos de un CUD para vincular'
+            : subjectLinked
+            ? 'Cambiar sujeto vinculado'
+            : 'Vincular dispositivo a un sujeto',
+        icon: Icon(
+          subjectLinked
+              ? Icons.person_pin_circle_rounded
+              : Icons.person_add_alt_1_outlined,
         ),
       ),
       IconButton(

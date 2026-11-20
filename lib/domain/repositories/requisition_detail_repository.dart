@@ -57,6 +57,7 @@ abstract interface class RequisitionDetailRepository {
     String? aadHash,
     String? wrappedKey,
     int? keyVersion,
+    List<int> subjectPersonIds = const [],
     bool preserveSource = false,
   });
   Future<RequisitionDetail> addImportedEvidenceBatch({

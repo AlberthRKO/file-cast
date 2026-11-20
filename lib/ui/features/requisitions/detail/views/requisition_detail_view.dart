@@ -600,10 +600,14 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
     if (subjects.isEmpty) {
       await showAppErrorBottomSheet(
         context,
-        'El CUD no contiene sujetos con personaId utilizable para anclar.',
+        'El CUD no contiene sujetos disponibles para asignar a la evidencia.',
       );
       return;
     }
+    final hasAssignedSubject = evidence.linkedSubjects.isNotEmpty;
+    final initialPersonId = hasAssignedSubject
+        ? evidence.linkedSubjects.first.personId
+        : null;
     final result = await showAppModalBottomSheet<Object?>(
       context: context,
       isDismissible: false,
@@ -611,16 +615,18 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
       maxWidth: AppSize.formMaxWidth,
       builder: (_) => CaseSubjectsSheet.fromRequisition(
         subjects: subjects,
-        title: 'Anclar evidencia a sujetos',
+        title: hasAssignedSubject
+            ? 'Cambiar sujeto de la evidencia'
+            : 'Asignar sujeto a la evidencia',
         subtitle: evidence.effectiveName,
         selectionEnabled: true,
+        singleSelection: true,
         initialSelectedPersonIds: {
-          for (final subject in evidence.linkedSubjects) subject.personId,
+          if (initialPersonId != null) initialPersonId,
         },
-        onConfirm: (personIds) => viewModel.setEvidenceSubjects(
-          evidence,
-          personIds,
-        ),
+        confirmLabel: hasAssignedSubject ? 'Guardar cambio' : 'Asignar sujeto',
+        onConfirm: (personIds) =>
+            viewModel.setEvidenceSubject(evidence, personIds.single),
       ),
     );
     if (!context.mounted) return;
@@ -631,7 +637,7 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
     if (result != true) return;
     await showAppSuccessBottomSheet(
       context,
-      'Sujetos de la evidencia actualizados.',
+      'Sujeto de la evidencia actualizado.',
     );
   }
 
@@ -2972,8 +2978,8 @@ class _EvidencePreview extends StatelessWidget {
                     const SizedBox(height: AppSpace.xxs),
                     Text(
                       evidence.linkedSubjects.isEmpty
-                          ? 'Sin sujetos anclados'
-                          : 'Sujetos: ${evidence.linkedSubjects.map((subject) => subject.name).join(', ')}',
+                          ? 'Sin sujeto asignado'
+                          : '${evidence.linkedSubjects.length == 1 ? 'Sujeto' : 'Sujetos'}: ${evidence.linkedSubjects.map((subject) => subject.name.toUpperCase()).join(', ')}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodySmall?.copyWith(
@@ -3008,6 +3014,7 @@ class _EvidencePreview extends StatelessWidget {
                 onDelete: onDelete,
                 onRename: onRename,
                 onAnchor: onAnchor,
+                hasAssignedSubject: evidence.linkedSubjects.isNotEmpty,
                 isBusy: isDeleting || isUploading,
               ),
           ],
@@ -3025,6 +3032,7 @@ class _EvidenceActionsMenu extends StatelessWidget {
     required this.onDelete,
     required this.onRename,
     required this.onAnchor,
+    required this.hasAssignedSubject,
     required this.isBusy,
   });
 
@@ -3032,6 +3040,7 @@ class _EvidenceActionsMenu extends StatelessWidget {
   final VoidCallback? onDelete;
   final VoidCallback? onRename;
   final VoidCallback? onAnchor;
+  final bool hasAssignedSubject;
   final bool isBusy;
 
   @override
@@ -3088,8 +3097,10 @@ class _EvidenceActionsMenu extends StatelessWidget {
             DropdownMenuItem<_EvidenceAction>(
               value: _EvidenceAction.anchor,
               child: _EvidenceActionRow(
-                icon: Icons.link_outlined,
-                label: 'Anclar a sujetos',
+                icon: hasAssignedSubject
+                    ? Icons.person_pin_circle_outlined
+                    : Icons.person_add_alt_1_outlined,
+                label: hasAssignedSubject ? 'Cambiar sujeto' : 'Asignar sujeto',
                 color: theme.colorScheme.onSurface,
               ),
             ),

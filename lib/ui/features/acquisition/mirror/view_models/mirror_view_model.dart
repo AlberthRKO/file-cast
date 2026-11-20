@@ -29,6 +29,10 @@ class MirrorViewModel extends ChangeNotifier {
   int get videoHeight => _videoHeight;
   RequisitionDetail? _detail;
   RequisitionDetail? get detail => _detail;
+  int? _selectedSubjectPersonId;
+  int? get selectedSubjectPersonId => _selectedSubjectPersonId;
+  String? _deviceKey;
+  List<int> _recordingSubjectPersonIds = const [];
   AcquisitionRecordingPhase _recordingPhase = AcquisitionRecordingPhase.idle;
   AcquisitionRecordingPhase get recordingPhase => _recordingPhase;
   bool _isCapturing = false;
@@ -60,6 +64,48 @@ class MirrorViewModel extends ChangeNotifier {
   String get diagnosticLog => _diagnosticLog;
   Timer? _diagnosticTimer;
   bool _refreshingDiagnostics = false;
+
+  List<RequisitionSubjectSummary> get availableSubjects =>
+      _detail?.anchorableSubjects ?? const [];
+
+  RequisitionSubjectSummary? get selectedSubject {
+    final selectedId = _selectedSubjectPersonId;
+    if (selectedId == null) return null;
+    for (final subject in availableSubjects) {
+      if (subject.personId == selectedId) return subject;
+    }
+    return null;
+  }
+
+  bool get canChangeSubject =>
+      availableSubjects.isNotEmpty &&
+      !_isRestarting &&
+      !_isCapturing &&
+      _recordingPhase == AcquisitionRecordingPhase.idle;
+
+  void selectSubject(int? personId) {
+    if (!canChangeSubject) return;
+    if (personId != null &&
+        !availableSubjects.any((subject) => subject.personId == personId)) {
+      return;
+    }
+    _selectedSubjectPersonId = personId;
+    final deviceKey = _deviceKey;
+    if (deviceKey != null) {
+      _repository.setSubjectForDevice(
+        requisitionId: requisitionId,
+        sessionId: sessionId,
+        deviceKey: deviceKey,
+        personId: personId,
+      );
+    }
+    _safeNotify();
+  }
+
+  List<int> get _selectedSubjectIds {
+    final personId = selectedSubject?.personId;
+    return personId == null ? const [] : [personId];
+  }
 
   List<RequisitionEvidence> get evidence {
     final items = [...?_detail?.evidence]
@@ -109,6 +155,7 @@ class MirrorViewModel extends ChangeNotifier {
         sessionId: sessionId,
       );
       if (session != null) {
+        _restoreSubjectAssociation(session);
         _videoWidth = session.videoWidth;
         _videoHeight = session.videoHeight;
       }
@@ -124,6 +171,11 @@ class MirrorViewModel extends ChangeNotifier {
     });
     try {
       _detail = await _repository.getRequisitionDetail(requisitionId);
+      final session = await _repository.activeSession(
+        requisitionId: requisitionId,
+        sessionId: sessionId,
+      );
+      if (session != null) _restoreSubjectAssociation(session);
     } catch (_) {
       _showMessage(
         'No se pudo cargar el resumen de la requisa.',
@@ -132,6 +184,29 @@ class MirrorViewModel extends ChangeNotifier {
       );
     }
     _safeNotify();
+  }
+
+  void _restoreSubjectAssociation(AcquisitionMirrorSession session) {
+    final deviceKey = session.usbDeviceId ?? session.sourceSessionId;
+    _deviceKey = deviceKey;
+    final personId = _repository.subjectPersonIdForDevice(
+      requisitionId: requisitionId,
+      sessionId: sessionId,
+      deviceKey: deviceKey,
+    );
+    if (_detail == null ||
+        personId == null ||
+        availableSubjects.any((subject) => subject.personId == personId)) {
+      _selectedSubjectPersonId = personId;
+    } else {
+      _repository.setSubjectForDevice(
+        requisitionId: requisitionId,
+        sessionId: sessionId,
+        deviceKey: deviceKey,
+        personId: null,
+      );
+      _selectedSubjectPersonId = null;
+    }
   }
 
   Future<void> _refreshEvidenceDetail() async {
@@ -222,6 +297,7 @@ class MirrorViewModel extends ChangeNotifier {
       _detail = await _repository.captureScreenshot(
         requisitionId: requisitionId,
         sessionId: sessionId,
+        subjectPersonIds: _selectedSubjectIds,
       );
       _showMessage('Captura guardada.', notify: false);
     } catch (error) {
@@ -300,6 +376,7 @@ class MirrorViewModel extends ChangeNotifier {
       _recordingPhase = AcquisitionRecordingPhase.starting;
       _safeNotify();
       try {
+        _recordingSubjectPersonIds = _selectedSubjectIds;
         await _repository.startRecording(
           requisitionId: requisitionId,
           sessionId: sessionId,
@@ -312,6 +389,7 @@ class MirrorViewModel extends ChangeNotifier {
         );
         _showMessage('Grabación iniciada.', notify: false);
       } catch (error) {
+        _recordingSubjectPersonIds = const [];
         _recordingPhase = AcquisitionRecordingPhase.idle;
         _showMessage(
           'No se pudo iniciar la grabación: ${_userFacingError(error)}',
@@ -330,6 +408,7 @@ class MirrorViewModel extends ChangeNotifier {
         .stopRecording(
           requisitionId: requisitionId,
           sessionId: sessionId,
+          subjectPersonIds: _recordingSubjectPersonIds,
         )
         .then<void>((detail) {
           if (!_disposed) _detail = detail;
@@ -351,6 +430,7 @@ class MirrorViewModel extends ChangeNotifier {
     }
     _recordingPhase = AcquisitionRecordingPhase.idle;
     _recordingStartedAt = null;
+    _recordingSubjectPersonIds = const [];
     _safeNotify();
   }
 
@@ -468,6 +548,7 @@ class MirrorViewModel extends ChangeNotifier {
         await _repository.stopRecording(
           requisitionId: requisitionId,
           sessionId: sessionId,
+          subjectPersonIds: _recordingSubjectPersonIds,
         );
       } catch (_) {
         // disconnect() still releases the native mirror even if finalizing the

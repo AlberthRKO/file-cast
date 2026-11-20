@@ -47,6 +47,7 @@ abstract interface class AcquisitionRepository {
     required String sourceSessionId,
     required String requisitionId,
     required String sessionId,
+    List<int> subjectPersonIds = const [],
   });
   Future<void> startRecordingForSource({
     required String sourceSessionId,
@@ -57,6 +58,7 @@ abstract interface class AcquisitionRepository {
     required String sourceSessionId,
     required String requisitionId,
     required String sessionId,
+    List<int> subjectPersonIds = const [],
   });
   Future<String> getMultiControlDiagnostics(String sourceSessionId);
   Future<AcquisitionConnectionSession> connectForTransfer({
@@ -72,6 +74,17 @@ abstract interface class AcquisitionRepository {
     required String requisitionId,
     required String sessionId,
   });
+  int? subjectPersonIdForDevice({
+    required String requisitionId,
+    required String sessionId,
+    required String deviceKey,
+  });
+  void setSubjectForDevice({
+    required String requisitionId,
+    required String sessionId,
+    required String deviceKey,
+    required int? personId,
+  });
   Future<RequisitionDetail> getRequisitionDetail(String requisitionId);
   Future<RequisitionDetail> getCachedRequisitionDetail(String requisitionId);
   Future<RequisitionDetail> renameEvidence({
@@ -82,6 +95,7 @@ abstract interface class AcquisitionRepository {
   Future<RequisitionDetail> captureScreenshot({
     required String requisitionId,
     required String sessionId,
+    List<int> subjectPersonIds = const [],
   });
   Future<void> startRecording({
     required String requisitionId,
@@ -90,6 +104,7 @@ abstract interface class AcquisitionRepository {
   Future<RequisitionDetail> stopRecording({
     required String requisitionId,
     required String sessionId,
+    List<int> subjectPersonIds = const [],
   });
   Stream<FileTransferProgress> get fileTransferProgress;
   Future<List<RemoteFileEntry>> listRemoteFiles(String remotePath);
@@ -106,6 +121,7 @@ abstract interface class AcquisitionRepository {
     required String requisitionId,
     required String sessionId,
     required List<RemoteFileEntry> files,
+    List<int> subjectPersonIds = const [],
   });
   Future<void> cancelFileTransfer();
   Future<void> disconnect();

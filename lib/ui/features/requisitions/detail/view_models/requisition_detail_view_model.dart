@@ -667,23 +667,23 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     }
   }
 
-  Future<String?> setEvidenceSubjects(
+  Future<String?> setEvidenceSubject(
     RequisitionEvidence evidence,
-    List<int> personIds,
+    int personId,
   ) async {
     if (_disposed) return 'El detalle de la requisa ya no está disponible.';
     try {
       _detail = await _repository.setEvidenceSubjects(
         requisitionId: requisitionId,
         evidence: evidence,
-        personIds: personIds,
+        personIds: [personId],
       );
       _safeNotify();
       return null;
     } catch (error) {
       return _messageFromError(
         error,
-        fallback: 'No se pudieron actualizar los sujetos de la evidencia.',
+        fallback: 'No se pudo actualizar el sujeto de la evidencia.',
       );
     }
   }
