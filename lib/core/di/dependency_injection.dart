@@ -14,6 +14,7 @@ import 'package:file_cast/data/services/requisition_creation_service.dart';
 import 'package:file_cast/data/services/android_acquisition_platform_service.dart';
 import 'package:file_cast/data/services/android_evidence_video_thumbnail_service.dart';
 import 'package:file_cast/data/services/ios_evidence_video_thumbnail_service.dart';
+import 'package:file_cast/data/services/just_audio_playback_service.dart';
 import 'package:file_cast/data/services/evidence_picker_service.dart';
 import 'package:file_cast/data/services/evidence_crypto_service.dart';
 import 'package:file_cast/data/services/evidence_background_sync_service.dart';
@@ -34,6 +35,7 @@ import 'package:file_cast/domain/repositories/requisition_creation_repository.da
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
 import 'package:file_cast/domain/services/evidence_decryption_service.dart';
+import 'package:file_cast/domain/services/audio_playback_service.dart';
 import 'package:file_cast/domain/services/evidence_preview_service.dart';
 import 'package:file_cast/domain/services/evidence_video_thumbnail_service.dart';
 import 'package:file_cast/ui/core/navigation/app_router.dart';
@@ -166,6 +168,9 @@ class DependencyInjection {
       ),
       Provider<EvidencePickerService>(
         create: (_) => EvidencePickerService(),
+      ),
+      Provider<AudioPlaybackService>(
+        create: (_) => JustAudioPlaybackService(),
       ),
       Provider<RemoteDocumentPreviewService>(
         create: (_) => const RemoteDocumentPreviewService(),

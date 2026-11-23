@@ -2,6 +2,8 @@ import 'package:file_cast/domain/models/requisition.dart';
 
 enum RequisitionEvidenceType { image, video, audio, document, other }
 
+enum EvidencePickerSource { files, photoLibrary }
+
 enum RequisitionSessionStatus { open, completed, failed, cancelled }
 
 final class RequisitionSubjectSummary {

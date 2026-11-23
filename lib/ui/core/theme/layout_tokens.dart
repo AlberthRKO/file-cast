@@ -32,4 +32,5 @@ abstract final class AppSize {
   static const actionMaxWidth = 240.0;
   static const contentMaxWidth = 1200.0;
   static const supportingPaneWidth = 360.0;
+  static const mediaVolumeSliderWidth = 128.0;
 }

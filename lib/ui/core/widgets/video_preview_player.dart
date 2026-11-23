@@ -33,7 +33,8 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
 
   Duration? _scrubPosition;
   bool _wasPlayingBeforeScrub = false;
-  bool _isMuted = false;
+  double _volume = 1;
+  double _lastAudibleVolume = 1;
 
   @override
   void initState() {
@@ -48,7 +49,8 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
       unawaited(_adapter.dispose());
       _scrubPosition = null;
       _wasPlayingBeforeScrub = false;
-      _isMuted = false;
+      _volume = 1;
+      _lastAudibleVolume = 1;
       _replaceAdapter();
     }
   }
@@ -128,10 +130,16 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
     await _adapter.play();
   }
 
-  Future<void> _toggleMute() async {
-    final nextMuted = !_isMuted;
-    setState(() => _isMuted = nextMuted);
-    await _adapter.setVolume(nextMuted ? 0 : 1);
+  void _setVolume(double value) {
+    setState(() {
+      _volume = value;
+      if (value > 0) _lastAudibleVolume = value;
+    });
+    unawaited(_adapter.setVolume(value));
+  }
+
+  void _toggleMute() {
+    _setVolume(_volume > 0 ? 0 : _lastAudibleVolume);
   }
 
   @override
@@ -284,16 +292,28 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
                               ),
                             ),
                             IconButton(
-                              tooltip: _isMuted
+                              tooltip: _volume == 0
                                   ? 'Activar sonido'
                                   : 'Silenciar',
                               color: scheme.onSurface,
                               iconSize: 25,
-                              onPressed: () => unawaited(_toggleMute()),
+                              onPressed: _toggleMute,
                               icon: Icon(
-                                _isMuted
+                                _volume == 0
                                     ? Icons.volume_off_rounded
                                     : Icons.volume_up_rounded,
+                              ),
+                            ),
+                            Flexible(
+                              fit: FlexFit.loose,
+                              child: SizedBox(
+                                width: AppSize.mediaVolumeSliderWidth,
+                                child: Slider(
+                                  value: _volume,
+                                  onChanged: _setVolume,
+                                  semanticFormatterCallback: (value) =>
+                                      'Volumen ${(value * 100).round()} por ciento',
+                                ),
                               ),
                             ),
                           ],

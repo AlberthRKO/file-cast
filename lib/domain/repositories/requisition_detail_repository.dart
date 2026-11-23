@@ -36,7 +36,9 @@ abstract interface class RequisitionDetailRepository {
   });
   Future<List<ImportedEvidenceDraft>?> pickEvidence({
     required bool imagesOnly,
+    EvidencePickerSource source = EvidencePickerSource.files,
   });
+  Future<void> releasePickedEvidence(List<ImportedEvidenceDraft> evidence);
   Future<RequisitionDetail> addImportedEvidence({
     required String requisitionId,
     required String name,

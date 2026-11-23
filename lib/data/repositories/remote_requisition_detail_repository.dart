@@ -279,8 +279,12 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
   @override
   Future<List<ImportedEvidenceDraft>?> pickEvidence({
     required bool imagesOnly,
+    EvidencePickerSource source = EvidencePickerSource.files,
   }) async {
-    final picked = await _pickerService.pickFiles(imagesOnly: imagesOnly);
+    final picked = await _pickerService.pickFiles(
+      imagesOnly: imagesOnly,
+      fromPhotoLibrary: source == EvidencePickerSource.photoLibrary,
+    );
     if (picked == null || picked.isEmpty) return null;
     return picked
         .map(
@@ -292,11 +296,18 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
             localPath: file.localPath,
             mimeType: file.mimeType,
             acquisitionMethod: 'IMPORTED_FILE',
-            preserveSource: true,
+            preserveSource: !file.ownedPickerCopy,
           ),
         )
         .toList(growable: false);
   }
+
+  @override
+  Future<void> releasePickedEvidence(
+    List<ImportedEvidenceDraft> evidence,
+  ) => _pickerService.releaseOwnedPickerPaths(
+    evidence.map((draft) => draft.localPath),
+  );
 
   @override
   Future<RequisitionDetail> getDetail(String requisitionId) async {
@@ -648,13 +659,14 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     final database = _database;
     if (database == null) return const <LocalEvidenceRecord>[];
     try {
-      // Esta lectura no modifica la base. No debe esperar el lock global,
-      // porque WorkManager puede conservarlo mientras sincroniza evidencias.
-      // Si SQLite está ocupado o la apertura cifrada se demora, el detalle
-      // remoto sigue siendo suficiente para renderizar la pantalla.
-      final local = await database
-          .forRequisition(requisitionId)
-          .timeout(const Duration(seconds: 2));
+      // En la primera apertura, SQLCipher y el Keychain de iPadOS pueden
+      // tardar más de dos segundos. Esperar esa lectura evita mostrar una
+      // falsa pérdida de copias offline tras reiniciar la app.
+      final cached = _cachedLocalEvidence[requisitionId];
+      final read = database.forRequisition(requisitionId);
+      final local = cached == null
+          ? await read
+          : await read.timeout(const Duration(seconds: 2));
       _cachedLocalEvidence[requisitionId] = local;
       return local;
     } on Object {
@@ -855,12 +867,16 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       }
       rethrow;
     }
+    final encryptedPath = await _persistEncryptedFile(
+      evidenceId: evidenceId,
+      encrypted: encrypted,
+    );
     return ImportedEvidenceDraft(
       name: encrypted.name,
       type: draft.type,
       sizeLabel: _formatSize(encrypted.byteLength),
       byteLength: encrypted.byteLength,
-      localPath: encrypted.localPath,
+      localPath: encryptedPath,
       sha256: encrypted.sha256,
       sourcePath: draft.sourcePath,
       sessionId: draft.sessionId,
@@ -877,6 +893,43 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       subjectPersonIds: draft.subjectPersonIds,
       preserveSource: false,
     );
+  }
+
+  Future<String> _persistEncryptedFile({
+    required String evidenceId,
+    required EncryptedEvidenceLocal encrypted,
+  }) async {
+    final database = _database;
+    if (database == null) return encrypted.localPath;
+    final destinationPath = await database.persistentEncryptedPath(evidenceId);
+    if (encrypted.localPath == destinationPath) return destinationPath;
+    final source = File(encrypted.localPath);
+    final destination = File(destinationPath);
+    if (await destination.exists()) {
+      throw StateError('Ya existe una copia cifrada con esta identidad.');
+    }
+    try {
+      await source.rename(destinationPath);
+    } on FileSystemException {
+      final staging = File('$destinationPath.part');
+      try {
+        if (await staging.exists()) await staging.delete();
+        await source.copy(staging.path);
+        if (await staging.length() != encrypted.byteLength) {
+          throw StateError('La copia cifrada no se guardó completa.');
+        }
+        await staging.rename(destinationPath);
+        try {
+          await source.delete();
+        } on FileSystemException {
+          // La copia persistente ya está instalada y verificada por tamaño.
+        }
+      } catch (_) {
+        if (await staging.exists()) await staging.delete();
+        rethrow;
+      }
+    }
+    return destinationPath;
   }
 
   List<RequisitionEvidenceSubject> _localLinkedSubjects(

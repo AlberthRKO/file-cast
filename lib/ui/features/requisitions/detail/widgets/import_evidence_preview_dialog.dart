@@ -62,8 +62,8 @@ class ImportEvidencePreviewDialog extends StatelessWidget {
               ),
               const SizedBox(height: AppSpace.s),
               Text(
-                'Estos archivos se cifrarán y se subirán de forma segura. '
-                'Puedes seguir usando la aplicación después de confirmar.',
+                'Estos archivos se cifrarán y quedarán guardados en el dispositivo. '
+                'Si no hay conexión, se subirán cuando vuelva internet.',
                 style: theme.textTheme.bodySmall,
               ),
               const SizedBox(height: AppSpace.m),

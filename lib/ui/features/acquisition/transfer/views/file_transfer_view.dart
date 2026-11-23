@@ -1,5 +1,6 @@
 import 'package:file_cast/domain/models/acquisition.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
+import 'package:file_cast/domain/services/audio_playback_service.dart';
 import 'package:file_cast/ui/core/adaptive/constrained_content.dart';
 import 'package:file_cast/ui/core/adaptive/window_size_class.dart';
 import 'package:file_cast/ui/core/navigation/app_route.dart';
@@ -271,6 +272,7 @@ Future<void> _showRemotePreview(
       sizeLabel: viewModel.formatBytes(file.byteLength),
       selected: viewModel.isSelected(file),
       onToggleSelection: () => viewModel.toggleSelection(file),
+      audioPlaybackService: context.read<AudioPlaybackService>(),
     ),
   );
   await viewModel.closePreview();

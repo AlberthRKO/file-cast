@@ -1,18 +1,17 @@
-import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:file_cast/domain/models/acquisition.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
+import 'package:file_cast/domain/services/audio_playback_service.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
-import 'package:file_cast/ui/core/widgets/app_card_surface.dart';
+import 'package:file_cast/ui/core/widgets/audio_preview_player.dart';
 import 'package:file_cast/ui/core/widgets/video_preview_player.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_pdfview/flutter_pdfview.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:just_audio/just_audio.dart';
 
 class RemoteFilePreviewSheet extends StatefulWidget {
   const RemoteFilePreviewSheet({
@@ -21,6 +20,7 @@ class RemoteFilePreviewSheet extends StatefulWidget {
     required this.sizeLabel,
     required this.selected,
     required this.onToggleSelection,
+    required this.audioPlaybackService,
     super.key,
   });
 
@@ -29,6 +29,7 @@ class RemoteFilePreviewSheet extends StatefulWidget {
   final String sizeLabel;
   final bool selected;
   final VoidCallback onToggleSelection;
+  final AudioPlaybackService audioPlaybackService;
 
   @override
   State<RemoteFilePreviewSheet> createState() => _RemoteFilePreviewSheetState();
@@ -66,7 +67,7 @@ class _RemoteFilePreviewSheetState extends State<RemoteFilePreviewSheet> {
       return .9;
     }
     if (widget.file.kind == RemoteFileKind.audio) {
-      return windowSize.height < 480 ? .78 : .42;
+      return windowSize.height < 480 ? .86 : .58;
     }
     final aspectRatio = _mediaAspectRatio;
     if (aspectRatio == null) return .72;
@@ -130,6 +131,7 @@ class _RemoteFilePreviewSheetState extends State<RemoteFilePreviewSheet> {
                           file: widget.file,
                           preview: widget.preview,
                           onAspectRatio: _setMediaAspectRatio,
+                          audioPlaybackService: widget.audioPlaybackService,
                         ),
                       ),
                     ),
@@ -222,11 +224,13 @@ class _PreviewContent extends StatelessWidget {
     required this.file,
     required this.preview,
     required this.onAspectRatio,
+    required this.audioPlaybackService,
   });
 
   final RemoteFileEntry file;
   final RemoteFilePreview preview;
   final ValueChanged<double> onAspectRatio;
+  final AudioPlaybackService audioPlaybackService;
 
   @override
   Widget build(BuildContext context) {
@@ -244,7 +248,10 @@ class _PreviewContent extends StatelessWidget {
       );
     }
     if (file.kind == RemoteFileKind.audio) {
-      return _AudioPreview(localPath: preview.localPath);
+      return AudioPreviewPlayer(
+        path: preview.localPath,
+        playbackService: audioPlaybackService,
+      );
     }
     if (extension == 'pdf') {
       return _PdfPreview(localPath: preview.localPath);
@@ -447,146 +454,6 @@ class _PdfPreviewState extends State<_PdfPreview> {
       },
     );
   }
-}
-
-class _AudioPreview extends StatefulWidget {
-  const _AudioPreview({required this.localPath});
-
-  final String localPath;
-
-  @override
-  State<_AudioPreview> createState() => _AudioPreviewState();
-}
-
-class _AudioPreviewState extends State<_AudioPreview> {
-  late final AudioPlayer _player;
-  late final Future<Duration?> _initialization;
-
-  @override
-  void initState() {
-    super.initState();
-    _player = AudioPlayer();
-    _initialization = _player.setFilePath(widget.localPath);
-  }
-
-  @override
-  void dispose() {
-    unawaited(_player.dispose());
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => FutureBuilder<Duration?>(
-    future: _initialization,
-    builder: (context, snapshot) {
-      if (snapshot.connectionState != ConnectionState.done) {
-        return const Center(child: CircularProgressIndicator());
-      }
-      if (snapshot.hasError) {
-        return const _PreviewFailure(
-          message: 'El formato o códec de este audio no es compatible.',
-        );
-      }
-      return Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Padding(
-            padding: const EdgeInsets.all(AppSpace.m),
-            child: AppCardSurface(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 72,
-                    height: 72,
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.primary.withValues(alpha: .14),
-                      borderRadius: BorderRadius.circular(AppRadius.l),
-                    ),
-                    child: Icon(
-                      Icons.graphic_eq_rounded,
-                      size: 38,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                  ),
-                  const SizedBox(height: AppSpace.m),
-                  StreamBuilder<Duration>(
-                    stream: _player.positionStream,
-                    initialData: Duration.zero,
-                    builder: (context, positionSnapshot) {
-                      final duration = _player.duration ?? Duration.zero;
-                      final position = positionSnapshot.data ?? Duration.zero;
-                      final maximum = math.max(
-                        duration.inMilliseconds.toDouble(),
-                        1.0,
-                      );
-                      return Column(
-                        children: [
-                          Slider(
-                            value: position.inMilliseconds
-                                .clamp(0, maximum.toInt())
-                                .toDouble(),
-                            max: maximum,
-                            onChanged: duration == Duration.zero
-                                ? null
-                                : (value) async => _player.seek(
-                                    Duration(milliseconds: value.round()),
-                                  ),
-                          ),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(_formatDuration(position)),
-                              Text(_formatDuration(duration)),
-                            ],
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                  StreamBuilder<PlayerState>(
-                    stream: _player.playerStateStream,
-                    builder: (context, stateSnapshot) {
-                      final state = stateSnapshot.data;
-                      final playing = state?.playing ?? false;
-                      final completed =
-                          state?.processingState == ProcessingState.completed;
-                      return IconButton.filled(
-                        iconSize: 32,
-                        tooltip: playing ? 'Pausar' : 'Reproducir',
-                        onPressed: () async {
-                          if (completed) await _player.seek(Duration.zero);
-                          playing
-                              ? await _player.pause()
-                              : await _player.play();
-                        },
-                        icon: Icon(
-                          playing
-                              ? Icons.pause_rounded
-                              : Icons.play_arrow_rounded,
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    },
-  );
-}
-
-String _formatDuration(Duration duration) {
-  final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
-  final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
-  final hours = duration.inHours;
-  return hours > 0
-      ? '${hours.toString().padLeft(2, '0')}:$minutes:$seconds'
-      : '$minutes:$seconds';
 }
 
 class _PreviewFailure extends StatelessWidget {

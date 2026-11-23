@@ -7,10 +7,11 @@ import 'package:file_cast/domain/models/evidence_upload_progress.dart';
 import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
-import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
 import 'package:file_cast/domain/repositories/connectivity_repository.dart';
+import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
+import 'package:file_cast/domain/services/audio_playback_service.dart';
 import 'package:file_cast/domain/services/evidence_decryption_service.dart';
 import 'package:file_cast/domain/services/evidence_preview_service.dart';
 import 'package:file_cast/domain/services/evidence_video_thumbnail_service.dart';
@@ -316,7 +317,6 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
           if (_openEvidenceCategory != null)
             ModalBarrier(
               color: Theme.of(context).colorScheme.scrim.withValues(alpha: .54),
-              dismissible: true,
               onDismiss: _closeEvidenceCategory,
               semanticsLabel: 'Cerrar lista de evidencias',
             ),
@@ -386,6 +386,7 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
         maxWidth: AppSize.formMaxWidth,
         builder: (sheetContext) => _AcquisitionActionSheet(
           showAndroidUsbActions: viewModel.supportsAndroidUsbAcquisition,
+          showPhotoLibraryAction: viewModel.supportsPhotoLibraryImport,
           isImporting: viewModel.isImporting || viewModel.isSelectingEvidence,
           onCapture: () => _closeThen(
             context,
@@ -405,14 +406,28 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
           onImport: () => _closeThen(
             context,
             sheetContext,
-            () => _importFiles(context),
+            () => _importEvidence(context, EvidencePickerSource.files),
+          ),
+          onImportMedia: () => _closeThen(
+            context,
+            sheetContext,
+            () => _importEvidence(context, EvidencePickerSource.photoLibrary),
           ),
         ),
       );
 
-  Future<void> _importFiles(BuildContext context) async {
-    final selected = await viewModel.selectEvidence(imagesOnly: false);
-    if (!context.mounted) return;
+  Future<void> _importEvidence(
+    BuildContext context,
+    EvidencePickerSource source,
+  ) async {
+    final selected = await viewModel.selectEvidence(
+      imagesOnly: false,
+      source: source,
+    );
+    if (!context.mounted) {
+      await viewModel.clearSelectedEvidence();
+      return;
+    }
     if (viewModel.errorMessage != null) {
       await showAppErrorBottomSheet(context, viewModel.errorMessage!);
       return;
@@ -424,14 +439,14 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
       barrierDismissible: false,
       builder: (dialogContext) => ImportEvidencePreviewDialog(
         evidence: selected,
-        onCancel: () {
-          viewModel.clearSelectedEvidence();
-          Navigator.of(dialogContext).pop(false);
-        },
+        onCancel: () => Navigator.of(dialogContext).pop(false),
         onConfirm: () => Navigator.of(dialogContext).pop(true),
       ),
     );
-    if (confirmed != true || !context.mounted) return;
+    if (confirmed != true || !context.mounted) {
+      await viewModel.clearSelectedEvidence();
+      return;
+    }
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -619,6 +634,7 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
             evidence: evidence,
             prepare: () => viewModel.prepareEvidencePreview(evidence),
             disposePreview: viewModel.disposeEvidencePreview,
+            audioPlaybackService: context.read<AudioPlaybackService>(),
           ),
         ),
       );
@@ -769,7 +785,7 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
         selectionEnabled: true,
         singleSelection: true,
         initialSelectedPersonIds: {
-          if (initialPersonId != null) initialPersonId,
+          ?initialPersonId,
         },
         confirmLabel: hasAssignedSubject ? 'Guardar cambio' : 'Asignar sujeto',
         onConfirm: (personIds) =>
@@ -3600,17 +3616,21 @@ class _AllEvidenceSheet extends StatelessWidget {
 class _AcquisitionActionSheet extends StatelessWidget {
   const _AcquisitionActionSheet({
     required this.showAndroidUsbActions,
+    required this.showPhotoLibraryAction,
     required this.onCapture,
     required this.onMultiMirror,
     required this.onTransfer,
     required this.onImport,
+    required this.onImportMedia,
     required this.isImporting,
   });
   final bool showAndroidUsbActions;
+  final bool showPhotoLibraryAction;
   final VoidCallback onCapture;
   final VoidCallback onMultiMirror;
   final VoidCallback onTransfer;
   final VoidCallback onImport;
+  final VoidCallback onImportMedia;
   final bool isImporting;
 
   @override
@@ -3639,10 +3659,17 @@ class _AcquisitionActionSheet extends StatelessWidget {
       ],
       _ActionData(
         title: 'Importar archivos',
-        subtitle: 'Selecciona imágenes, videos, audios u otros archivos.',
+        subtitle: 'Selecciona documentos y archivos desde Archivos.',
         asset: 'upload.svg',
         onTap: isImporting ? null : onImport,
       ),
+      if (showPhotoLibraryAction)
+        _ActionData(
+          title: 'Importar fotos y videos',
+          subtitle: 'Selecciona fotos, capturas y videos desde Fotos.',
+          asset: 'gallery.svg',
+          onTap: isImporting ? null : onImportMedia,
+        ),
     ];
     return Material(
       color: Theme.of(context).cardColor,

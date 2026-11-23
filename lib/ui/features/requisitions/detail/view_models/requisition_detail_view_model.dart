@@ -143,6 +143,9 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   bool get supportsAndroidUsbAcquisition =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
+  bool get supportsPhotoLibraryImport =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+
   List<RequisitionEvidence> get pendingEvidence {
     final items = (_detail?.evidence ?? const <RequisitionEvidence>[])
         .where(_isPendingEvidence)
@@ -491,6 +494,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
 
   Future<List<ImportedEvidenceDraft>> selectEvidence({
     required bool imagesOnly,
+    EvidencePickerSource source = EvidencePickerSource.files,
   }) async {
     if (_isSelectingEvidence || _isImporting || _disposed) {
       return const [];
@@ -500,8 +504,15 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     _errorMessage = null;
     if (!_disposed) notifyListeners();
     try {
-      _selectedEvidence =
-          await _repository.pickEvidence(imagesOnly: imagesOnly) ?? const [];
+      final picked = await _repository.pickEvidence(
+        imagesOnly: imagesOnly,
+        source: source,
+      );
+      if (_disposed) {
+        await _repository.releasePickedEvidence(picked ?? const []);
+        return const [];
+      }
+      _selectedEvidence = picked ?? const [];
       return _selectedEvidence;
     } catch (error) {
       _errorMessage = _messageFromError(
@@ -515,16 +526,19 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     }
   }
 
-  void clearSelectedEvidence() {
+  Future<void> clearSelectedEvidence() async {
     if (_selectedEvidence.isEmpty) return;
+    final selected = _selectedEvidence;
     _selectedEvidence = const [];
     if (!_disposed) notifyListeners();
+    await _repository.releasePickedEvidence(selected);
   }
 
   Future<bool> confirmSelectedEvidence() async {
     if (_isImporting || _disposed || _selectedEvidence.isEmpty) return false;
     _isImporting = true;
     _errorMessage = null;
+    final selected = _selectedEvidence;
     var imported = false;
     if (!_disposed) notifyListeners();
     try {
@@ -533,7 +547,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
         transport: 'SYSTEM_PICKER',
       );
       if (sessionId != null) {
-        final drafts = _selectedEvidence
+        final drafts = selected
             .map(
               (draft) => draft.copyWith(
                 sessionId: sessionId,
@@ -560,6 +574,8 @@ class RequisitionDetailViewModel extends ChangeNotifier {
         fallback: 'No se pudo registrar la evidencia localmente.',
       );
     }
+    await _repository.releasePickedEvidence(selected);
+    _selectedEvidence = const [];
     _isImporting = false;
     if (!_disposed) notifyListeners();
     return imported;
@@ -1313,6 +1329,10 @@ class RequisitionDetailViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (!_isImporting && _selectedEvidence.isNotEmpty) {
+      unawaited(_repository.releasePickedEvidence(_selectedEvidence));
+      _selectedEvidence = const [];
+    }
     _disposed = true;
     _changesSubscription?.cancel();
     _connectivitySubscription?.cancel();

@@ -12,6 +12,7 @@ final class PickedEvidence {
     required this.byteLength,
     this.localPath,
     this.mimeType,
+    this.ownedPickerCopy = false,
   });
   final String name;
   final RequisitionEvidenceType type;
@@ -19,6 +20,7 @@ final class PickedEvidence {
   final int byteLength;
   final String? localPath;
   final String? mimeType;
+  final bool ownedPickerCopy;
 }
 
 class EvidencePickerService {
@@ -26,6 +28,7 @@ class EvidencePickerService {
     : _imagePicker = imagePicker ?? ImagePicker();
 
   final ImagePicker _imagePicker;
+  final Set<String> _ownedPickerMediaPaths = {};
 
   Future<PickedEvidence?> pickImage() async {
     final image = await _imagePicker.pickImage(source: ImageSource.gallery);
@@ -46,23 +49,120 @@ class EvidencePickerService {
     return files?.firstOrNull;
   }
 
-  Future<List<PickedEvidence>?> pickFiles({bool imagesOnly = false}) async {
+  Future<List<PickedEvidence>?> pickFiles({
+    bool imagesOnly = false,
+    bool fromPhotoLibrary = false,
+  }) async {
     final result = await FilePicker.platform.pickFiles(
       allowMultiple: true,
-      type: imagesOnly ? FileType.image : FileType.any,
+      type: fromPhotoLibrary
+          ? FileType.media
+          : imagesOnly
+          ? FileType.image
+          : FileType.any,
+      allowCompression: false,
     );
     if (result == null) return null;
 
-    return result.files
-        .where((file) => file.path != null)
-        .map(_toPickedEvidence)
-        .toList(growable: false);
+    final picked = <PickedEvidence>[];
+    try {
+      for (final file in result.files) {
+        if (file.path == null) continue;
+        final localPath = fromPhotoLibrary && Platform.isIOS
+            ? await _moveIosMediaCopyToPersistentDirectory(file.path!)
+            : file.path!;
+        picked.add(
+          _toPickedEvidence(
+            file,
+            localPath: localPath,
+            ownedPickerCopy: _ownedPickerMediaPaths.contains(localPath),
+          ),
+        );
+      }
+      return picked;
+    } catch (_) {
+      await releaseOwnedPickerPaths(picked.map((item) => item.localPath));
+      if (fromPhotoLibrary && Platform.isIOS) {
+        for (final file in result.files) {
+          final path = file.path;
+          if (path == null ||
+              !File(path).parent.path.endsWith('/Documents/picked_images')) {
+            continue;
+          }
+          try {
+            await File(path).delete();
+          } on FileSystemException {
+            // La copia podría haber sido movida o retirada por el sistema.
+          }
+        }
+      }
+      rethrow;
+    }
   }
 
-  PickedEvidence _toPickedEvidence(PlatformFile file) {
+  Future<String> _moveIosMediaCopyToPersistentDirectory(
+    String sourcePath,
+  ) async {
+    final source = File(sourcePath);
+    if (!source.parent.path.endsWith('/Documents/picked_images')) {
+      return sourcePath;
+    }
+    // El FCE se escribe junto al archivo fuente. Debe quedar en almacenamiento
+    // persistente mientras espera la sincronización offline.
+    final directory = Directory(
+      '${source.parent.parent.path}/.file_cast_evidence_imports',
+    );
+    await directory.create(recursive: true);
+    await for (final entry in directory.list(followLinks: false)) {
+      if (entry is! File ||
+          entry.path.endsWith('.fce') ||
+          _ownedPickerMediaPaths.contains(entry.path)) {
+        continue;
+      }
+      try {
+        await entry.delete();
+      } on FileSystemException {
+        // Una importación anterior aún podría estar finalizando.
+      }
+    }
+    final destination = File(
+      '${directory.path}/${DateTime.now().microsecondsSinceEpoch}-'
+      '${_ownedPickerMediaPaths.length}-${source.uri.pathSegments.last}',
+    );
+    final moved = await source.rename(destination.path);
+    _ownedPickerMediaPaths.add(moved.path);
+    return moved.path;
+  }
+
+  Future<void> releaseOwnedPickerPaths(Iterable<String?> paths) async {
+    for (final path in paths) {
+      if (path == null || !_ownedPickerMediaPaths.contains(path)) continue;
+      try {
+        final file = File(path);
+        if (await file.exists()) await file.delete();
+        _ownedPickerMediaPaths.remove(path);
+      } on FileSystemException {
+        // Se intentará limpiar de nuevo cuando se libere la selección.
+      }
+    }
+  }
+
+  PickedEvidence _toPickedEvidence(
+    PlatformFile file, {
+    required String localPath,
+    required bool ownedPickerCopy,
+  }) {
     final extension = file.extension?.toLowerCase();
     final type = switch (extension) {
-      'jpg' || 'jpeg' || 'png' || 'webp' => RequisitionEvidenceType.image,
+      'jpg' ||
+      'jpeg' ||
+      'png' ||
+      'webp' ||
+      'heic' ||
+      'heif' ||
+      'gif' ||
+      'tif' ||
+      'tiff' => RequisitionEvidenceType.image,
       'mp4' ||
       'mov' ||
       'mkv' ||
@@ -101,8 +201,9 @@ class EvidencePickerService {
       type: type,
       sizeLabel: _sizeLabel(file.size),
       byteLength: file.size,
-      localPath: file.path,
+      localPath: localPath,
       mimeType: _mimeTypeFor(extension),
+      ownedPickerCopy: ownedPickerCopy,
     );
   }
 
@@ -116,6 +217,10 @@ class EvidencePickerService {
     'jpg' || 'jpeg' => 'image/jpeg',
     'png' => 'image/png',
     'webp' => 'image/webp',
+    'heic' => 'image/heic',
+    'heif' => 'image/heif',
+    'gif' => 'image/gif',
+    'tif' || 'tiff' => 'image/tiff',
     'mp4' => 'video/mp4',
     'mov' => 'video/quicktime',
     'mkv' => 'video/x-matroska',

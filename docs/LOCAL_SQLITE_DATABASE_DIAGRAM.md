@@ -20,8 +20,9 @@ File Cast utiliza una única base SQLite cifrada mediante `sqflite_sqlcipher`.
 | Tablas | 6 |
 
 La base no contiene el binario de una evidencia. Los archivos FCE cifrados se
-guardan en almacenamiento privado y SQLite conserva su ruta, hashes, metadatos y
-estado de sincronización.
+guardan en almacenamiento privado y SQLite conserva su referencia, hashes,
+metadatos y estado de sincronización. En iOS, las nuevas referencias dentro de
+Documentos son relativas al contenedor de la aplicación.
 
 ## 2. Diagrama entidad-relación
 
@@ -238,7 +239,7 @@ pendiente de subida y evidencia remota descargada como FCE para uso offline.
 | `mime_type` | TEXT | No | MIME del contenido original. |
 | `tipo` | TEXT | No | `IMAGE`, `VIDEO`, `AUDIO`, `DOCUMENT` u otro tipo backend. |
 | `metodo_adquisicion` | TEXT | No | Método: captura, grabación, transferencia o importación. |
-| `ruta_cifrada` | TEXT | No | Ruta privada del archivo FCE. |
+| `ruta_cifrada` | TEXT | No | Referencia privada del FCE. En iOS se guarda como `app-documents:evidence_files/<id>.fce` y se resuelve al directorio Documentos actual; las rutas absolutas anteriores se reubican al leerlas. |
 | `tamano_plano` | INTEGER | No | Tamaño del contenido antes de cifrar. |
 | `tamano_cifrado` | INTEGER | No | Tamaño del FCE cifrado. |
 | `hash_plano` | TEXT | No | SHA-256 del contenido original. |
@@ -404,7 +405,7 @@ columna ya creada.
 |---|---|---|
 | Clave de SQLCipher | `FlutterSecureStorage` | No guardar la clave junto a la base. |
 | Tokens y usuario autenticado | `FlutterSecureStorage` | Sesión y partición `account_id`. |
-| Binarios FCE | Almacenamiento privado del dispositivo | Evitar BLOB grandes en SQLite. |
+| Binarios FCE | Almacenamiento privado del dispositivo, normalmente `evidence_files/<id>.fce` | Evitar BLOB grandes en SQLite y conservar importaciones y descargas offline entre reinicios. |
 | Staging temporal | Almacenamiento privado/temporal | Cifrado previo a persistencia definitiva. |
 | Handles ADB/scrcpy | Memoria/proceso nativo | No son restaurables ni serializables. |
 

@@ -21,6 +21,56 @@ class LocalEvidenceDatabaseService {
   static const _staleClaimTimeout = Duration(minutes: 15);
   static const _databaseKeyName = 'file_cast_evidence_database_key_v1';
   static const _databaseName = 'file_cast_evidence_v1.db';
+  static const _documentsPathPrefix = 'app-documents:';
+
+  Future<String> _storedEncryptedPath(String path) async {
+    if (!Platform.isIOS) return path;
+    final documentsPath = await getDatabasesPath();
+    final prefix = '$documentsPath/';
+    if (!path.startsWith(prefix)) return path;
+    return '$_documentsPathPrefix${path.substring(prefix.length)}';
+  }
+
+  LocalEvidenceRecord _recordFromRow(
+    Map<String, Object?> row,
+    String? documentsPath,
+  ) {
+    final storedPath = row['ruta_cifrada'] as String;
+    String? relativePath;
+    if (documentsPath != null) {
+      if (storedPath.startsWith(_documentsPathPrefix)) {
+        relativePath = storedPath.substring(_documentsPathPrefix.length);
+      } else if (storedPath.contains('/Containers/Data/Application/')) {
+        // Las versiones anteriores persistían la ruta absoluta del contenedor.
+        // iPadOS puede asignar otro UUID al actualizar la aplicación.
+        const marker = '/Documents/';
+        final markerIndex = storedPath.lastIndexOf(marker);
+        if (markerIndex >= 0) {
+          relativePath = storedPath.substring(markerIndex + marker.length);
+        }
+      }
+    }
+    if (documentsPath == null ||
+        relativePath == null ||
+        relativePath.isEmpty ||
+        relativePath.startsWith('/') ||
+        relativePath.split('/').contains('..')) {
+      return LocalEvidenceRecord.fromMap(row);
+    }
+    return LocalEvidenceRecord.fromMap({
+      ...row,
+      'ruta_cifrada': '$documentsPath/$relativePath',
+    });
+  }
+
+  Future<List<LocalEvidenceRecord>> _recordsFromRows(
+    List<Map<String, Object?>> rows,
+  ) async {
+    final documentsPath = Platform.isIOS ? await getDatabasesPath() : null;
+    return rows
+        .map((row) => _recordFromRow(row, documentsPath))
+        .toList(growable: false);
+  }
 
   final SecureStorageService _storage;
   Database? _database;
@@ -555,11 +605,13 @@ class LocalEvidenceDatabaseService {
     final accountId = await _requiredAccountId();
     final db = await database;
     final now = DateTime.now().toUtc().toIso8601String();
+    final storedPath = await _storedEncryptedPath(evidence.encryptedPath);
     await db.transaction((txn) async {
       await txn.insert(
         'evidencias_locales',
         {
           ...evidence.toMap(),
+          'ruta_cifrada': storedPath,
           'account_id': accountId,
           'actualizado_at': now,
         },
@@ -589,11 +641,13 @@ class LocalEvidenceDatabaseService {
     final accountId = await _requiredAccountId();
     final db = await database;
     final now = DateTime.now().toUtc().toIso8601String();
+    final storedPath = await _storedEncryptedPath(evidence.encryptedPath);
     await db.transaction((txn) async {
       await txn.insert(
         'evidencias_locales',
         {
           ...evidence.toMap(),
+          'ruta_cifrada': storedPath,
           'account_id': accountId,
           'estado': 'SINCRONIZADA',
           'actualizado_at': now,
@@ -754,7 +808,7 @@ class LocalEvidenceDatabaseService {
       ''',
       [accountId, limit],
     );
-    return rows.map(LocalEvidenceRecord.fromMap).toList(growable: false);
+    return _recordsFromRows(rows);
   }
 
   /// Reserva un lote pequeño de evidencias para un ciclo de subida.
@@ -777,6 +831,7 @@ class LocalEvidenceDatabaseService {
         .toSet()
         .toList(growable: false);
     final accountId = await _requiredAccountId();
+    final documentsPath = Platform.isIOS ? await getDatabasesPath() : null;
     return withSyncLock(() async {
       final db = await database;
       final now = DateTime.now().toUtc();
@@ -854,7 +909,9 @@ class LocalEvidenceDatabaseService {
             whereArgs: [row['id']],
           );
         }
-        return rows.map(LocalEvidenceRecord.fromMap).toList(growable: false);
+        return rows
+            .map((row) => _recordFromRow(row, documentsPath))
+            .toList(growable: false);
       });
     });
   }
@@ -868,7 +925,7 @@ class LocalEvidenceDatabaseService {
       whereArgs: [accountId, requisitionId],
       orderBy: 'creado_at ASC',
     );
-    return rows.map(LocalEvidenceRecord.fromMap).toList(growable: false);
+    return _recordsFromRows(rows);
   }
 
   /// Pausa toda la outbox no confirmada de una requisa. La evidencia permanece
@@ -1058,6 +1115,7 @@ class LocalEvidenceDatabaseService {
     required String evidenceId,
   }) async {
     final accountId = await _requiredAccountId();
+    final documentsPath = Platform.isIOS ? await getDatabasesPath() : null;
     return withSyncLock(() async {
       final db = await database;
       final rows = await db.query(
@@ -1068,7 +1126,7 @@ class LocalEvidenceDatabaseService {
       );
       if (rows.isEmpty) return false;
 
-      final record = LocalEvidenceRecord.fromMap(rows.single);
+      final record = _recordFromRow(rows.single, documentsPath);
       final outboxRows = await db.query(
         'outbox_evidencias',
         columns: ['estado'],

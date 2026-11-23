@@ -3,18 +3,20 @@ import 'dart:io';
 
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/services/evidence_preview_service.dart';
+import 'package:file_cast/domain/services/audio_playback_service.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
+import 'package:file_cast/ui/core/widgets/audio_preview_player.dart';
 import 'package:file_cast/ui/core/widgets/video_preview_player.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_pdfview/flutter_pdfview.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:just_audio/just_audio.dart';
 
 class EvidencePreviewSheet extends StatefulWidget {
   const EvidencePreviewSheet({
     required this.evidence,
     required this.prepare,
     required this.disposePreview,
+    required this.audioPlaybackService,
     this.showHandle = false,
     super.key,
   });
@@ -22,6 +24,7 @@ class EvidencePreviewSheet extends StatefulWidget {
   final RequisitionEvidence evidence;
   final Future<PreparedEvidencePreview> Function() prepare;
   final Future<void> Function(PreparedEvidencePreview preview) disposePreview;
+  final AudioPlaybackService audioPlaybackService;
   final bool showHandle;
 
   @override
@@ -119,6 +122,7 @@ class _EvidencePreviewSheetState extends State<EvidencePreviewSheet> {
                         return _PreviewContent(
                           evidence: widget.evidence,
                           preview: snapshot.data!,
+                          audioPlaybackService: widget.audioPlaybackService,
                         );
                       },
                     ),
@@ -192,10 +196,15 @@ class _PreviewHeader extends StatelessWidget {
 }
 
 class _PreviewContent extends StatelessWidget {
-  const _PreviewContent({required this.evidence, required this.preview});
+  const _PreviewContent({
+    required this.evidence,
+    required this.preview,
+    required this.audioPlaybackService,
+  });
 
   final RequisitionEvidence evidence;
   final PreparedEvidencePreview preview;
+  final AudioPlaybackService audioPlaybackService;
 
   @override
   Widget build(BuildContext context) {
@@ -218,7 +227,10 @@ class _PreviewContent extends StatelessWidget {
       return VideoPreviewPlayer(path: preview.path);
     }
     if (evidence.type == RequisitionEvidenceType.audio) {
-      return _AudioPreview(path: preview.path);
+      return AudioPreviewPlayer(
+        path: preview.path,
+        playbackService: audioPlaybackService,
+      );
     }
     if (_isPdf(evidence)) {
       return PDFView(filePath: preview.path, enableSwipe: true);
@@ -233,78 +245,6 @@ class _PreviewContent extends StatelessWidget {
       message: 'Este formato todavía no tiene una vista previa disponible.',
     );
   }
-}
-
-class _AudioPreview extends StatefulWidget {
-  const _AudioPreview({required this.path});
-
-  final String path;
-
-  @override
-  State<_AudioPreview> createState() => _AudioPreviewState();
-}
-
-class _AudioPreviewState extends State<_AudioPreview> {
-  final AudioPlayer _player = AudioPlayer();
-  late final Future<void> _initialization;
-
-  @override
-  void initState() {
-    super.initState();
-    _initialization = _player.setFilePath(widget.path).then((_) {});
-  }
-
-  @override
-  void dispose() {
-    unawaited(_player.dispose());
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => FutureBuilder<void>(
-    future: _initialization,
-    builder: (context, snapshot) {
-      if (snapshot.connectionState != ConnectionState.done) {
-        return const _PreviewLoading();
-      }
-      if (snapshot.hasError) {
-        return const _PreviewError(message: 'No se pudo abrir el audio.');
-      }
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.graphic_eq_rounded, size: 72),
-            const SizedBox(height: AppSpace.m),
-            StreamBuilder<PlayerState>(
-              stream: _player.playerStateStream,
-              builder: (context, snapshot) {
-                final playing = snapshot.data?.playing ?? false;
-                return IconButton(
-                  tooltip: playing ? 'Pausar' : 'Reproducir',
-                  onPressed: playing ? _player.pause : _player.play,
-                  icon: Icon(
-                    playing
-                        ? Icons.pause_circle_filled
-                        : Icons.play_circle_filled,
-                    size: 56,
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: AppSpace.s),
-            StreamBuilder<Duration>(
-              stream: _player.positionStream,
-              builder: (context, snapshot) => Text(
-                _formatDuration(snapshot.data ?? Duration.zero),
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-          ],
-        ),
-      );
-    },
-  );
 }
 
 class _PreviewLoading extends StatelessWidget {
@@ -400,10 +340,4 @@ String _previewErrorMessage(Object? error) {
   return message == null || message.isEmpty
       ? 'No se pudo preparar la vista previa.'
       : message;
-}
-
-String _formatDuration(Duration duration) {
-  final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
-  final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
-  return '${duration.inHours > 0 ? '${duration.inHours}:' : ''}$minutes:$seconds';
 }
