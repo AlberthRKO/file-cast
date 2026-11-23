@@ -511,12 +511,25 @@ class _MediaKitVideoPlaybackAdapter extends _VideoPlaybackAdapterBase {
     await _videoController.platform.future.timeout(
       const Duration(seconds: 20),
     );
+    await _player.setVolume(0).timeout(const Duration(seconds: 5));
     await _player
-        .open(Media(_path), play: false)
-        .timeout(const Duration(seconds: 20));
-    await Future.any<void>([_videoReady.future, _decoderFailed.future]).timeout(
-      const Duration(seconds: 20),
-    );
+        .open(Media(_path), play: true)
+        .timeout(const Duration(seconds: 30));
+    try {
+      // Algunos contenedores publican las dimensiones recién después de
+      // empezar a decodificar. Con play:false se esperaba hasta agotar el
+      // timeout aunque el archivo pudiera reproducirse.
+      await Future.any<void>([
+        _videoReady.future,
+        _decoderFailed.future,
+        _player.stream.position
+            .firstWhere((position) => position > Duration.zero)
+            .then((_) {}),
+      ]).timeout(const Duration(seconds: 30));
+    } finally {
+      await _player.pause().timeout(const Duration(seconds: 5));
+      await _player.setVolume(100).timeout(const Duration(seconds: 5));
+    }
 
     if (state.value.error != null) {
       throw StateError(state.value.error!);

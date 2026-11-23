@@ -1,4 +1,5 @@
 import 'dart:ui' as ui;
+import 'dart:math' as math;
 
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/services/evidence_decryption_service.dart';
@@ -114,7 +115,7 @@ class _MirrorEvidencePaneState extends State<MirrorEvidencePane> {
   }
 }
 
-class _EvidenceCollection extends StatelessWidget {
+class _EvidenceCollection extends StatefulWidget {
   const _EvidenceCollection({
     required this.evidence,
     required this.layoutMode,
@@ -130,37 +131,95 @@ class _EvidenceCollection extends StatelessWidget {
   final ValueChanged<RequisitionEvidence> onRename;
 
   @override
+  State<_EvidenceCollection> createState() => _EvidenceCollectionState();
+}
+
+class _EvidenceCollectionState extends State<_EvidenceCollection> {
+  static const _pageSize = 12;
+  late int _visibleCount;
+  bool _loadScheduled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _visibleCount = math.min(_pageSize, widget.evidence.length);
+  }
+
+  @override
+  void didUpdateWidget(covariant _EvidenceCollection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final added = widget.evidence.length - oldWidget.evidence.length;
+    _visibleCount = math.min(
+      widget.evidence.length,
+      math.max(_pageSize, _visibleCount + math.max(0, added)),
+    );
+  }
+
+  bool _onScroll(ScrollNotification notification) {
+    if (_loadScheduled ||
+        _visibleCount >= widget.evidence.length ||
+        notification.metrics.extentAfter > 300) {
+      return false;
+    }
+    _loadScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadScheduled = false;
+      if (!mounted) return;
+      setState(() {
+        _visibleCount = math.min(
+          widget.evidence.length,
+          _visibleCount + _pageSize,
+        );
+      });
+    });
+    return false;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final listMode = layoutMode == _EvidenceLayoutMode.list;
-    final horizontalGrid = compact && !listMode;
+    final evidence = widget.evidence;
+    final listMode = widget.layoutMode == _EvidenceLayoutMode.list;
+    final horizontalGrid = widget.compact && !listMode;
     final indexById = <String, int>{
       for (var index = 0; index < evidence.length; index++)
         evidence[index].id: index,
     };
-    return GridView.builder(
-      scrollDirection: horizontalGrid ? Axis.horizontal : Axis.vertical,
-      itemCount: evidence.length,
-      findChildIndexCallback: (key) {
-        if (key is ValueKey<String>) return indexById[key.value];
-        return null;
-      },
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: listMode || horizontalGrid ? 1 : 2,
-        crossAxisSpacing: AppSpace.s,
-        mainAxisSpacing: AppSpace.s,
-        mainAxisExtent: listMode ? 104 : (horizontalGrid ? 150 : null),
-        childAspectRatio: 1.2,
+    return NotificationListener<ScrollNotification>(
+      onNotification: _onScroll,
+      child: GridView.builder(
+        scrollDirection: horizontalGrid ? Axis.horizontal : Axis.vertical,
+        itemCount: _visibleCount + (_visibleCount < evidence.length ? 1 : 0),
+        cacheExtent: evidence.length > 24 ? 0 : null,
+        findChildIndexCallback: (key) {
+          if (key is ValueKey<String>) {
+            final index = indexById[key.value];
+            return index != null && index < _visibleCount ? index : null;
+          }
+          return null;
+        },
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: listMode || horizontalGrid ? 1 : 2,
+          crossAxisSpacing: AppSpace.s,
+          mainAxisSpacing: AppSpace.s,
+          mainAxisExtent: listMode ? 104 : (horizontalGrid ? 150 : null),
+          childAspectRatio: 1.2,
+        ),
+        itemBuilder: (context, index) {
+          if (index == _visibleCount) {
+            return const Center(
+              child: CircularProgressIndicator(strokeWidth: 2),
+            );
+          }
+          final item = evidence[index];
+          return _EvidenceCard(
+            key: ValueKey(item.id),
+            evidence: item,
+            layoutMode: widget.layoutMode,
+            blurred: widget.blurred,
+            onRename: () => widget.onRename(item),
+          );
+        },
       ),
-      itemBuilder: (context, index) {
-        final item = evidence[index];
-        return _EvidenceCard(
-          key: ValueKey(item.id),
-          evidence: item,
-          layoutMode: layoutMode,
-          blurred: blurred,
-          onRename: () => onRename(item),
-        );
-      },
     );
   }
 }

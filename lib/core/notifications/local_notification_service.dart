@@ -85,6 +85,7 @@ class LocalNotificationService {
   final StreamController<LocalNotificationPayload> _clicks =
       StreamController<LocalNotificationPayload>.broadcast();
   final Map<String, Future<void>> _progressUpdates = <String, Future<void>>{};
+  final Map<String, DateTime> _lastProgressAt = <String, DateTime>{};
   Future<void>? _initialization;
   bool _permissionsRequested = false;
   LocalNotificationPayload? _pendingLaunchPayload;
@@ -281,6 +282,18 @@ class LocalNotificationService {
   }) {
     final jobId =
         '${operation == EvidenceJobOperation.upload ? 'UPLOAD' : 'OFFLINE_SYNC'}:$requisitionId';
+    final now = DateTime.now();
+    final lastProgressAt = _lastProgressAt[jobId];
+    if (active &&
+        lastProgressAt != null &&
+        now.difference(lastProgressAt) < const Duration(milliseconds: 500)) {
+      return Future<void>.value();
+    }
+    if (active) {
+      _lastProgressAt[jobId] = now;
+    } else {
+      _lastProgressAt.remove(jobId);
+    }
     final previous = _progressUpdates[jobId];
 
     Future<void> update() async {

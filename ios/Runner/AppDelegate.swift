@@ -1,6 +1,9 @@
 import AVFoundation
 import Flutter
+import Photos
+import PhotosUI
 import UIKit
+import UniformTypeIdentifiers
 import workmanager_apple
 
 @main
@@ -18,13 +21,200 @@ import workmanager_apple
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
-    guard let registrar = engineBridge.pluginRegistry.registrar(
+    if let registrar = engineBridge.pluginRegistry.registrar(
       forPlugin: "EvidenceVideoThumbnailPlugin"
-    ) else {
+    ) {
+      EvidenceVideoThumbnailPlugin.register(with: registrar)
+    } else {
       NSLog("EvidenceVideoThumbnailPlugin: no se obtuvo el registrador Flutter")
+    }
+    if let photoRegistrar = engineBridge.pluginRegistry.registrar(
+      forPlugin: "EvidencePhotoLibraryPickerPlugin"
+    ) {
+      EvidencePhotoLibraryPickerPlugin.register(with: photoRegistrar)
+    }
+  }
+}
+
+final class EvidencePhotoLibraryPickerPlugin: NSObject, FlutterPlugin, PHPickerViewControllerDelegate {
+  private static let channelName = "com.fiscalia.file_cast/evidence_photo_library"
+  private weak var viewController: UIViewController?
+  private var pendingResult: FlutterResult?
+
+  init(viewController: UIViewController?) {
+    self.viewController = viewController
+    super.init()
+  }
+
+  static func register(with registrar: FlutterPluginRegistrar) {
+    let channel = FlutterMethodChannel(name: channelName, binaryMessenger: registrar.messenger())
+    let instance = EvidencePhotoLibraryPickerPlugin(viewController: registrar.viewController)
+    registrar.addMethodCallDelegate(instance, channel: channel)
+  }
+
+  func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard call.method == "pickMedia" else {
+      result(FlutterMethodNotImplemented)
       return
     }
-    EvidenceVideoThumbnailPlugin.register(with: registrar)
+    let presenter = viewController ?? UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }
+      .first(where: { $0.activationState == .foregroundActive })?
+      .windows.first(where: { $0.isKeyWindow })?.rootViewController
+    guard pendingResult == nil, let presenter, presenter.presentedViewController == nil else {
+      result(FlutterError(code: "PICKER_BUSY", message: "La fototeca ya está abierta.", details: nil))
+      return
+    }
+
+    var configuration = PHPickerConfiguration(photoLibrary: .shared())
+    configuration.filter = .any(of: [.images, .videos])
+    configuration.selectionLimit = 0
+    configuration.preferredAssetRepresentationMode = .current
+    let picker = PHPickerViewController(configuration: configuration)
+    picker.delegate = self
+    pendingResult = result
+    presenter.present(picker, animated: true)
+  }
+
+  func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+    picker.dismiss(animated: true) { [self] in
+      if results.isEmpty {
+        finish([])
+        return
+      }
+      copySelectedMedia(results)
+    }
+  }
+
+  private func copySelectedMedia(_ selections: [PHPickerResult]) {
+    let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+      .appendingPathComponent(".file_cast_evidence_imports", isDirectory: true)
+    do {
+      try FileManager.default.createDirectory(
+        at: directory,
+        withIntermediateDirectories: true,
+        attributes: nil
+      )
+    } catch {
+      finish(FlutterError(code: "PICKER_STORAGE", message: "No se pudo preparar el almacenamiento.", details: nil))
+      return
+    }
+
+    let group = DispatchGroup()
+    var copied = Array<[String: Any]?>(repeating: nil, count: selections.count)
+    var failed = false
+    for (index, selection) in selections.enumerated() {
+      let provider = selection.itemProvider
+      guard let typeIdentifier = provider.registeredTypeIdentifiers.first(where: {
+        guard let type = UTType($0) else { return false }
+        return type.conforms(to: .image) || type.conforms(to: .movie)
+      }) else {
+        failed = true
+        continue
+      }
+      let assetName = originalName(for: selection) ?? provider.suggestedName
+      group.enter()
+      provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { temporary, error in
+        var item: [String: Any]?
+        if let temporary, error == nil {
+          let temporaryExtension = temporary.pathExtension
+          let proposedExtension = assetName.map {
+            URL(fileURLWithPath: $0).pathExtension
+          } ?? ""
+          let fileExtension: String
+          if !temporaryExtension.isEmpty && temporaryExtension.lowercased() != "tmp" {
+            fileExtension = temporaryExtension
+          } else if let typeExtension = UTType(typeIdentifier)?.preferredFilenameExtension {
+            fileExtension = typeExtension
+          } else {
+            fileExtension = proposedExtension.isEmpty ? "bin" : proposedExtension
+          }
+          let destination = directory.appendingPathComponent(
+            "\(UUID().uuidString).\(fileExtension)",
+            isDirectory: false
+          )
+          do {
+            try FileManager.default.copyItem(at: temporary, to: destination)
+            let attributes = try FileManager.default.attributesOfItem(atPath: destination.path)
+            let byteLength = (attributes[.size] as? NSNumber)?.intValue ?? 0
+            guard byteLength > 0 else { throw NSError(domain: "EvidencePicker", code: 1) }
+            item = [
+              "name": self.displayName(assetName, fileExtension: fileExtension),
+              "path": destination.path,
+              "size": byteLength,
+            ]
+          } catch {
+            try? FileManager.default.removeItem(at: destination)
+          }
+        }
+        DispatchQueue.main.async {
+          if let item {
+            copied[index] = item
+          } else {
+            failed = true
+          }
+          group.leave()
+        }
+      }
+    }
+
+    group.notify(queue: .main) { [self] in
+      guard !failed, copied.allSatisfy({ $0 != nil }) else {
+        for item in copied {
+          if let path = item?["path"] as? String {
+            try? FileManager.default.removeItem(atPath: path)
+          }
+        }
+        finish(FlutterError(
+          code: "PICKER_IMPORT",
+          message: "No se pudieron preparar todas las fotos y videos seleccionados.",
+          details: nil
+        ))
+        return
+      }
+      finish(copied.compactMap { $0 })
+    }
+  }
+
+  private func originalName(for selection: PHPickerResult) -> String? {
+    let authorization = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+    guard authorization == .authorized || authorization == .limited,
+      let identifier = selection.assetIdentifier,
+      let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject
+    else {
+      return nil
+    }
+    let filename = PHAssetResource.assetResources(for: asset).first(where: {
+      $0.type == .photo || $0.type == .video || $0.type == .fullSizePhoto || $0.type == .fullSizeVideo
+    })?.originalFilename
+    return filename?.isEmpty == false ? filename : nil
+  }
+
+  private func displayName(_ proposedName: String?, fileExtension: String) -> String {
+    guard let proposedName else {
+      return "Archivo.\(fileExtension)"
+    }
+    let normalized = proposedName.replacingOccurrences(of: "\\", with: "/")
+    let filename = normalized.components(separatedBy: "/").last?
+      .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard !filename.isEmpty else { return "Archivo.\(fileExtension)" }
+    let originalExtension = URL(fileURLWithPath: filename).pathExtension
+    if originalExtension.isEmpty { return "\(filename).\(fileExtension)" }
+    let originalType = originalExtension.lowercased()
+    let copiedType = fileExtension.lowercased()
+    if originalType == copiedType ||
+      (["jpg", "jpeg"].contains(originalType) && ["jpg", "jpeg"].contains(copiedType)) ||
+      (["tif", "tiff"].contains(originalType) && ["tif", "tiff"].contains(copiedType)) {
+      return filename
+    }
+    let stem = URL(fileURLWithPath: filename).deletingPathExtension().lastPathComponent
+    return "\(stem).\(fileExtension)"
+  }
+
+  private func finish(_ value: Any) {
+    let result = pendingResult
+    pendingResult = nil
+    result?(value)
   }
 }
 

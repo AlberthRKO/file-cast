@@ -2,7 +2,9 @@ import 'dart:io';
 
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
 
 final class PickedEvidence {
   const PickedEvidence({
@@ -28,6 +30,9 @@ class EvidencePickerService {
     : _imagePicker = imagePicker ?? ImagePicker();
 
   final ImagePicker _imagePicker;
+  static const _iosPhotoLibraryChannel = MethodChannel(
+    'com.fiscalia.file_cast/evidence_photo_library',
+  );
   final Set<String> _ownedPickerMediaPaths = {};
 
   Future<PickedEvidence?> pickImage() async {
@@ -53,6 +58,12 @@ class EvidencePickerService {
     bool imagesOnly = false,
     bool fromPhotoLibrary = false,
   }) async {
+    if (fromPhotoLibrary && Platform.isIOS) {
+      return _pickIosPhotoLibraryMedia();
+    }
+    if (fromPhotoLibrary && Platform.isAndroid) {
+      return _pickAndroidPhotoLibraryMedia();
+    }
     final result = await FilePicker.platform.pickFiles(
       allowMultiple: true,
       type: fromPhotoLibrary
@@ -64,74 +75,125 @@ class EvidencePickerService {
     );
     if (result == null) return null;
 
-    final picked = <PickedEvidence>[];
+    return result.files
+        .where((file) => file.path != null)
+        .map(
+          (file) => _toPickedEvidence(
+            name: file.name,
+            byteLength: file.size,
+            localPath: file.path!,
+            ownedPickerCopy: false,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Future<List<PickedEvidence>?> _pickIosPhotoLibraryMedia() async {
+    final List<dynamic>? media;
     try {
-      for (final file in result.files) {
-        if (file.path == null) continue;
-        final localPath = fromPhotoLibrary && Platform.isIOS
-            ? await _moveIosMediaCopyToPersistentDirectory(file.path!)
-            : file.path!;
+      media = await _iosPhotoLibraryChannel.invokeListMethod<dynamic>(
+        'pickMedia',
+      );
+    } on PlatformException catch (error) {
+      throw StateError(
+        error.message ?? 'No se pudieron preparar las fotos y videos.',
+      );
+    }
+    if (media == null || media.isEmpty) return null;
+
+    final picked = <PickedEvidence>[];
+    final receivedPaths = <String>[];
+    try {
+      for (final raw in media) {
+        if (raw is! Map) {
+          throw const FormatException('Selección de fototeca inválida.');
+        }
+        final name = raw['name'];
+        final localPath = raw['path'];
+        final byteLength = raw['size'];
+        if (name is! String ||
+            name.isEmpty ||
+            localPath is! String ||
+            localPath.isEmpty ||
+            byteLength is! int ||
+            byteLength <= 0) {
+          throw const FormatException('Archivo de fototeca inválido.');
+        }
+        _ownedPickerMediaPaths.add(localPath);
+        receivedPaths.add(localPath);
         picked.add(
           _toPickedEvidence(
-            file,
+            name: name,
+            byteLength: byteLength,
             localPath: localPath,
-            ownedPickerCopy: _ownedPickerMediaPaths.contains(localPath),
+            ownedPickerCopy: true,
           ),
         );
       }
       return picked;
     } catch (_) {
-      await releaseOwnedPickerPaths(picked.map((item) => item.localPath));
-      if (fromPhotoLibrary && Platform.isIOS) {
-        for (final file in result.files) {
-          final path = file.path;
-          if (path == null ||
-              !File(path).parent.path.endsWith('/Documents/picked_images')) {
-            continue;
-          }
-          try {
-            await File(path).delete();
-          } on FileSystemException {
-            // La copia podría haber sido movida o retirada por el sistema.
-          }
-        }
-      }
+      await releaseOwnedPickerPaths(receivedPaths);
       rethrow;
     }
   }
 
-  Future<String> _moveIosMediaCopyToPersistentDirectory(
-    String sourcePath,
-  ) async {
-    final source = File(sourcePath);
-    if (!source.parent.path.endsWith('/Documents/picked_images')) {
-      return sourcePath;
-    }
-    // El FCE se escribe junto al archivo fuente. Debe quedar en almacenamiento
-    // persistente mientras espera la sincronización offline.
-    final directory = Directory(
-      '${source.parent.parent.path}/.file_cast_evidence_imports',
+  Future<List<PickedEvidence>?> _pickAndroidPhotoLibraryMedia() async {
+    final media = await _imagePicker.pickMultipleMedia(
+      requestFullMetadata: false,
     );
-    await directory.create(recursive: true);
-    await for (final entry in directory.list(followLinks: false)) {
-      if (entry is! File ||
-          entry.path.endsWith('.fce') ||
-          _ownedPickerMediaPaths.contains(entry.path)) {
-        continue;
+    if (media.isEmpty) return null;
+
+    final picked = <PickedEvidence>[];
+    final movedPaths = <String>[];
+    try {
+      final directory = Directory(
+        '${await getDatabasesPath()}/.file_cast_evidence_imports',
+      );
+      await directory.create(recursive: true);
+      for (final item in media) {
+        final source = File(item.path);
+        final destination = File(
+          '${directory.path}/${DateTime.now().microsecondsSinceEpoch}-'
+          '${movedPaths.length}-${source.uri.pathSegments.last}',
+        );
+        try {
+          await source.rename(destination.path);
+        } on FileSystemException {
+          try {
+            await source.copy(destination.path);
+            if (await destination.length() != await source.length()) {
+              throw StateError('La copia de la galería quedó incompleta.');
+            }
+            try {
+              await source.delete();
+            } on FileSystemException {
+              // La copia temporal será retirada por Android.
+            }
+          } catch (_) {
+            if (await destination.exists()) await destination.delete();
+            rethrow;
+          }
+        }
+        _ownedPickerMediaPaths.add(destination.path);
+        movedPaths.add(destination.path);
+        final byteLength = await destination.length();
+        if (byteLength == 0) {
+          throw StateError('Una foto o video seleccionado está vacío.');
+        }
+        picked.add(
+          _toPickedEvidence(
+            name: item.name,
+            byteLength: byteLength,
+            localPath: destination.path,
+            ownedPickerCopy: true,
+          ),
+        );
       }
-      try {
-        await entry.delete();
-      } on FileSystemException {
-        // Una importación anterior aún podría estar finalizando.
-      }
+      return picked;
+    } catch (_) {
+      await releaseOwnedPickerPaths(movedPaths);
+      rethrow;
     }
-    final destination = File(
-      '${directory.path}/${DateTime.now().microsecondsSinceEpoch}-'
-      '${_ownedPickerMediaPaths.length}-${source.uri.pathSegments.last}',
-    );
-    final moved = await source.rename(destination.path);
-    _ownedPickerMediaPaths.add(moved.path);
-    return moved.path;
   }
 
   Future<void> releaseOwnedPickerPaths(Iterable<String?> paths) async {
@@ -147,12 +209,15 @@ class EvidencePickerService {
     }
   }
 
-  PickedEvidence _toPickedEvidence(
-    PlatformFile file, {
+  PickedEvidence _toPickedEvidence({
+    required String name,
+    required int byteLength,
     required String localPath,
     required bool ownedPickerCopy,
   }) {
-    final extension = file.extension?.toLowerCase();
+    final extension = name.contains('.')
+        ? name.split('.').last.toLowerCase()
+        : null;
     final type = switch (extension) {
       'jpg' ||
       'jpeg' ||
@@ -197,10 +262,10 @@ class EvidencePickerService {
       _ => RequisitionEvidenceType.other,
     };
     return PickedEvidence(
-      name: file.name,
+      name: name,
       type: type,
-      sizeLabel: _sizeLabel(file.size),
-      byteLength: file.size,
+      sizeLabel: _sizeLabel(byteLength),
+      byteLength: byteLength,
       localPath: localPath,
       mimeType: _mimeTypeFor(extension),
       ownedPickerCopy: ownedPickerCopy,

@@ -2379,7 +2379,12 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                                     ?: 0L
                                 extractVideoThumbnailFrame(retriever, durationMs)
                             } catch (retrieverError: Exception) {
-                                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                                // ThumbnailUtils usa el mismo extractor OEM. Si todos los
+                                // cuadros devolvieron null, repetir la búsqueda solo retrasa
+                                // el decoder por software y puede bloquear la cola.
+                                if (retrieverError is IllegalStateException ||
+                                    Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+                                ) {
                                     throw retrieverError
                                 }
                                 ThumbnailUtils.createVideoThumbnail(

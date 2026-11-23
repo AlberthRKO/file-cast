@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:file_cast/domain/services/evidence_decryption_service.dart';
 import 'package:file_cast/domain/services/evidence_video_thumbnail_service.dart';
+import 'package:file_cast/ui/core/widgets/evidence_thumbnail_work_queue.dart';
 import 'package:flutter/material.dart';
 
 class EvidenceVideoThumbnail extends StatefulWidget {
@@ -49,7 +50,9 @@ class _EvidenceVideoThumbnailState extends State<EvidenceVideoThumbnail>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.localPath != widget.localPath ||
         oldWidget.wrappedKey != widget.wrappedKey ||
-        oldWidget.evidenceId != widget.evidenceId) {
+        oldWidget.evidenceId != widget.evidenceId ||
+        oldWidget.plaintextSha256 != widget.plaintextSha256 ||
+        oldWidget.plaintextByteLength != widget.plaintextByteLength) {
       _thumbnailPath = null;
       _generation++;
       _loading = _prepare(_generation);
@@ -73,6 +76,13 @@ class _EvidenceVideoThumbnailState extends State<EvidenceVideoThumbnail>
       return;
     }
 
+    await EvidenceThumbnailWorkQueue.videos.run(
+      () => _prepareWhenScheduled(generation),
+    );
+  }
+
+  Future<void> _prepareWhenScheduled(int generation) async {
+    if (!mounted || generation != _generation) return;
     final encryptedPath = widget.localPath;
     if (encryptedPath == null || !await File(encryptedPath).exists()) return;
 
@@ -85,16 +95,14 @@ class _EvidenceVideoThumbnailState extends State<EvidenceVideoThumbnail>
         if (decryptionService == null) {
           throw StateError('No hay un descifrador disponible para el video.');
         }
-        videoPath = await decryptionService
-            .decryptToTemporaryFile(
-              evidenceId: widget.evidenceId,
-              encryptedPath: encryptedPath,
-              wrappedKey: wrappedKey,
-              outputExtension: _fileExtension(widget.fileName),
-              expectedPlaintextSha256: widget.plaintextSha256,
-              expectedPlaintextByteLength: widget.plaintextByteLength,
-            )
-            .timeout(const Duration(seconds: 60));
+        videoPath = await decryptionService.decryptToTemporaryFile(
+          evidenceId: widget.evidenceId,
+          encryptedPath: encryptedPath,
+          wrappedKey: wrappedKey,
+          outputExtension: _fileExtension(widget.fileName),
+          expectedPlaintextSha256: widget.plaintextSha256,
+          expectedPlaintextByteLength: widget.plaintextByteLength,
+        );
         deleteVideoAfterwards = true;
       }
       final thumbnailPath = await widget.thumbnailService.createThumbnail(

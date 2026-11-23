@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart' as crypto;
-import 'package:file_cast/core/errors/either.dart';
 import 'package:file_cast/core/network/http.dart';
 import 'package:file_cast/core/notifications/local_notification_service.dart';
 import 'package:file_cast/data/services/evidence_background_sync_service.dart';
@@ -376,32 +375,6 @@ class EvidenceOfflineSyncService {
       );
     }
 
-    final result = await _http.request<List<int>>(
-      url,
-      isFileV2: true,
-      onSucces: (body) => body is List<int>
-          ? body
-          : throw StateError('La respuesta de la evidencia no es un archivo.'),
-    );
-    final bytes = switch (result) {
-      Left(leftValue: final error) => throw StateError(
-        error.message ?? 'No se pudo descargar la evidencia.',
-      ),
-      Right(rightValue: final body) => body,
-      Either() => throw StateError(
-        'Respuesta inesperada al descargar la evidencia.',
-      ),
-    };
-    if (evidence.byteLength <= 0 || bytes.length != evidence.byteLength) {
-      throw StateError(
-        'El tamaño de la evidencia descargada no coincide.',
-      );
-    }
-    final ciphertextSha256 = crypto.sha256.convert(bytes).toString();
-    if (evidence.sha256 != null &&
-        ciphertextSha256 != evidence.sha256!.toLowerCase()) {
-      throw StateError('El hash de la evidencia descargada no coincide.');
-    }
     if (evidence.plaintextByteLength == null ||
         evidence.plaintextSha256 == null) {
       throw StateError('La evidencia no tiene metadatos de descifrado.');
@@ -420,9 +393,17 @@ class EvidenceOfflineSyncService {
     final targetFile = File(targetPath);
     var targetInstalled = false;
     try {
-      await temporaryFile.writeAsBytes(bytes, flush: true);
-      if (await temporaryFile.length() != evidence.byteLength) {
-        throw StateError('No se pudo guardar completa la evidencia local.');
+      await _http.downloadToFile(
+        url,
+        temporaryPath,
+        expectedBytes: evidence.byteLength,
+      );
+      final ciphertextSha256 = (await crypto.sha256.bind(
+        temporaryFile.openRead(),
+      ).first).toString().toLowerCase();
+      if (evidence.sha256 != null &&
+          ciphertextSha256 != evidence.sha256!.toLowerCase()) {
+        throw StateError('El hash de la evidencia descargada no coincide.');
       }
       if (await targetFile.exists()) await targetFile.delete();
       await temporaryFile.rename(targetPath);

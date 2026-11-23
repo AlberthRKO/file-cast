@@ -16,6 +16,7 @@ final class AndroidEvidenceVideoThumbnailService
 
   final AdbClient _adbClient;
   Future<void> _lastExtraction = Future<void>.value();
+  DateTime? _nativeUnavailableUntil;
 
   @override
   Future<String?> findCachedThumbnail({required String cacheKey}) async {
@@ -43,12 +44,24 @@ final class AndroidEvidenceVideoThumbnailService
   }
 
   Future<String> _createThumbnail(String videoPath, String cacheKey) async {
+    final nativeUnavailableUntil = _nativeUnavailableUntil;
+    if (nativeUnavailableUntil != null &&
+        DateTime.now().isBefore(nativeUnavailableUntil)) {
+      return _extractWithSoftwareDecoder(videoPath, cacheKey);
+    }
     try {
       return await _adbClient
           .createVideoThumbnail(path: videoPath, cacheKey: cacheKey)
           .timeout(const Duration(seconds: 45));
     } on Object catch (error) {
       if (error is! PlatformException && error is! TimeoutException) rethrow;
+      if (error is TimeoutException) {
+        // El hilo nativo puede seguir ocupado aunque Dart haya agotado el
+        // tiempo. No encolar más extractores OEM mientras se recupera.
+        _nativeUnavailableUntil = DateTime.now().add(
+          const Duration(minutes: 2),
+        );
+      }
       // Algunos extractores OEM no pueden leer cuadros que libmpv sí reproduce.
       return _extractWithSoftwareDecoder(videoPath, cacheKey);
     }
@@ -104,9 +117,12 @@ final class AndroidEvidenceVideoThumbnailService
           : Duration.zero;
       await player.seek(frameTime);
       await player.play();
-      await controller.waitUntilFirstFrameRendered.timeout(
-        const Duration(seconds: 15),
-      );
+      await Future.any<void>([
+        controller.waitUntilFirstFrameRendered,
+        player.stream.position
+            .firstWhere((position) => position > Duration.zero)
+            .then((_) {}),
+      ]).timeout(const Duration(seconds: 15));
       await player.pause();
 
       final jpeg = await player

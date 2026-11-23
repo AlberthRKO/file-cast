@@ -243,6 +243,88 @@ class Http {
     }
   }
 
+  /// Descarga un archivo directamente al destino privado sin acumular su
+  /// contenido en memoria. El caller entrega una ruta temporal y la instala
+  /// sólo después de verificar su hash e integridad.
+  Future<int> downloadToFile(
+    String path,
+    String destinationPath, {
+    required int expectedBytes,
+    Duration timeOut = const Duration(seconds: 60),
+    Map<String, String> headers = const {},
+  }) async {
+    if (expectedBytes <= 0) {
+      throw StateError('La evidencia no tiene un tamaño válido.');
+    }
+    final url = Uri.parse(
+      path.startsWith('http://') || path.startsWith('https://')
+          ? path
+          : '$_baseUrl$path',
+    );
+
+    Future<StreamedResponse> send(String? token) {
+      final request = Request('GET', url);
+      request.headers.addAll({
+        'x-aplicacion': xAplicacion,
+        'x-user-ip': _ip,
+        'user-agent': _userAgent,
+        if (_uniqueDeviceId != null) 'x-dispositivo-unico': _uniqueDeviceId,
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+        'Accept': '*/*',
+        ...headers,
+      });
+      return _client.send(request).timeout(timeOut);
+    }
+
+    var response = await send(await _tokenProvider?.call());
+    if (response.statusCode == 401 && _onUnauthorized != null) {
+      await response.stream.drain<void>();
+      if (await _onUnauthorized()) {
+        response = await send(await _tokenProvider?.call());
+      } else {
+        _onSessionExpired?.call();
+        throw StateError('La sesión expiró durante la descarga.');
+      }
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (response.statusCode == 401) _onSessionExpired?.call();
+      final body = await response.stream.bytesToString();
+      final error = _errorFromResponse(
+        parserResponseBody(body),
+        response.statusCode,
+      );
+      throw StateError(
+        error.message ??
+            'No se pudo descargar la evidencia (HTTP ${response.statusCode}).',
+      );
+    }
+
+    final destination = File(destinationPath);
+    final sink = destination.openWrite();
+    var received = 0;
+    try {
+      await sink.addStream(
+        response.stream.timeout(timeOut).map((chunk) {
+          received += chunk.length;
+          if (received > expectedBytes) {
+            throw StateError('La evidencia descargada supera el tamaño esperado.');
+          }
+          return chunk;
+        }),
+      );
+      await sink.flush();
+      await sink.close();
+      if (received != expectedBytes) {
+        throw StateError('El tamaño de la evidencia descargada no coincide.');
+      }
+      return received;
+    } catch (_) {
+      await sink.close();
+      if (await destination.exists()) await destination.delete();
+      rethrow;
+    }
+  }
+
   ErrorModel _errorFromResponse(dynamic responseBody, int statusCode) {
     if (responseBody is Map) {
       final body = Map<String, dynamic>.from(responseBody);

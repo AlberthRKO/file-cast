@@ -361,6 +361,44 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
                   ),
                 ),
               ),
+          if (viewModel.isSelectingEvidence) ...[
+            ModalBarrier(
+              dismissible: false,
+              color: Theme.of(context).cardColor.withValues(alpha: .24),
+            ),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpace.m),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: AppSize.formMaxWidth,
+                  ),
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(AppSpace.l),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(
+                            width: AppSize.iconL,
+                            height: AppSize.iconL,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          const SizedBox(width: AppSpace.m),
+                          Flexible(
+                            child: Text(
+                              'Preparando archivos seleccionados…',
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1910,21 +1948,9 @@ class _SummaryIconButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return IconButton(
-      tooltip: tooltip,
-      onPressed: onPressed,
-      style: IconButton.styleFrom(
-        minimumSize: const Size.square(AppSize.minTouchTarget),
-        maximumSize: const Size.square(AppSize.minTouchTarget),
-        padding: EdgeInsets.zero,
-        shape: const CircleBorder(),
-        side: BorderSide.none,
-      ),
-      constraints: const BoxConstraints(
-        minWidth: AppSize.minTouchTarget,
-        minHeight: AppSize.minTouchTarget,
-      ),
-      icon: Container(
+    return InkWell(
+      onTap: onPressed,
+      child: Container(
         width: AppSize.iconL + AppSpace.s,
         height: AppSize.iconL + AppSpace.s,
         decoration: BoxDecoration(

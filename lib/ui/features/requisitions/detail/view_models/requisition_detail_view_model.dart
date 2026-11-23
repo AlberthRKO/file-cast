@@ -144,7 +144,9 @@ class RequisitionDetailViewModel extends ChangeNotifier {
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   bool get supportsPhotoLibraryImport =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.android);
 
   List<RequisitionEvidence> get pendingEvidence {
     final items = (_detail?.evidence ?? const <RequisitionEvidence>[])

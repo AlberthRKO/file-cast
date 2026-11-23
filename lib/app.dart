@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:file_cast/core/notifications/local_notification_service.dart';
 import 'package:file_cast/core/theme/theme_dark.dart';
 import 'package:file_cast/core/theme/theme_light.dart';
+import 'package:file_cast/ui/core/navigation/app_route.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:file_cast/ui/core/theme/theme_controller.dart';
 import 'package:file_cast/ui/core/widgets/app_connectivity_banner.dart';
@@ -23,6 +24,7 @@ class App extends StatefulWidget {
 class _AppState extends State<App> {
   StreamSubscription<LocalNotificationPayload>? _notificationSubscription;
   LocalNotificationPayload? _pendingPayload;
+  bool _pendingNavigationScheduled = false;
 
   @override
   void initState() {
@@ -48,12 +50,21 @@ class _AppState extends State<App> {
 
   void _tryOpenPendingPayload() {
     final payload = _pendingPayload;
-    if (!mounted || payload == null) return;
+    if (!mounted || payload == null || _pendingNavigationScheduled) return;
     if (!context.read<AuthSessionController>().isAuthenticated) return;
-    _pendingPayload = null;
+    _pendingNavigationScheduled = true;
+    final router = context.read<GoRouter>();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pendingNavigationScheduled = false;
       if (!mounted) return;
-      context.go('/requisitions/${Uri.encodeComponent(payload.requisitionId)}');
+      if (!context.read<AuthSessionController>().isAuthenticated) return;
+      final currentPayload = _pendingPayload;
+      if (currentPayload == null) return;
+      router.goNamed(
+        AppRouteName.requisitionDetail,
+        pathParameters: {'requisitionId': currentPayload.requisitionId},
+      );
+      _pendingPayload = null;
     });
   }
 
