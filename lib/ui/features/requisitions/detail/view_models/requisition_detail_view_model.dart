@@ -6,6 +6,7 @@ import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
+import 'package:file_cast/domain/repositories/connectivity_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
 import 'package:file_cast/domain/services/evidence_preview_service.dart';
@@ -23,11 +24,13 @@ final class EvidenceCategorySummary {
   const EvidenceCategorySummary({
     required this.category,
     required this.items,
+    required this.pendingCount,
     required this.totalSizeLabel,
   });
 
   final EvidenceCategory category;
   final List<RequisitionEvidence> items;
+  final int pendingCount;
   final String totalSizeLabel;
 }
 
@@ -37,18 +40,23 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     required RequisitionRepository requisitionRepository,
     required RequisitionCreationRepository creationRepository,
     required EvidencePreviewService previewService,
+    required ConnectivityRepository connectivity,
     required this.requisitionId,
     this.currentActorId,
     this.currentActorName,
   }) : _repository = repository,
        _requisitionRepository = requisitionRepository,
        _creationRepository = creationRepository,
-       _previewService = previewService;
+       _previewService = previewService,
+       _connectivity = connectivity,
+       _connectivityStatus = connectivity.currentStatus;
 
   final RequisitionDetailRepository _repository;
   final RequisitionRepository _requisitionRepository;
   final RequisitionCreationRepository _creationRepository;
   final EvidencePreviewService _previewService;
+  final ConnectivityRepository _connectivity;
+  ConnectivityStatus _connectivityStatus;
   final String requisitionId;
   final String? currentActorId;
   final String? currentActorName;
@@ -86,6 +94,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   String? _participantError;
   final Map<String, RequisitionParticipantUser> _knownParticipants = {};
   StreamSubscription<String>? _changesSubscription;
+  StreamSubscription<ConnectivityStatus>? _connectivitySubscription;
   StreamSubscription<EvidenceUploadProgress>? _uploadProgressSubscription;
   StreamSubscription<EvidenceOfflineSyncProgress>?
   _offlineSyncProgressSubscription;
@@ -112,7 +121,11 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   List<String> get offlineSyncErrors => _offlineSyncErrors;
   bool get isOfflineSyncing => _isOfflineSyncing;
   bool get isFinalizing => _isFinalizing;
+  bool get isWorkingOffline =>
+      _connectivityStatus == ConnectivityStatus.offline ||
+      _connectivityStatus == ConnectivityStatus.limited;
   bool get canFinalize {
+    if (isWorkingOffline) return false;
     final status = _detail?.requisition.status;
     return status == RequisitionStatus.draft ||
         status == RequisitionStatus.inProgress;
@@ -130,15 +143,22 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   bool get supportsAndroidUsbAcquisition =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
+  List<RequisitionEvidence> get pendingEvidence {
+    final items = (_detail?.evidence ?? const <RequisitionEvidence>[])
+        .where(_isPendingEvidence)
+        .toList();
+    items.sort((left, right) => right.createdAt.compareTo(left.createdAt));
+    return List.unmodifiable(items);
+  }
+
   int get pendingEvidenceCount =>
-      _detail?.evidence
-          .where(
-            (item) => const {'PENDING_UPLOAD', 'UPLOADING', 'ERROR'}.contains(
-              item.uploadStatus?.toUpperCase(),
-            ),
-          )
-          .length ??
-      0;
+      _detail?.evidence.where(_isPendingEvidence).length ?? 0;
+
+  bool _isPendingEvidence(RequisitionEvidence evidence) => const {
+    'PENDING_UPLOAD',
+    'UPLOADING',
+    'ERROR',
+  }.contains(evidence.uploadStatus?.toUpperCase());
 
   int get failedEvidenceCount =>
       _detail?.evidence
@@ -152,8 +172,10 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     if (_uploadingEvidenceId == evidence.id) return false;
     final status = evidence.uploadStatus?.toUpperCase();
     if (status != 'PENDING_UPLOAD' && status != 'ERROR') return false;
-    return evidence.isBackendRecord ||
-        evidence.localPath?.trim().isNotEmpty == true;
+    if (isWorkingOffline && evidence.isBackendRecord) return false;
+    // Una fila local cuyo FCE desapareció también debe poder retirarse; la
+    // eliminación del repositorio tolera que el archivo ya no exista.
+    return true;
   }
 
   String? _deletingEvidenceId;
@@ -162,7 +184,11 @@ class RequisitionDetailViewModel extends ChangeNotifier {
       _deletingEvidenceId == evidence.id;
 
   bool canUploadEvidence(RequisitionEvidence evidence) {
-    if (_uploadingEvidenceId != null || _isCancellingUpload) return false;
+    if (isWorkingOffline ||
+        _uploadingEvidenceId != null ||
+        _isCancellingUpload) {
+      return false;
+    }
     final status = evidence.uploadStatus?.toUpperCase();
     return (status == 'PENDING_UPLOAD' || status == 'ERROR') &&
         evidence.localPath?.trim().isNotEmpty == true;
@@ -211,6 +237,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   ParticipantSearchPhase get participantSearchPhase => _participantSearchPhase;
   String? get participantError => _participantError;
   bool get canManageParticipants {
+    if (isWorkingOffline) return false;
     final status = _detail?.requisition.status;
     if (currentActorId == null ||
         (status != RequisitionStatus.draft &&
@@ -233,6 +260,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   }
 
   bool get canLinkCase =>
+      !isWorkingOffline &&
       _detail?.requisition.cud == null &&
       (_detail?.requisition.status == RequisitionStatus.draft ||
           _detail?.requisition.status == RequisitionStatus.inProgress);
@@ -272,14 +300,23 @@ class RequisitionDetailViewModel extends ChangeNotifier {
                         item.type != RequisitionEvidenceType.video,
                 },
               )
-              .toList(growable: false);
+              .toList();
+          items.sort((left, right) {
+            final leftPending = _isPendingEvidence(left);
+            final rightPending = _isPendingEvidence(right);
+            if (leftPending != rightPending) {
+              return leftPending ? -1 : 1;
+            }
+            return right.createdAt.compareTo(left.createdAt);
+          });
           final bytes = items.fold<int>(
             0,
             (total, item) => total + item.byteLength,
           );
           return EvidenceCategorySummary(
             category: category,
-            items: items,
+            items: List.unmodifiable(items),
+            pendingCount: items.where(_isPendingEvidence).length,
             totalSizeLabel: _formatSize(bytes),
           );
         })
@@ -288,6 +325,16 @@ class RequisitionDetailViewModel extends ChangeNotifier {
 
   Future<void> load() async {
     if (_disposed) return;
+    _connectivitySubscription ??= _connectivity.changes.listen((status) {
+      final wasWorkingOffline = isWorkingOffline;
+      _connectivityStatus = status;
+      if (!_disposed) notifyListeners();
+      if (!_disposed &&
+          wasWorkingOffline &&
+          status == ConnectivityStatus.online) {
+        unawaited(_refreshRemoteAfterUpload());
+      }
+    });
     _changesSubscription ??= _repository.changes.listen((changedId) {
       if (changedId == requisitionId) unawaited(_reloadSilently());
     });
@@ -329,9 +376,12 @@ class RequisitionDetailViewModel extends ChangeNotifier {
       _updateUploadStatusPolling();
       _phase = RequisitionDetailPhase.content;
       _clearUploadStateWhenNoPendingEvidence();
-    } catch (_) {
+    } catch (error) {
       _phase = RequisitionDetailPhase.error;
-      _errorMessage = 'No se pudo recuperar la requisa.';
+      _errorMessage = _messageFromError(
+        error,
+        fallback: 'No se pudo recuperar la requisa.',
+      );
     }
     if (!_disposed) notifyListeners();
   }
@@ -392,6 +442,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   }
 
   Future<void> _performRemoteRefreshAfterUpload() async {
+    if (isWorkingOffline) return;
     try {
       final refreshed = await _repository.refreshDetail(requisitionId);
       if (_disposed) return;
@@ -515,6 +566,12 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   }
 
   Future<void> _syncImportedEvidence() async {
+    if (isWorkingOffline) {
+      _isSyncing = false;
+      _uploadRequestInFlight = false;
+      if (!_disposed) notifyListeners();
+      return;
+    }
     _uploadRequestInFlight = true;
     try {
       final synchronized = await _repository.syncPendingEvidence(
@@ -541,6 +598,12 @@ class RequisitionDetailViewModel extends ChangeNotifier {
 
   void retryPendingEvidence() {
     if (_isSyncing || _isCancellingUpload || _disposed || !hasPendingEvidence) {
+      return;
+    }
+    if (isWorkingOffline) {
+      _errorMessage =
+          'Las evidencias están guardadas localmente y se cargarán al recuperar conexión.';
+      notifyListeners();
       return;
     }
     _isSyncing = true;
@@ -572,6 +635,9 @@ class RequisitionDetailViewModel extends ChangeNotifier {
 
   Future<String?> uploadPendingEvidence(RequisitionEvidence evidence) async {
     if (_disposed) return 'El detalle de la requisa ya no está disponible.';
+    if (isWorkingOffline) {
+      return 'La evidencia está guardada localmente y se cargará al recuperar conexión.';
+    }
     if (!canUploadEvidence(evidence)) {
       return 'La evidencia ya se está subiendo o no tiene una copia local disponible.';
     }
@@ -614,6 +680,9 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   Future<String?> deletePendingEvidence(RequisitionEvidence evidence) async {
     if (_disposed) return 'El detalle de la requisa ya no está disponible.';
     if (!canDeleteEvidence(evidence)) {
+      if (isWorkingOffline && evidence.isBackendRecord) {
+        return 'Esta evidencia del servidor no puede eliminarse sin conexión.';
+      }
       return 'La evidencia ya está sincronizada o no se puede eliminar.';
     }
     if (_deletingEvidenceId != null) return 'Ya hay una eliminación en curso.';
@@ -651,6 +720,9 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     if (_disposed) return 'El detalle de la requisa ya no está disponible.';
     final value = displayName.trim();
     if (value.isEmpty || value.length > 255) return 'El nombre no es válido.';
+    if (isWorkingOffline && evidence.isBackendRecord) {
+      return 'El nombre de una evidencia remota sólo puede cambiarse con conexión.';
+    }
     try {
       _detail = await _repository.renameEvidence(
         requisitionId: requisitionId,
@@ -672,6 +744,9 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     int personId,
   ) async {
     if (_disposed) return 'El detalle de la requisa ya no está disponible.';
+    if (isWorkingOffline) {
+      return 'Los sujetos de una evidencia remota sólo pueden actualizarse con conexión.';
+    }
     try {
       _detail = await _repository.setEvidenceSubjects(
         requisitionId: requisitionId,
@@ -690,6 +765,13 @@ class RequisitionDetailViewModel extends ChangeNotifier {
 
   void syncEvidenceForOffline() {
     if (_isOfflineSyncing || _disposed) return;
+    if (isWorkingOffline) {
+      _offlineSyncError =
+          'Conéctate para descargar las evidencias que todavía están sólo en el servidor.';
+      _errorMessage = _offlineSyncError;
+      notifyListeners();
+      return;
+    }
     final evidence = _detail?.evidence;
     if (evidence == null || evidence.isEmpty) return;
     _isOfflineSyncing = true;
@@ -741,6 +823,12 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   ) async {
     var evidenceForPreview = evidence;
     if (_needsOfflineRecovery(evidence)) {
+      if (isWorkingOffline) {
+        throw StateError(
+          'Esta evidencia todavía no tiene una copia local disponible. '
+          'Conéctate y usa “Sincronizar para uso offline”.',
+        );
+      }
       // EvidencePreviewSheet starts this future from initState. That happens
       // while Flutter is building the dialog, so notifying synchronously here
       // causes markNeedsBuild/setState during build. Yield to the event loop
@@ -862,6 +950,9 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   }
 
   Future<String?> finalizeRequisition() async {
+    if (isWorkingOffline) {
+      return 'La requisa sólo puede finalizarse cuando exista conexión con el servidor.';
+    }
     if (_isFinalizing || _disposed || !canFinalize) return null;
     if (!canSeal) {
       const message =
@@ -921,6 +1012,12 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   Future<void> searchCaseLinkCandidates() async {
     final query = _caseLinkQuery.trim();
     if (query.length < 4 || _disposed) return;
+    if (isWorkingOffline) {
+      _caseLinkSearchPhase = CaseLinkSearchPhase.error;
+      _caseLinkError = 'La búsqueda de CUD requiere conexión.';
+      notifyListeners();
+      return;
+    }
     final token = ++_caseLinkSearchToken;
     _caseLinkSearchPhase = CaseLinkSearchPhase.loading;
     _caseLinkError = null;
@@ -1002,6 +1099,12 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   Future<void> searchParticipantUser() async {
     final query = _participantQuery.trim();
     if (query.length < 3 || _disposed) return;
+    if (isWorkingOffline) {
+      _participantSearchPhase = ParticipantSearchPhase.error;
+      _participantError = 'La búsqueda de usuarios requiere conexión.';
+      notifyListeners();
+      return;
+    }
     final token = ++_participantSearchToken;
     _participantCandidate = null;
     _participantSearchPhase = ParticipantSearchPhase.loading;
@@ -1212,6 +1315,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _changesSubscription?.cancel();
+    _connectivitySubscription?.cancel();
     _uploadProgressSubscription?.cancel();
     _offlineSyncProgressSubscription?.cancel();
     _uploadStatusTimer?.cancel();

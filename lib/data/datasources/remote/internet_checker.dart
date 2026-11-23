@@ -1,29 +1,34 @@
-import 'dart:io';
+import 'dart:async';
 
-import 'package:flutter/foundation.dart';
-import 'package:http/http.dart';
+import 'package:http/http.dart' as http;
 
+enum BackendReachability { reachable, degraded, unreachable }
+
+/// Comprueba el servicio institucional, no un DNS o proveedor público.
 class InternetChecker {
-  Future<bool> hasInternet() async {
+  InternetChecker({required http.Client client, required String baseUrl})
+    : _client = client,
+      _baseUri = Uri.parse(baseUrl);
+
+  final http.Client _client;
+  final Uri _baseUri;
+
+  Future<BackendReachability> checkBackend() async {
     try {
-      // Comprobar internet en web
-      // esto se ejecutara si la app esta corriendo en web
-      if (kIsWeb) {
-        final response = await get(
-          // hacemos la peticion al dns respectivo del dominio
-          // Uri.parse('https://google.com'),
-          Uri.parse('8.8.8.8'),
-        );
-        return response.statusCode == 200;
-      } else {
-        // dart:io compatibles con moviles
-        final list = await InternetAddress.lookup('google.com');
-        // comprobamos si la solicitud retorno info
-        return list.isNotEmpty && list.first.rawAddress.isNotEmpty;
-        // return false;
-      }
-    } catch (e) {
-      return false;
+      final response = await _client
+          .get(
+            _baseUri,
+            headers: const {
+              'Accept': 'application/json',
+              'Cache-Control': 'no-cache',
+            },
+          )
+          .timeout(const Duration(seconds: 5));
+      return response.statusCode >= 500
+          ? BackendReachability.degraded
+          : BackendReachability.reachable;
+    } on Object {
+      return BackendReachability.unreachable;
     }
   }
 }

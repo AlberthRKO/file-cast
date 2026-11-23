@@ -8,12 +8,14 @@ import 'package:file_cast/data/services/evidence_key_exchange_service.dart';
 import 'package:file_cast/data/services/evidence_offline_sync_service.dart';
 import 'package:file_cast/data/services/evidence_sync_service.dart';
 import 'package:file_cast/data/services/local_evidence_database_service.dart';
+import 'package:file_cast/data/services/remote_request_exception.dart';
 import 'package:file_cast/data/services/requisition_detail_service.dart';
 import 'package:file_cast/domain/models/evidence_offline_sync.dart';
 import 'package:file_cast/domain/models/evidence_upload_progress.dart';
 import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
+import 'package:file_cast/domain/repositories/connectivity_repository.dart';
 
 class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
   RemoteRequisitionDetailRepository({
@@ -24,12 +26,14 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     EvidenceSyncService? syncService,
     EvidenceKeyExchangeService? keyExchange,
     EvidenceOfflineSyncService? offlineSyncService,
+    required ConnectivityRepository connectivity,
   }) : _detailService = detailService,
        _pickerService = pickerService ?? EvidencePickerService(),
        _cryptoService = cryptoService,
        _database = database,
        _syncService = syncService,
        _keyExchange = keyExchange,
+       _connectivity = connectivity,
        _offlineSyncService = offlineSyncService {
     _syncChangesSubscription = syncService?.changes.listen(
       _onEvidenceSyncChanged,
@@ -45,12 +49,14 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
   final Map<String, RequisitionDetail> _cachedRemoteDetails = {};
   final Map<String, Set<String>> _deletedEvidenceIds = {};
   final Map<String, Future<void>> _keySharingInFlight = {};
+  String? _memoryAccountId;
   final EvidencePickerService _pickerService;
   final EvidenceCryptoService? _cryptoService;
   final LocalEvidenceDatabaseService? _database;
   final EvidenceSyncService? _syncService;
   final EvidenceKeyExchangeService? _keyExchange;
   final EvidenceOfflineSyncService? _offlineSyncService;
+  final ConnectivityRepository _connectivity;
   late final StreamSubscription<String>? _syncChangesSubscription;
   final StreamController<String> _changesController =
       StreamController<String>.broadcast();
@@ -294,15 +300,28 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
 
   @override
   Future<RequisitionDetail> getDetail(String requisitionId) async {
+    await _ensureMemoryAccountScope();
     RequisitionDetail remote;
-    try {
-      remote = await _detailService.getDetail(requisitionId);
-      remote = _withoutDeletedEvidence(requisitionId, remote);
-      _cachedRemoteDetails[requisitionId] = remote;
-    } catch (_) {
-      final cached = _cachedRemoteDetails[requisitionId];
-      if (cached == null) rethrow;
+    await _refreshConnectivityIfUnknown();
+    if (_worksOffline) {
+      final cached = await _persistedOrMemoryDetail(requisitionId);
+      if (cached == null) {
+        throw StateError(
+          'Esta requisa todavía no fue preparada para trabajar sin conexión.',
+        );
+      }
       remote = cached;
+    } else {
+      try {
+        remote = await _fetchRemoteAndCache(requisitionId);
+        remote = _withoutDeletedEvidence(requisitionId, remote);
+        _cachedRemoteDetails[requisitionId] = remote;
+      } on RemoteRequestException catch (error) {
+        if (!error.allowsOfflineFallback) rethrow;
+        final cached = await _persistedOrMemoryDetail(requisitionId);
+        if (cached == null) rethrow;
+        remote = cached;
+      }
     }
 
     RequisitionDetail detail;
@@ -314,13 +333,16 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       // volver a reconstruir la copia offline sin ocultar la requisa.
       detail = remote;
     }
-    _schedulePersistedKeySharing(requisitionId, remote);
+    if (!_worksOffline) _schedulePersistedKeySharing(requisitionId, remote);
     return detail;
   }
 
   @override
   Future<RequisitionDetail> refreshDetail(String requisitionId) async {
-    var remote = await _detailService.getDetail(requisitionId);
+    await _ensureMemoryAccountScope();
+    await _refreshConnectivityIfUnknown();
+    if (_worksOffline) return getCachedDetail(requisitionId);
+    var remote = await _fetchRemoteAndCache(requisitionId);
     remote = _withoutDeletedEvidence(requisitionId, remote);
     _cachedRemoteDetails[requisitionId] = remote;
     RequisitionDetail detail;
@@ -333,15 +355,72 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     return detail;
   }
 
+  bool get _worksOffline => switch (_connectivity.currentStatus) {
+    ConnectivityStatus.offline || ConnectivityStatus.limited => true,
+    ConnectivityStatus.checking || ConnectivityStatus.online => false,
+  };
+
+  Future<void> _refreshConnectivityIfUnknown() async {
+    if (_connectivity.currentStatus != ConnectivityStatus.checking) return;
+    await _connectivity.refresh();
+  }
+
   @override
   Future<RequisitionDetail> getCachedDetail(String requisitionId) async {
-    final cached = _cachedRemoteDetails[requisitionId];
+    await _ensureMemoryAccountScope();
+    final cached = await _persistedOrMemoryDetail(requisitionId);
     if (cached == null) return getDetail(requisitionId);
     try {
       return await _mergeRemoteDetail(cached, requisitionId);
     } on Object {
       return cached;
     }
+  }
+
+  Future<RequisitionDetail> _fetchRemoteAndCache(String requisitionId) async {
+    final snapshot = await _detailService.getDetailSnapshot(requisitionId);
+    try {
+      await _database?.saveRequisitionDetailSnapshot(
+        requisitionId: requisitionId,
+        payloadJson: snapshot.payloadJson,
+      );
+    } on Object {
+      // El detalle remoto se puede mostrar aunque SQLite esté ocupado.
+    }
+    return snapshot.detail;
+  }
+
+  Future<RequisitionDetail?> _persistedOrMemoryDetail(
+    String requisitionId,
+  ) async {
+    final memory = _cachedRemoteDetails[requisitionId];
+    try {
+      final payload = await _database?.requisitionDetailSnapshot(requisitionId);
+      if (payload == null || payload.isEmpty) {
+        _cachedRemoteDetails.remove(requisitionId);
+        return null;
+      }
+      final detail = _detailService.parseCachedSnapshot(payload);
+      _cachedRemoteDetails[requisitionId] = detail;
+      return detail;
+    } on Object {
+      // Si SQLite está temporalmente ocupado, el snapshot ya validado de esta
+      // ejecución sigue siendo un fallback seguro para la misma cuenta.
+      return memory;
+    }
+  }
+
+  Future<void> _ensureMemoryAccountScope() async {
+    final database = _database;
+    if (database == null) return;
+    final accountId = await database.currentAccountId();
+    if (_memoryAccountId == accountId) return;
+    _memoryAccountId = accountId;
+    _imported.clear();
+    _cachedLocalEvidence.clear();
+    _cachedRemoteDetails.clear();
+    _deletedEvidenceIds.clear();
+    _keySharingInFlight.clear();
   }
 
   void _schedulePersistedKeySharing(
@@ -432,6 +511,47 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
     final videoCount = evidence
         .where((item) => item.type == RequisitionEvidenceType.video)
         .length;
+    LocalAcquisitionSessionRecord? localSession;
+    try {
+      localSession = await _database?.activeLocalAcquisitionSession(
+        requisitionId,
+      );
+    } on Object {
+      localSession = null;
+    }
+    final remoteSessionId = localSession?.remoteId;
+    if (remoteSessionId != null && remoteSessionId.isNotEmpty) {
+      RequisitionAcquisitionSession? matchingRemoteSession;
+      for (final session in remote.sessions) {
+        if (session.id == remoteSessionId) {
+          matchingRemoteSession = session;
+          break;
+        }
+      }
+      if (matchingRemoteSession != null && !matchingRemoteSession.isOpen) {
+        try {
+          await _database?.markLocalSessionClosed(localSession!.localId);
+        } on Object {
+          // El detalle remoto sigue siendo utilizable aunque falle este ajuste.
+        }
+        localSession = null;
+      }
+    }
+    final resolvedLocalSession = localSession;
+    final sessions = <RequisitionAcquisitionSession>[
+      ...remote.sessions,
+      if (resolvedLocalSession != null &&
+          remote.sessions.every(
+            (item) => item.id != resolvedLocalSession.localId,
+          ))
+        RequisitionAcquisitionSession(
+          id: resolvedLocalSession.localId,
+          status: RequisitionSessionStatus.open,
+          sourcePlatform: resolvedLocalSession.sourcePlatform,
+          transport: resolvedLocalSession.transport,
+          startedAt: resolvedLocalSession.createdAt,
+        ),
+    ];
     return RequisitionDetail(
       requisition: Requisition(
         id: remote.requisition.id,
@@ -452,9 +572,9 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       participants: remote.participants,
       caseInfo: remote.caseInfo,
       personInfo: remote.personInfo,
-      sessionId: remote.sessionId,
+      sessionId: resolvedLocalSession?.localId ?? remote.sessionId,
       evidence: evidence,
-      sessions: remote.sessions,
+      sessions: sessions,
       description: remote.description,
       procedureAt: remote.procedureAt,
       locationLabel: remote.locationLabel,
@@ -820,6 +940,9 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       'DOCUMENT' => RequisitionEvidenceType.document,
       _ => RequisitionEvidenceType.other,
     };
+    final localPath = File(record.encryptedPath).existsSync()
+        ? record.encryptedPath
+        : null;
     return RequisitionEvidence(
       id: record.id,
       requisitionId: record.requisitionId,
@@ -829,7 +952,7 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
       createdAt: record.createdAt,
       sizeLabel: _formatSize(record.ciphertextByteLength),
       byteLength: record.ciphertextByteLength,
-      localPath: record.encryptedPath,
+      localPath: localPath,
       sha256: record.ciphertextSha256,
       sourcePath: record.sourcePath,
       sessionId: record.sessionId,

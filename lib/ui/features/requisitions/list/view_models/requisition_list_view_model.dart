@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:file_cast/domain/models/requisition.dart';
+import 'package:file_cast/domain/repositories/connectivity_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
 import 'package:file_cast/ui/features/requisitions/list/view_models/requisition_list_state.dart';
 import 'package:flutter/foundation.dart';
@@ -8,12 +9,18 @@ import 'package:flutter/foundation.dart';
 class RequisitionListViewModel extends ChangeNotifier {
   RequisitionListViewModel({
     required RequisitionRepository repository,
-  }) : _repository = repository;
+    required ConnectivityRepository connectivity,
+  }) : _repository = repository,
+       _connectivity = connectivity,
+       _connectivityStatus = connectivity.currentStatus;
 
   static const _pageSize = 20;
   static const _queryDebounce = Duration(milliseconds: 350);
 
   final RequisitionRepository _repository;
+  final ConnectivityRepository _connectivity;
+  StreamSubscription<ConnectivityStatus>? _connectivitySubscription;
+  ConnectivityStatus _connectivityStatus;
 
   RequisitionListState _state = const RequisitionListState();
   Timer? _queryDebounceTimer;
@@ -38,14 +45,28 @@ class RequisitionListViewModel extends ChangeNotifier {
   bool get isLoadingMore => _isLoadingMore;
   String? get loadMoreError => _loadMoreError;
   bool get isFinalizing => _finalizingId != null;
+  bool get isWorkingOffline =>
+      _connectivityStatus == ConnectivityStatus.offline ||
+      _connectivityStatus == ConnectivityStatus.limited;
 
   @override
   void dispose() {
     _queryDebounceTimer?.cancel();
+    _connectivitySubscription?.cancel();
     super.dispose();
   }
 
-  Future<void> load() => _loadFirstPage();
+  Future<void> load() {
+    _connectivitySubscription ??= _connectivity.changes.listen((status) {
+      final wasWorkingOffline = isWorkingOffline;
+      _connectivityStatus = status;
+      notifyListeners();
+      if (wasWorkingOffline && status == ConnectivityStatus.online) {
+        unawaited(_loadFirstPage(showRefreshing: true));
+      }
+    });
+    return _loadFirstPage();
+  }
 
   Future<void> refresh() => _loadFirstPage(showRefreshing: true);
 
@@ -138,6 +159,9 @@ class RequisitionListViewModel extends ChangeNotifier {
   }
 
   Future<String?> finalizeRequisition(String requisitionId) async {
+    if (isWorkingOffline) {
+      return 'La requisa sólo puede finalizarse cuando exista conexión con el servidor.';
+    }
     if (_finalizingId != null) return 'Ya se está finalizando una requisa.';
 
     _finalizingId = requisitionId;
@@ -147,7 +171,10 @@ class RequisitionListViewModel extends ChangeNotifier {
       await _loadFirstPage();
       return null;
     } catch (error) {
-      return _messageFromError(error);
+      return _messageFromError(
+        error,
+        fallback: 'No se pudo finalizar la requisa.',
+      );
     } finally {
       _finalizingId = null;
       notifyListeners();
@@ -208,7 +235,7 @@ class RequisitionListViewModel extends ChangeNotifier {
         isRefreshing: false,
         errorMessage: null,
       );
-    } catch (_) {
+    } catch (error) {
       if (requestId != _requestSequence) return;
       _state = _state.copyWith(
         phase: keepContent
@@ -217,7 +244,10 @@ class RequisitionListViewModel extends ChangeNotifier {
         isRefreshing: false,
         errorMessage: keepContent
             ? 'No se pudo actualizar el listado.'
-            : 'No se pudo cargar el listado de requisas.',
+            : _messageFromError(
+                error,
+                fallback: 'No se pudo cargar el listado de requisas.',
+              ),
       );
     } finally {
       if (requestId == _requestSequence) {
@@ -276,8 +306,8 @@ class RequisitionListViewModel extends ChangeNotifier {
     return byId.values.toList(growable: false);
   }
 
-  String _messageFromError(Object error) {
-    final message = error.toString().replaceFirst('Bad state: ', '');
-    return message.isEmpty ? 'No se pudo finalizar la requisa.' : message;
+  String _messageFromError(Object error, {required String fallback}) {
+    final message = error.toString().replaceFirst('Bad state: ', '').trim();
+    return message.isEmpty ? fallback : message;
   }
 }

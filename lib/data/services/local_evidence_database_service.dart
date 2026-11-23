@@ -54,16 +54,19 @@ class LocalEvidenceDatabaseService {
 
   Future<Database> _openDatabase() async {
     final key = await _databaseKey();
+    final migrationAccountId =
+        await _storage.getAuthenticatedAccountId() ?? 'legacy-unassigned';
     final path = '${await getDatabasesPath()}/$_databaseName';
     try {
       return await openDatabase(
         path,
         password: key,
-        version: 7,
+        version: 9,
         onCreate: (db, _) async {
           await db.execute('''
             CREATE TABLE evidencias_locales (
               id TEXT PRIMARY KEY,
+              account_id TEXT NOT NULL,
               requisa_id TEXT NOT NULL,
               sesion_id TEXT NOT NULL,
               nombre_original TEXT NOT NULL,
@@ -103,7 +106,7 @@ class LocalEvidenceDatabaseService {
           ''');
           await db.execute(
             'CREATE INDEX evidencias_locales_requisa_idx '
-            'ON evidencias_locales(requisa_id, creado_at)',
+            'ON evidencias_locales(account_id, requisa_id, creado_at)',
           );
           await db.execute(
             'CREATE INDEX outbox_evidencias_estado_idx '
@@ -116,6 +119,7 @@ class LocalEvidenceDatabaseService {
               expires_at INTEGER NOT NULL
             )
           ''');
+          await _createOfflineTables(db);
         },
         onUpgrade: (db, oldVersion, _) async {
           if (oldVersion < 2) {
@@ -161,6 +165,25 @@ class LocalEvidenceDatabaseService {
               definition: "TEXT NOT NULL DEFAULT '[]'",
             );
           }
+          if (oldVersion < 8) await _createOfflineTables(db);
+          if (oldVersion < 9) {
+            await _ensureColumn(
+              db,
+              table: 'evidencias_locales',
+              column: 'account_id',
+              definition: 'TEXT',
+            );
+            await db.update(
+              'evidencias_locales',
+              {'account_id': migrationAccountId},
+              where: 'account_id IS NULL OR account_id = ?',
+              whereArgs: [''],
+            );
+            await db.execute('''
+              CREATE INDEX IF NOT EXISTS evidencias_locales_account_idx
+              ON evidencias_locales(account_id, requisa_id, creado_at)
+            ''');
+          }
         },
       );
     } on Object catch (error, stackTrace) {
@@ -170,6 +193,327 @@ class LocalEvidenceDatabaseService {
         stackTrace: stackTrace,
       );
     }
+  }
+
+  Future<void> _createOfflineTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS requisition_list_cache (
+        account_id TEXT NOT NULL,
+        requisition_id TEXT NOT NULL,
+        case_name TEXT NOT NULL,
+        registered_at TEXT NOT NULL,
+        status TEXT NOT NULL,
+        image_count INTEGER NOT NULL,
+        video_count INTEGER NOT NULL,
+        is_synchronized INTEGER NOT NULL,
+        cud TEXT,
+        subject_name TEXT,
+        latitude REAL,
+        longitude REAL,
+        location_label TEXT,
+        document_count INTEGER NOT NULL DEFAULT 0,
+        cached_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, requisition_id)
+      )
+    ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS requisition_list_cache_account_idx
+      ON requisition_list_cache(account_id, registered_at DESC)
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS requisition_detail_cache (
+        account_id TEXT NOT NULL,
+        requisition_id TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        cached_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, requisition_id)
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS local_acquisition_sessions (
+        local_id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        requisition_id TEXT NOT NULL,
+        remote_id TEXT,
+        source_platform TEXT NOT NULL,
+        transport TEXT NOT NULL,
+        client_operation_id TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS local_sessions_requisition_idx
+      ON local_acquisition_sessions(account_id, requisition_id, status)
+    ''');
+  }
+
+  Future<String> _requiredAccountId() async {
+    final accountId = await _storage.getAuthenticatedAccountId();
+    if (accountId == null || accountId.isEmpty) {
+      throw StateError(
+        'No existe una cuenta autenticada para el trabajo offline.',
+      );
+    }
+    return accountId;
+  }
+
+  Future<String> currentAccountId() => _requiredAccountId();
+
+  Future<void> saveRequisitionPage({
+    required List<LocalRequisitionCacheRecord> records,
+    String? accountId,
+  }) async {
+    if (records.isEmpty) return;
+    final ownerAccountId = accountId ?? await _requiredAccountId();
+    final db = await database;
+    final now = DateTime.now().toUtc().toIso8601String();
+    await db.transaction((txn) async {
+      for (final record in records) {
+        await txn.insert(
+          'requisition_list_cache',
+          record.toMap(accountId: ownerAccountId, cachedAt: now),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
+  }
+
+  Future<void> replaceRequisitionCatalog({
+    required List<LocalRequisitionCacheRecord> records,
+    String? accountId,
+  }) async {
+    final ownerAccountId = accountId ?? await _requiredAccountId();
+    final db = await database;
+    final now = DateTime.now().toUtc().toIso8601String();
+    await db.transaction((txn) async {
+      final incomingIds = records.map((record) => record.id).toSet();
+      final cachedDetails = await txn.query(
+        'requisition_detail_cache',
+        columns: ['requisition_id'],
+        where: 'account_id = ?',
+        whereArgs: [ownerAccountId],
+      );
+      for (final row in cachedDetails) {
+        final requisitionId = row['requisition_id']?.toString() ?? '';
+        if (incomingIds.contains(requisitionId)) continue;
+        await txn.delete(
+          'requisition_detail_cache',
+          where: 'account_id = ? AND requisition_id = ?',
+          whereArgs: [ownerAccountId, requisitionId],
+        );
+      }
+      await txn.delete(
+        'requisition_list_cache',
+        where: 'account_id = ?',
+        whereArgs: [ownerAccountId],
+      );
+      for (final record in records) {
+        await txn.insert(
+          'requisition_list_cache',
+          record.toMap(accountId: ownerAccountId, cachedAt: now),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
+  }
+
+  Future<List<LocalRequisitionCacheRecord>> cachedRequisitions() async {
+    final accountId = await _requiredAccountId();
+    final db = await database;
+    final rows = await db.query(
+      'requisition_list_cache',
+      where: 'account_id = ?',
+      whereArgs: [accountId],
+      orderBy: 'registered_at DESC',
+    );
+    return rows
+        .map(LocalRequisitionCacheRecord.fromMap)
+        .toList(growable: false);
+  }
+
+  Future<void> saveRequisitionDetailSnapshot({
+    required String requisitionId,
+    required String payloadJson,
+    String? accountId,
+  }) async {
+    final ownerAccountId = accountId ?? await _requiredAccountId();
+    final db = await database;
+    await db.insert(
+      'requisition_detail_cache',
+      {
+        'account_id': ownerAccountId,
+        'requisition_id': requisitionId,
+        'payload_json': payloadJson,
+        'cached_at': DateTime.now().toUtc().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<Set<String>> cachedDetailRequisitionIds({String? accountId}) async {
+    final ownerAccountId = accountId ?? await _requiredAccountId();
+    final db = await database;
+    final rows = await db.query(
+      'requisition_detail_cache',
+      columns: ['requisition_id'],
+      where: 'account_id = ?',
+      whereArgs: [ownerAccountId],
+    );
+    return rows
+        .map((row) => row['requisition_id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
+  }
+
+  Future<String?> requisitionDetailSnapshot(String requisitionId) async {
+    final accountId = await _requiredAccountId();
+    final db = await database;
+    final rows = await db.query(
+      'requisition_detail_cache',
+      columns: ['payload_json'],
+      where: 'account_id = ? AND requisition_id = ?',
+      whereArgs: [accountId, requisitionId],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.single['payload_json'] as String?;
+  }
+
+  Future<LocalAcquisitionSessionRecord> ensureLocalAcquisitionSession({
+    required String requisitionId,
+    required String sourcePlatform,
+    required String transport,
+  }) async {
+    final accountId = await _requiredAccountId();
+    final db = await database;
+    final existing = await db.query(
+      'local_acquisition_sessions',
+      where: 'account_id = ? AND requisition_id = ? AND status IN (?, ?)',
+      whereArgs: [accountId, requisitionId, 'PENDING', 'REMOTE'],
+      orderBy: 'created_at DESC',
+      limit: 1,
+    );
+    if (existing.isNotEmpty) {
+      return LocalAcquisitionSessionRecord.fromMap(existing.single);
+    }
+
+    final now = DateTime.now().toUtc();
+    final localId = 'local-session-${_uuid()}';
+    final record = LocalAcquisitionSessionRecord(
+      localId: localId,
+      requisitionId: requisitionId,
+      sourcePlatform: sourcePlatform,
+      transport: transport,
+      clientOperationId: 'session-${_uuid()}',
+      status: 'PENDING',
+      createdAt: now,
+    );
+    await db.insert(
+      'local_acquisition_sessions',
+      record.toMap(accountId: accountId),
+      conflictAlgorithm: ConflictAlgorithm.abort,
+    );
+    return record;
+  }
+
+  Future<LocalAcquisitionSessionRecord?> localAcquisitionSession(
+    String localId,
+  ) async {
+    final accountId = await _requiredAccountId();
+    final db = await database;
+    final rows = await db.query(
+      'local_acquisition_sessions',
+      where: 'account_id = ? AND local_id = ?',
+      whereArgs: [accountId, localId],
+      limit: 1,
+    );
+    return rows.isEmpty
+        ? null
+        : LocalAcquisitionSessionRecord.fromMap(rows.single);
+  }
+
+  Future<LocalAcquisitionSessionRecord?> activeLocalAcquisitionSession(
+    String requisitionId,
+  ) async {
+    final accountId = await _requiredAccountId();
+    final db = await database;
+    final rows = await db.query(
+      'local_acquisition_sessions',
+      where: 'account_id = ? AND requisition_id = ? AND status IN (?, ?)',
+      whereArgs: [accountId, requisitionId, 'PENDING', 'REMOTE'],
+      orderBy: 'created_at DESC',
+      limit: 1,
+    );
+    return rows.isEmpty
+        ? null
+        : LocalAcquisitionSessionRecord.fromMap(rows.single);
+  }
+
+  Future<void> markLocalSessionRemote({
+    required String localId,
+    required String remoteId,
+  }) async {
+    final accountId = await _requiredAccountId();
+    final db = await database;
+    await db.update(
+      'local_acquisition_sessions',
+      {
+        'remote_id': remoteId,
+        'status': 'REMOTE',
+        'last_error': null,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      },
+      where: 'account_id = ? AND local_id = ?',
+      whereArgs: [accountId, localId],
+    );
+  }
+
+  Future<void> markLocalSessionError({
+    required String localId,
+    required String message,
+  }) async {
+    final accountId = await _requiredAccountId();
+    final db = await database;
+    await db.update(
+      'local_acquisition_sessions',
+      {
+        'last_error': message.length > 512
+            ? message.substring(0, 512)
+            : message,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      },
+      where: 'account_id = ? AND local_id = ?',
+      whereArgs: [accountId, localId],
+    );
+  }
+
+  Future<void> markLocalSessionClosed(String localId) async {
+    final accountId = await _requiredAccountId();
+    final db = await database;
+    await db.update(
+      'local_acquisition_sessions',
+      {
+        'status': 'CLOSED',
+        'last_error': null,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      },
+      where: 'account_id = ? AND local_id = ?',
+      whereArgs: [accountId, localId],
+    );
+  }
+
+  String _uuid() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    final hex = bytes
+        .map((value) => value.toRadixString(16).padLeft(2, '0'))
+        .join();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
+        '${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
   }
 
   Future<void> _ensureColumn(
@@ -208,6 +552,7 @@ class LocalEvidenceDatabaseService {
     // esperar el lock de sincronización, porque el worker puede conservarlo
     // mientras realiza una subida de red. SQLite ya serializa esta escritura
     // con sus propias transacciones y la outbox queda atómica.
+    final accountId = await _requiredAccountId();
     final db = await database;
     final now = DateTime.now().toUtc().toIso8601String();
     await db.transaction((txn) async {
@@ -215,6 +560,7 @@ class LocalEvidenceDatabaseService {
         'evidencias_locales',
         {
           ...evidence.toMap(),
+          'account_id': accountId,
           'actualizado_at': now,
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
@@ -240,6 +586,7 @@ class LocalEvidenceDatabaseService {
   /// confirmado por file-cast-back y solo se está reconstruyendo la copia FCE
   /// local para uso offline.
   Future<void> saveRecoveredEvidence(LocalEvidenceRecord evidence) async {
+    final accountId = await _requiredAccountId();
     final db = await database;
     final now = DateTime.now().toUtc().toIso8601String();
     await db.transaction((txn) async {
@@ -247,6 +594,7 @@ class LocalEvidenceDatabaseService {
         'evidencias_locales',
         {
           ...evidence.toMap(),
+          'account_id': accountId,
           'estado': 'SINCRONIZADA',
           'actualizado_at': now,
         },
@@ -269,6 +617,7 @@ class LocalEvidenceDatabaseService {
     required String evidenceId,
     required String displayName,
   }) async {
+    final accountId = await _requiredAccountId();
     final db = await database;
     await db.update(
       'evidencias_locales',
@@ -276,8 +625,8 @@ class LocalEvidenceDatabaseService {
         'nombre_mostrado': displayName,
         'actualizado_at': DateTime.now().toUtc().toIso8601String(),
       },
-      where: 'id = ? AND requisa_id = ?',
-      whereArgs: [evidenceId, requisitionId],
+      where: 'account_id = ? AND id = ? AND requisa_id = ?',
+      whereArgs: [accountId, evidenceId, requisitionId],
     );
   }
 
@@ -389,6 +738,7 @@ class LocalEvidenceDatabaseService {
     int limit = 10,
     bool automaticOnly = false,
   }) async {
+    final accountId = await _requiredAccountId();
     final db = await database;
     final rows = await db.rawQuery(
       '''
@@ -396,12 +746,13 @@ class LocalEvidenceDatabaseService {
       FROM evidencias_locales e
       INNER JOIN outbox_evidencias o ON o.evidencia_id = e.id
       WHERE o.estado IN ('PENDIENTE', 'ERROR')
+        AND e.account_id = ?
         AND e.sesion_id <> ''
         ${automaticOnly ? 'AND o.reintento_automatico = 1' : ''}
       ORDER BY e.creado_at ASC
       LIMIT ?
       ''',
-      [limit],
+      [accountId, limit],
     );
     return rows.map(LocalEvidenceRecord.fromMap).toList(growable: false);
   }
@@ -425,6 +776,7 @@ class LocalEvidenceDatabaseService {
         .where((id) => id.isNotEmpty)
         .toSet()
         .toList(growable: false);
+    final accountId = await _requiredAccountId();
     return withSyncLock(() async {
       final db = await database;
       final now = DateTime.now().toUtc();
@@ -454,6 +806,7 @@ class LocalEvidenceDatabaseService {
 
         final where = <String>[
           "o.estado IN ('PENDIENTE', 'ERROR')",
+          'e.account_id = ?',
           "e.sesion_id <> ''",
           if (automaticOnly) 'o.reintento_automatico = 1',
           if (requisitionId?.trim().isNotEmpty == true) 'e.requisa_id = ?',
@@ -462,6 +815,7 @@ class LocalEvidenceDatabaseService {
             'o.evidencia_id NOT IN (${List.filled(excluded.length, '?').join(', ')})',
         ];
         final args = <Object?>[
+          accountId,
           if (requisitionId?.trim().isNotEmpty == true) requisitionId!.trim(),
           if (evidenceId?.trim().isNotEmpty == true) evidenceId!.trim(),
           if (excluded.isNotEmpty) ...excluded,
@@ -506,11 +860,12 @@ class LocalEvidenceDatabaseService {
   }
 
   Future<List<LocalEvidenceRecord>> forRequisition(String requisitionId) async {
+    final accountId = await _requiredAccountId();
     final db = await database;
     final rows = await db.query(
       'evidencias_locales',
-      where: 'requisa_id = ?',
-      whereArgs: [requisitionId],
+      where: 'account_id = ? AND requisa_id = ?',
+      whereArgs: [accountId, requisitionId],
       orderBy: 'creado_at ASC',
     );
     return rows.map(LocalEvidenceRecord.fromMap).toList(growable: false);
@@ -521,6 +876,7 @@ class LocalEvidenceDatabaseService {
   Future<void> pausePendingForRequisition(String requisitionId) async {
     final normalizedId = requisitionId.trim();
     if (normalizedId.isEmpty) return;
+    final accountId = await _requiredAccountId();
     await withSyncLock(() async {
       final db = await database;
       final now = DateTime.now().toUtc().toIso8601String();
@@ -531,18 +887,20 @@ class LocalEvidenceDatabaseService {
           SET estado = 'PENDIENTE', ultimo_error = NULL,
               reintento_automatico = 0, actualizado_at = ?
           WHERE estado <> 'SINCRONIZADA' AND evidencia_id IN (
-              SELECT id FROM evidencias_locales WHERE requisa_id = ?
+              SELECT id FROM evidencias_locales
+              WHERE account_id = ? AND requisa_id = ?
             )
           ''',
-          [now, normalizedId],
+          [now, accountId, normalizedId],
         );
         await txn.rawUpdate(
           '''
           UPDATE evidencias_locales
           SET estado = 'PENDIENTE', actualizado_at = ?
-          WHERE estado <> 'SINCRONIZADA' AND requisa_id = ?
+          WHERE estado <> 'SINCRONIZADA'
+            AND account_id = ? AND requisa_id = ?
           ''',
-          [now, normalizedId],
+          [now, accountId, normalizedId],
         );
       });
     });
@@ -554,6 +912,7 @@ class LocalEvidenceDatabaseService {
   Future<void> resumePendingForRequisition(String requisitionId) async {
     final normalizedId = requisitionId.trim();
     if (normalizedId.isEmpty) return;
+    final accountId = await _requiredAccountId();
     await withSyncLock(() async {
       final db = await database;
       final now = DateTime.now().toUtc().toIso8601String();
@@ -564,18 +923,20 @@ class LocalEvidenceDatabaseService {
           SET estado = 'PENDIENTE', ultimo_error = NULL,
               reintento_automatico = 1, actualizado_at = ?
           WHERE estado <> 'SINCRONIZADA' AND evidencia_id IN (
-              SELECT id FROM evidencias_locales WHERE requisa_id = ?
+              SELECT id FROM evidencias_locales
+              WHERE account_id = ? AND requisa_id = ?
             )
           ''',
-          [now, normalizedId],
+          [now, accountId, normalizedId],
         );
         await txn.rawUpdate(
           '''
           UPDATE evidencias_locales
           SET estado = 'PENDIENTE', actualizado_at = ?
-          WHERE estado <> 'SINCRONIZADA' AND requisa_id = ?
+          WHERE estado <> 'SINCRONIZADA'
+            AND account_id = ? AND requisa_id = ?
           ''',
-          [now, normalizedId],
+          [now, accountId, normalizedId],
         );
       });
     });
@@ -592,6 +953,7 @@ class LocalEvidenceDatabaseService {
     if (normalizedRequisitionId.isEmpty || normalizedEvidenceId.isEmpty) {
       return;
     }
+    final accountId = await _requiredAccountId();
     await withSyncLock(() async {
       final db = await database;
       final now = DateTime.now().toUtc().toIso8601String();
@@ -603,24 +965,32 @@ class LocalEvidenceDatabaseService {
               reintento_automatico = 1, actualizado_at = ?
           WHERE estado <> 'SINCRONIZADA' AND evidencia_id = ?
             AND evidencia_id IN (
-              SELECT id FROM evidencias_locales WHERE requisa_id = ?
+              SELECT id FROM evidencias_locales
+              WHERE account_id = ? AND requisa_id = ?
             )
           ''',
-          [now, normalizedEvidenceId, normalizedRequisitionId],
+          [
+            now,
+            normalizedEvidenceId,
+            accountId,
+            normalizedRequisitionId,
+          ],
         );
         await txn.rawUpdate(
           '''
           UPDATE evidencias_locales
           SET estado = 'PENDIENTE', actualizado_at = ?
-          WHERE estado <> 'SINCRONIZADA' AND id = ? AND requisa_id = ?
+          WHERE estado <> 'SINCRONIZADA'
+            AND account_id = ? AND id = ? AND requisa_id = ?
           ''',
-          [now, normalizedEvidenceId, normalizedRequisitionId],
+          [now, accountId, normalizedEvidenceId, normalizedRequisitionId],
         );
       });
     });
   }
 
   Future<void> markUploaded(String evidenceId, String msFileId) async {
+    final accountId = await _requiredAccountId();
     final db = await database;
     await db.transaction((txn) async {
       await txn.update(
@@ -630,8 +1000,8 @@ class LocalEvidenceDatabaseService {
           'ms_archivo_id': msFileId,
           'actualizado_at': DateTime.now().toUtc().toIso8601String(),
         },
-        where: 'id = ?',
-        whereArgs: [evidenceId],
+        where: 'account_id = ? AND id = ?',
+        whereArgs: [accountId, evidenceId],
       );
       await txn.update(
         'outbox_evidencias',
@@ -651,6 +1021,7 @@ class LocalEvidenceDatabaseService {
     String message, {
     bool retryable = true,
   }) async {
+    final accountId = await _requiredAccountId();
     final db = await database;
     final safeMessage = message.length > 512
         ? message.substring(0, 512)
@@ -673,8 +1044,8 @@ class LocalEvidenceDatabaseService {
           'estado': 'ERROR',
           'actualizado_at': now,
         },
-        where: 'id = ?',
-        whereArgs: [evidenceId],
+        where: 'account_id = ? AND id = ?',
+        whereArgs: [accountId, evidenceId],
       );
     });
   }
@@ -686,12 +1057,13 @@ class LocalEvidenceDatabaseService {
     required String requisitionId,
     required String evidenceId,
   }) async {
+    final accountId = await _requiredAccountId();
     return withSyncLock(() async {
       final db = await database;
       final rows = await db.query(
         'evidencias_locales',
-        where: 'id = ? AND requisa_id = ?',
-        whereArgs: [evidenceId, requisitionId],
+        where: 'account_id = ? AND id = ? AND requisa_id = ?',
+        whereArgs: [accountId, evidenceId, requisitionId],
         limit: 1,
       );
       if (rows.isEmpty) return false;
@@ -729,8 +1101,8 @@ class LocalEvidenceDatabaseService {
         );
         await txn.delete(
           'evidencias_locales',
-          where: 'id = ? AND requisa_id = ?',
-          whereArgs: [evidenceId, requisitionId],
+          where: 'account_id = ? AND id = ? AND requisa_id = ?',
+          whereArgs: [accountId, evidenceId, requisitionId],
         );
       });
       return true;
@@ -766,6 +1138,129 @@ final class LocalEvidenceDatabaseException implements Exception {
 
   @override
   String toString() => message;
+}
+
+final class LocalRequisitionCacheRecord {
+  const LocalRequisitionCacheRecord({
+    required this.id,
+    required this.caseName,
+    required this.registeredAt,
+    required this.status,
+    required this.imageCount,
+    required this.videoCount,
+    required this.isSynchronized,
+    required this.documentCount,
+    this.cud,
+    this.subjectName,
+    this.latitude,
+    this.longitude,
+    this.locationLabel,
+  });
+
+  final String id;
+  final String caseName;
+  final DateTime registeredAt;
+  final String status;
+  final int imageCount;
+  final int videoCount;
+  final bool isSynchronized;
+  final String? cud;
+  final String? subjectName;
+  final double? latitude;
+  final double? longitude;
+  final String? locationLabel;
+  final int documentCount;
+
+  Map<String, Object?> toMap({
+    required String accountId,
+    required String cachedAt,
+  }) => {
+    'account_id': accountId,
+    'requisition_id': id,
+    'case_name': caseName,
+    'registered_at': registeredAt.toUtc().toIso8601String(),
+    'status': status,
+    'image_count': imageCount,
+    'video_count': videoCount,
+    'is_synchronized': isSynchronized ? 1 : 0,
+    'cud': cud,
+    'subject_name': subjectName,
+    'latitude': latitude,
+    'longitude': longitude,
+    'location_label': locationLabel,
+    'document_count': documentCount,
+    'cached_at': cachedAt,
+  };
+
+  factory LocalRequisitionCacheRecord.fromMap(Map<String, Object?> map) {
+    return LocalRequisitionCacheRecord(
+      id: map['requisition_id']! as String,
+      caseName: map['case_name']! as String,
+      registeredAt: DateTime.parse(map['registered_at']! as String).toLocal(),
+      status: map['status']! as String,
+      imageCount: (map['image_count']! as num).toInt(),
+      videoCount: (map['video_count']! as num).toInt(),
+      isSynchronized: (map['is_synchronized']! as num).toInt() == 1,
+      cud: map['cud'] as String?,
+      subjectName: map['subject_name'] as String?,
+      latitude: (map['latitude'] as num?)?.toDouble(),
+      longitude: (map['longitude'] as num?)?.toDouble(),
+      locationLabel: map['location_label'] as String?,
+      documentCount: (map['document_count'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+final class LocalAcquisitionSessionRecord {
+  const LocalAcquisitionSessionRecord({
+    required this.localId,
+    required this.requisitionId,
+    required this.sourcePlatform,
+    required this.transport,
+    required this.clientOperationId,
+    required this.status,
+    required this.createdAt,
+    this.remoteId,
+    this.lastError,
+  });
+
+  final String localId;
+  final String requisitionId;
+  final String? remoteId;
+  final String sourcePlatform;
+  final String transport;
+  final String clientOperationId;
+  final String status;
+  final String? lastError;
+  final DateTime createdAt;
+
+  Map<String, Object?> toMap({required String accountId}) => {
+    'local_id': localId,
+    'account_id': accountId,
+    'requisition_id': requisitionId,
+    'remote_id': remoteId,
+    'source_platform': sourcePlatform,
+    'transport': transport,
+    'client_operation_id': clientOperationId,
+    'status': status,
+    'last_error': lastError,
+    'created_at': createdAt.toUtc().toIso8601String(),
+    'updated_at': createdAt.toUtc().toIso8601String(),
+  };
+
+  factory LocalAcquisitionSessionRecord.fromMap(Map<String, Object?> map) {
+    return LocalAcquisitionSessionRecord(
+      localId: map['local_id']! as String,
+      requisitionId: map['requisition_id']! as String,
+      remoteId: map['remote_id'] as String?,
+      sourcePlatform: map['source_platform']! as String,
+      transport: map['transport']! as String,
+      clientOperationId: map['client_operation_id']! as String,
+      status: map['status']! as String,
+      lastError: map['last_error'] as String?,
+      createdAt: DateTime.parse(map['created_at']! as String).toLocal(),
+    );
+  }
 }
 
 final class LocalEvidenceRecord {

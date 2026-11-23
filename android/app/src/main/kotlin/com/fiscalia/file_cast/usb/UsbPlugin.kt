@@ -1175,6 +1175,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         Thread {
             try {
                 val directory = evidenceDirectory(requisitionId, sessionId)
+                requireEvidenceStorageCapacity(directory, 32L * 1024L * 1024L)
                 val file = File(directory, "captura-${System.currentTimeMillis()}.png")
                 val metadata = evidenceMetadata(
                     file,
@@ -1200,7 +1201,9 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         val requisitionId = call.argument<String>("requisitionId") ?: "unknown"
         val sessionId = call.argument<String>("sessionId") ?: "unknown"
         try {
-            val file = File(evidenceDirectory(requisitionId, sessionId), "grabacion-${System.currentTimeMillis()}.mp4")
+            val directory = evidenceDirectory(requisitionId, sessionId)
+            requireEvidenceStorageCapacity(directory)
+            val file = File(directory, "grabacion-${System.currentTimeMillis()}.mp4")
             synchronized(recorderLock) {
                 if (recorder != null || pendingRecordingStartResult != null) {
                     throw IllegalStateException("Ya existe una grabación activa")
@@ -1319,6 +1322,16 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         val safeRequisition = requisitionId.replace(Regex("[^A-Za-z0-9._-]"), "_")
         val safeSession = sessionId.replace(Regex("[^A-Za-z0-9._-]"), "_")
         return File(context.filesDir, "evidence/$safeRequisition/$safeSession").apply { mkdirs() }
+    }
+
+    private fun requireEvidenceStorageCapacity(
+        directory: File,
+        expectedAdditionalBytes: Long = 0L,
+    ) {
+        val requiredBytes = MIN_FREE_SPACE_BYTES + expectedAdditionalBytes.coerceAtLeast(0L)
+        check(directory.usableSpace >= requiredBytes) {
+            "No hay espacio suficiente para guardar la evidencia. Libera espacio e inténtalo nuevamente."
+        }
     }
 
     private fun previewDirectory(requisitionId: String, sessionId: String): File {
@@ -2222,7 +2235,9 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         val sessionId = call.argument<String>("sessionId") ?: "unknown"
         Thread {
             try {
-                val file = File(evidenceDirectory(requisitionId, sessionId), "captura-${sourceSessionId}-${System.currentTimeMillis()}.png")
+                val directory = evidenceDirectory(requisitionId, sessionId)
+                requireEvidenceStorageCapacity(directory, 32L * 1024L * 1024L)
+                val file = File(directory, "captura-${sourceSessionId}-${System.currentTimeMillis()}.png")
                 val hash = capturePngFromTransport(state.transport, file)
                 mainHandler.post { result.success(evidenceMetadata(file, hash)) }
             } catch (error: Exception) {
@@ -2247,11 +2262,13 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         val requisitionId = call.argument<String>("requisitionId") ?: "unknown"
         val sessionId = call.argument<String>("sessionId") ?: "unknown"
         try {
+            val directory = evidenceDirectory(requisitionId, sessionId)
+            requireEvidenceStorageCapacity(directory)
             synchronized(state.recorderLock) {
                 if (state.recorder != null || state.pendingRecordingStartResult != null) {
                     throw IllegalStateException("Ya existe una grabación activa")
                 }
-                val file = File(evidenceDirectory(requisitionId, sessionId), "grabacion-${sourceSessionId}-${System.currentTimeMillis()}.mp4")
+                val file = File(directory, "grabacion-${sourceSessionId}-${System.currentTimeMillis()}.mp4")
                 val nextRecorder = ScrcpyRecorder(file, state.videoWidth, state.videoHeight)
                 try {
                     nextRecorder.start(config)

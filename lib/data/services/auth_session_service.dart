@@ -186,6 +186,24 @@ class AuthSessionService {
     }
   }
 
+  Future<UserModel> restoreCachedCurrentUser() async {
+    if (!await hasStoredSession()) {
+      throw const AuthSessionException(
+        statusCode: 401,
+        message: 'No hay una sesión activa.',
+      );
+    }
+    final cachedUser = await _readCachedUser();
+    if (cachedUser == null) {
+      throw const AuthSessionException(
+        message:
+            'Este dispositivo todavía no tiene un perfil preparado para uso offline.',
+      );
+    }
+    _debugLog('session.restore_cached_user_offline');
+    return cachedUser;
+  }
+
   /// Renueva el par de tokens una sola vez aunque varias peticiones expiren
   /// al mismo tiempo.
   Future<bool> refreshTokenIfNeeded() {
@@ -223,10 +241,12 @@ class AuthSessionService {
     } on AuthSessionException {
       // Logout remoto es best-effort; la sesión local siempre se elimina.
     } finally {
-      await _storage.clearAuthSession();
+      await logoutLocally();
       _debugLog('logout.local_session_cleared');
     }
   }
+
+  Future<void> logoutLocally() => _storage.clearAuthSession();
 
   Future<bool> _refreshTokenInternal() async {
     final refreshToken = await _storage.getRefreshToken();

@@ -8,6 +8,7 @@ class EvidenceVideoThumbnail extends StatefulWidget {
   const EvidenceVideoThumbnail({
     required this.localPath,
     required this.evidenceId,
+    required this.fileName,
     required this.fallback,
     required this.thumbnailService,
     this.wrappedKey,
@@ -19,6 +20,7 @@ class EvidenceVideoThumbnail extends StatefulWidget {
 
   final String? localPath;
   final String evidenceId;
+  final String fileName;
   final Widget fallback;
   final String? wrappedKey;
   final String? plaintextSha256;
@@ -88,18 +90,17 @@ class _EvidenceVideoThumbnailState extends State<EvidenceVideoThumbnail>
               evidenceId: widget.evidenceId,
               encryptedPath: encryptedPath,
               wrappedKey: wrappedKey,
+              outputExtension: _fileExtension(widget.fileName),
               expectedPlaintextSha256: widget.plaintextSha256,
               expectedPlaintextByteLength: widget.plaintextByteLength,
             )
             .timeout(const Duration(seconds: 60));
         deleteVideoAfterwards = true;
       }
-      final thumbnailPath = await widget.thumbnailService
-          .createThumbnail(
-            videoPath: videoPath,
-            cacheKey: widget.evidenceId,
-          )
-          .timeout(const Duration(seconds: 60));
+      final thumbnailPath = await widget.thumbnailService.createThumbnail(
+        videoPath: videoPath,
+        cacheKey: widget.evidenceId,
+      );
       if (mounted && generation == _generation) {
         setState(() => _thumbnailPath = thumbnailPath);
       }
@@ -114,6 +115,16 @@ class _EvidenceVideoThumbnailState extends State<EvidenceVideoThumbnail>
     } on FileSystemException {
       // El almacenamiento temporal del sistema retirará el archivo después.
     }
+  }
+
+  String? _fileExtension(String fileName) {
+    final name = fileName.split('/').last;
+    final separator = name.lastIndexOf('.');
+    if (separator <= 0 || separator == name.length - 1) return null;
+    final extension = name.substring(separator + 1);
+    return RegExp(r'^[A-Za-z0-9]{1,10}$').hasMatch(extension)
+        ? extension
+        : null;
   }
 
   @override

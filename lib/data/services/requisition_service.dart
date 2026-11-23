@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:file_cast/core/errors/either.dart';
 import 'package:file_cast/core/network/http.dart';
 import 'package:file_cast/data/models/requisition_participant_dto.dart';
+import 'package:file_cast/data/services/remote_request_exception.dart';
 import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
@@ -31,8 +32,12 @@ class RequisitionService {
     );
 
     return switch (result) {
-      Left(leftValue: final error) => throw StateError(
-        error.message ?? 'No se pudo cargar las requisas.',
+      Left(leftValue: final error) => throw RemoteRequestException(
+        message: error.message ?? 'No se pudo cargar las requisas.',
+        statusCode: error.status,
+        isTransportFailure: const {'network', 'timeout'}.contains(
+          error.error?.toString(),
+        ),
       ),
       Right(rightValue: final requisitions) => requisitions,
       Either() => throw StateError('Respuesta inesperada al listar requisas.'),

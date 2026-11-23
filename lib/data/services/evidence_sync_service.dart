@@ -10,6 +10,7 @@ import 'package:file_cast/data/services/evidence_crypto_service.dart';
 import 'package:file_cast/data/services/evidence_key_exchange_service.dart';
 import 'package:file_cast/data/services/local_evidence_database_service.dart';
 import 'package:file_cast/domain/models/evidence_upload_progress.dart';
+import 'package:file_cast/domain/repositories/connectivity_repository.dart';
 import 'package:http/http.dart' as http;
 
 /// Consume la outbox local cuando existe conectividad.
@@ -22,12 +23,14 @@ class EvidenceSyncService {
     required EvidenceKeyExchangeService keyExchange,
     LocalNotificationService? notifications,
     EvidenceBackgroundSyncService? backgroundScheduler,
+    ConnectivityRepository? connectivity,
   }) : _http = http,
        _database = database,
        _crypto = crypto,
        _keyExchange = keyExchange,
        _notifications = notifications,
-       _backgroundScheduler = backgroundScheduler;
+       _backgroundScheduler = backgroundScheduler,
+       _institutionalConnectivity = connectivity;
 
   final Http _http;
   final LocalEvidenceDatabaseService _database;
@@ -35,8 +38,10 @@ class EvidenceSyncService {
   final EvidenceKeyExchangeService _keyExchange;
   final LocalNotificationService? _notifications;
   final EvidenceBackgroundSyncService? _backgroundScheduler;
+  final ConnectivityRepository? _institutionalConnectivity;
   final Connectivity _connectivity = Connectivity();
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  StreamSubscription<ConnectivityStatus>? _reachabilitySubscription;
   final StreamController<String> _changesController =
       StreamController<String>.broadcast();
   final StreamController<EvidenceUploadProgress> _progressController =
@@ -52,6 +57,11 @@ class EvidenceSyncService {
   Stream<EvidenceUploadProgress> get progress => _progressController.stream;
 
   void start() {
+    _reachabilitySubscription ??= _institutionalConnectivity?.changes.listen((
+      status,
+    ) {
+      if (status == ConnectivityStatus.online) unawaited(_triggerSync());
+    });
     _connectivitySubscription ??= _connectivity.onConnectivityChanged.listen((
       results,
     ) {
@@ -84,6 +94,17 @@ class EvidenceSyncService {
 
   Future<void> _triggerSync() async {
     try {
+      final institutionalConnectivity = _institutionalConnectivity;
+      if (institutionalConnectivity != null &&
+          institutionalConnectivity.currentStatus !=
+              ConnectivityStatus.online) {
+        return;
+      }
+      final connections = await _connectivity.checkConnectivity();
+      if (connections.isEmpty ||
+          connections.every((result) => result == ConnectivityResult.none)) {
+        return;
+      }
       // Los errores permanentes (por ejemplo HTTP 413) solo se reintentan
       // cuando el usuario pulsa la acción explícita de reintento.
       await syncPendingInForeground();
@@ -524,6 +545,7 @@ class EvidenceSyncService {
 
   Future<void> dispose() async {
     await _connectivitySubscription?.cancel();
+    await _reachabilitySubscription?.cancel();
     _connectivitySubscription = null;
     await _changesController.close();
     await _progressController.close();
@@ -573,6 +595,7 @@ class EvidenceSyncService {
     LocalEvidenceRecord evidence, {
     void Function()? onReadyToUpload,
   }) async {
+    final remoteSessionId = await _resolveRemoteSessionId(evidence);
     final requisitionKey = await _keyExchange.requisitionKey(
       evidence.requisitionId,
     );
@@ -590,7 +613,7 @@ class EvidenceSyncService {
       headers: {'Idempotency-Key': _intentIdempotencyKey(evidence.id)},
       body: {
         'id': evidence.id,
-        'sessionId': evidence.sessionId,
+        'sessionId': remoteSessionId,
         'originalName': evidence.originalName,
         if (evidence.displayName?.trim().isNotEmpty == true)
           'displayName': evidence.displayName!.trim(),
@@ -639,7 +662,7 @@ class EvidenceSyncService {
       headers: {'Idempotency-Key': evidence.clientOperationId},
       queryParameters: {
         'evidenceId': evidence.id,
-        'sessionId': evidence.sessionId,
+        'sessionId': remoteSessionId,
         'kind': evidence.type,
         'acquisitionMethod': evidence.acquisitionMethod,
       },
@@ -671,6 +694,72 @@ class EvidenceSyncService {
     // endpoint `key-envelopes` queda reservado para reparar o agregar una
     // envoltura después; repetirlo aquí hacía 7 peticiones extra por archivo.
     return remoteId;
+  }
+
+  Future<String> _resolveRemoteSessionId(
+    LocalEvidenceRecord evidence,
+  ) async {
+    final localSessionId = evidence.sessionId.trim();
+    if (localSessionId.isEmpty) return localSessionId;
+    final localSession = await _database.localAcquisitionSession(
+      localSessionId,
+    );
+    if (localSession == null) return localSessionId;
+    if (localSession.requisitionId != evidence.requisitionId) {
+      throw StateError(
+        'La sesión local no pertenece a la requisa de la evidencia.',
+      );
+    }
+    final existingRemoteId = localSession.remoteId?.trim();
+    if (existingRemoteId != null && existingRemoteId.isNotEmpty) {
+      return existingRemoteId;
+    }
+
+    try {
+      final result = await _http.request<dynamic>(
+        '/api/v1/requisitions/${evidence.requisitionId}/sessions',
+        method: HttpMethod.post,
+        headers: {'Idempotency-Key': localSession.clientOperationId},
+        body: {
+          'sourcePlatform': localSession.sourcePlatform,
+          'transport': localSession.transport,
+          'capabilities': {
+            'canMirror': localSession.sourcePlatform == 'ANDROID',
+            'canControl': localSession.sourcePlatform == 'ANDROID',
+            'canCaptureScreenshot': localSession.sourcePlatform == 'ANDROID',
+            'canRecordScreen': localSession.sourcePlatform == 'ANDROID',
+            'canBrowseSharedFiles': localSession.sourcePlatform == 'ANDROID',
+          },
+        },
+        onSucces: (body) => body,
+      );
+      final body = switch (result) {
+        Left(leftValue: final error) => throw StateError(
+          error.message ?? 'No se pudo sincronizar la sesión de adquisición.',
+        ),
+        Right(rightValue: final value) => value,
+        Either() => throw StateError(
+          'Respuesta inesperada al sincronizar la sesión de adquisición.',
+        ),
+      };
+      final remoteId = _findString(body, const ['id', 'sessionId']);
+      if (remoteId == null) {
+        throw StateError(
+          'El servidor no devolvió el identificador de la sesión.',
+        );
+      }
+      await _database.markLocalSessionRemote(
+        localId: localSession.localId,
+        remoteId: remoteId,
+      );
+      return remoteId;
+    } on Object catch (error) {
+      await _database.markLocalSessionError(
+        localId: localSession.localId,
+        message: _safeMessage(error),
+      );
+      rethrow;
+    }
   }
 
   /// Las envolturas AES-GCM se generan con aleatoriedad. Si se reutiliza la

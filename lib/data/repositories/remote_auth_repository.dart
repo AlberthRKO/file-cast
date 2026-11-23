@@ -4,12 +4,17 @@ import 'package:file_cast/data/models/user_model.dart';
 import 'package:file_cast/data/services/auth_session_service.dart';
 import 'package:file_cast/domain/entities/user_entity.dart';
 import 'package:file_cast/domain/repositories/auth_repository.dart';
+import 'package:file_cast/domain/repositories/connectivity_repository.dart';
 
 class RemoteAuthRepository implements AuthRepository {
-  RemoteAuthRepository({required AuthSessionService sessionService})
-    : _sessionService = sessionService;
+  RemoteAuthRepository({
+    required AuthSessionService sessionService,
+    required ConnectivityRepository connectivity,
+  }) : _sessionService = sessionService,
+       _connectivity = connectivity;
 
   final AuthSessionService _sessionService;
+  final ConnectivityRepository _connectivity;
 
   @override
   Future<Either<Failure, UserEntity>> login({
@@ -32,7 +37,12 @@ class RemoteAuthRepository implements AuthRepository {
   @override
   Future<Either<Failure, void>> logout() async {
     try {
-      await _sessionService.logout();
+      if (_connectivity.currentStatus == ConnectivityStatus.offline ||
+          _connectivity.currentStatus == ConnectivityStatus.limited) {
+        await _sessionService.logoutLocally();
+      } else {
+        await _sessionService.logout();
+      }
       return const Either.right(null);
     } on AuthSessionException catch (error) {
       return Either.left(_toFailure(error));
@@ -44,7 +54,15 @@ class RemoteAuthRepository implements AuthRepository {
   @override
   Future<Either<Failure, UserEntity>> getCurrentUser() async {
     try {
-      final user = await _sessionService.restoreCurrentUser();
+      if (_connectivity.currentStatus == ConnectivityStatus.checking) {
+        await _connectivity.refresh();
+      }
+      final user = switch (_connectivity.currentStatus) {
+        ConnectivityStatus.offline || ConnectivityStatus.limited =>
+          await _sessionService.restoreCachedCurrentUser(),
+        ConnectivityStatus.checking ||
+        ConnectivityStatus.online => await _sessionService.restoreCurrentUser(),
+      };
       return Either.right(_toEntity(user));
     } on AuthSessionException catch (error) {
       return Either.left(_toFailure(error));

@@ -207,6 +207,7 @@ class Http {
         };
         return Either.left(
           ErrorModel(
+            error: 'timeout',
             message:
                 'El servidor tardó demasiado en responder. Vuelve a intentarlo.',
           ),
@@ -218,10 +219,14 @@ class Http {
           'exception': 'NetworkException',
         };
         // Si entra aqui es por error de conexion
-        return Either.left(ErrorModel(message: 'Error de conexion'));
+        return Either.left(
+          ErrorModel(error: 'network', message: 'Error de conexion'),
+        );
       }
 
-      return Either.left(ErrorModel(message: 'Error desconocido'));
+      return Either.left(
+        ErrorModel(error: 'unexpected', message: 'Error desconocido'),
+      );
     } finally {
       logs = {
         ...logs,

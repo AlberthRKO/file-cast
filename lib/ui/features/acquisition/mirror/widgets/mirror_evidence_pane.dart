@@ -412,6 +412,7 @@ class _EvidenceVisual extends StatelessWidget {
       RequisitionEvidenceType.video => EvidenceVideoThumbnail(
         localPath: path,
         evidenceId: evidence.id,
+        fileName: evidence.name,
         wrappedKey: evidence.wrappedKey,
         plaintextSha256: evidence.plaintextSha256,
         plaintextByteLength: evidence.plaintextByteLength,

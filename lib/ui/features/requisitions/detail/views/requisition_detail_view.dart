@@ -8,6 +8,7 @@ import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
+import 'package:file_cast/domain/repositories/connectivity_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
 import 'package:file_cast/domain/services/evidence_decryption_service.dart';
@@ -62,6 +63,7 @@ class RequisitionDetailRoute extends StatelessWidget {
       requisitionRepository: context.read<RequisitionRepository>(),
       creationRepository: context.read<RequisitionCreationRepository>(),
       previewService: context.read<EvidencePreviewService>(),
+      connectivity: context.read<ConnectivityRepository>(),
       requisitionId: requisitionId,
       currentActorId: context
           .read<AuthSessionController>()
@@ -134,16 +136,30 @@ class RequisitionDetailView extends StatefulWidget {
 
 class _RequisitionDetailViewState extends State<RequisitionDetailView> {
   bool _showInfo = true;
+  EvidenceCategory? _openEvidenceCategory;
+  // Like the mirror evidence pane, keep visited preview trees mounted while
+  // this requisition detail remains open.
+  final Set<EvidenceCategory> _retainedEvidenceCategories =
+      <EvidenceCategory>{};
 
   RequisitionDetailViewModel get viewModel => widget.viewModel;
 
   RequisitionDetail get detail => widget.detail;
 
   @override
+  void didUpdateWidget(covariant RequisitionDetailView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.viewModel != widget.viewModel) {
+      _openEvidenceCategory = null;
+      _retainedEvidenceCategories.clear();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final categories = viewModel.evidenceCategories;
     final decryptionService = context.read<EvidenceDecryptionService>();
-    return Scaffold(
+    final scaffold = Scaffold(
       // The rename/anchor sheets manage keyboard insets themselves. Keeping
       // the page behind them at its original height avoids a second resize of
       // the detail layout while the keyboard is opening.
@@ -248,6 +264,9 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
                         onCancelUpload: viewModel.cancelPendingEvidenceSync,
                         isCancellingUpload: viewModel.isCancellingUpload,
                         onSyncOffline: viewModel.syncEvidenceForOffline,
+                        networkAvailable: !viewModel.isWorkingOffline,
+                        pendingEvidence: viewModel.pendingEvidence,
+                        onViewPending: () => _showPendingEvidence(context),
                       ),
                       const SizedBox(height: AppSpace.m),
                       _EvidenceTotals(categories: categories),
@@ -271,6 +290,9 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
                           onAnchorEvidence: (evidence) =>
                               _anchorEvidence(context, evidence),
                           showSubjectInfo: detail.requisition.cud != null,
+                          onShowAll: () => _showEvidenceCategory(
+                            category.category,
+                          ),
                         ),
                       ],
                     ],
@@ -282,6 +304,79 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
         ),
       ),
     );
+    return PopScope(
+      canPop: _openEvidenceCategory == null,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _closeEvidenceCategory();
+      },
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          scaffold,
+          if (_openEvidenceCategory != null)
+            ModalBarrier(
+              color: Theme.of(context).colorScheme.scrim.withValues(alpha: .54),
+              dismissible: true,
+              onDismiss: _closeEvidenceCategory,
+              semanticsLabel: 'Cerrar lista de evidencias',
+            ),
+          for (final category in categories)
+            if (_retainedEvidenceCategories.contains(category.category))
+              Positioned.fill(
+                key: ValueKey(category.category),
+                child: IgnorePointer(
+                  ignoring: _openEvidenceCategory != category.category,
+                  child: AnimatedOpacity(
+                    opacity: _openEvidenceCategory == category.category ? 1 : 0,
+                    duration: const Duration(milliseconds: 180),
+                    child: Align(
+                      alignment: Alignment.bottomCenter,
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: _AllEvidenceSheet(
+                          title: _categoryLabel(category),
+                          subtitle:
+                              '${category.items.length} elementos · ${category.totalSizeLabel}',
+                          evidence: category.items,
+                          decryptionService: decryptionService,
+                          onOpenEvidence: (evidence) =>
+                              _showEvidencePreview(context, evidence),
+                          canDeleteEvidence: viewModel.canDeleteEvidence,
+                          isDeletingEvidence: viewModel.isDeletingEvidence,
+                          onDeleteEvidence: (evidence) =>
+                              _deleteEvidence(context, evidence),
+                          canUploadEvidence: viewModel.canUploadEvidence,
+                          isUploadingEvidence: viewModel.isUploadingEvidence,
+                          onUploadEvidence: (evidence) =>
+                              _uploadEvidence(context, evidence),
+                          onRenameEvidence: (evidence) =>
+                              _renameEvidence(context, evidence),
+                          onAnchorEvidence: (evidence) =>
+                              _anchorEvidence(context, evidence),
+                          showSubjectInfo: detail.requisition.cud != null,
+                          onClose: _closeEvidenceCategory,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+
+  void _showEvidenceCategory(EvidenceCategory category) {
+    if (!mounted) return;
+    setState(() {
+      _retainedEvidenceCategories.add(category);
+      _openEvidenceCategory = category;
+    });
+  }
+
+  void _closeEvidenceCategory() {
+    if (!mounted || _openEvidenceCategory == null) return;
+    setState(() => _openEvidenceCategory = null);
   }
 
   Future<void> _showAcquisitionActions(BuildContext context) =>
@@ -529,6 +624,58 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
       );
     },
   );
+
+  Future<void> _showPendingEvidence(BuildContext context) {
+    final evidence = viewModel.pendingEvidence;
+    if (evidence.isEmpty) return Future<void>.value();
+
+    final decryptionService = context.read<EvidenceDecryptionService>();
+    return showAppModalBottomSheet<void>(
+      context: context,
+      expand: true,
+      enableDrag: false,
+      builder: (_) => ListenableBuilder(
+        listenable: viewModel,
+        builder: (_, _) {
+          final currentEvidence = viewModel.pendingEvidence;
+          final canUploadPending =
+              !viewModel.isWorkingOffline &&
+              !viewModel.isSyncing &&
+              !viewModel.isCancellingUpload &&
+              currentEvidence.isNotEmpty;
+          final isBusy = viewModel.isSyncing || viewModel.isCancellingUpload;
+          return _AllEvidenceSheet(
+            title: 'Evidencias pendientes',
+            subtitle:
+                '${currentEvidence.length} ${currentEvidence.length == 1 ? 'archivo pendiente' : 'archivos pendientes'} · guardadas localmente',
+            evidence: currentEvidence,
+            emptyMessage: 'No quedan evidencias pendientes de carga.',
+            decryptionService: decryptionService,
+            onOpenEvidence: (item) => _showEvidencePreview(context, item),
+            canDeleteEvidence: viewModel.canDeleteEvidence,
+            isDeletingEvidence: viewModel.isDeletingEvidence,
+            onDeleteEvidence: (item) => _deleteEvidence(context, item),
+            canUploadEvidence: viewModel.canUploadEvidence,
+            isUploadingEvidence: viewModel.isUploadingEvidence,
+            onUploadEvidence: (item) => _uploadEvidence(context, item),
+            onRenameEvidence: (item) => _renameEvidence(context, item),
+            onAnchorEvidence: (item) => _anchorEvidence(context, item),
+            showSubjectInfo: false,
+            onUploadPending: currentEvidence.isEmpty
+                ? null
+                : viewModel.retryPendingEvidence,
+            canUploadPending: canUploadPending,
+            pendingUploadLabel: isBusy ? 'Carga en curso' : 'Cargar pendientes',
+            pendingUploadDisabledMessage: viewModel.isWorkingOffline
+                ? 'Conéctate para cargar las evidencias pendientes.'
+                : isBusy
+                ? 'La carga de evidencias ya está en curso.'
+                : null,
+          );
+        },
+      ),
+    );
+  }
 
   Future<void> _deleteEvidence(
     BuildContext context,
@@ -1153,6 +1300,9 @@ class _SummaryFooter extends StatelessWidget {
     required this.onCancelUpload,
     required this.isCancellingUpload,
     required this.onSyncOffline,
+    required this.networkAvailable,
+    required this.pendingEvidence,
+    required this.onViewPending,
   });
 
   final String sessionsLabel;
@@ -1172,6 +1322,9 @@ class _SummaryFooter extends StatelessWidget {
   final VoidCallback onCancelUpload;
   final bool isCancellingUpload;
   final VoidCallback onSyncOffline;
+  final bool networkAvailable;
+  final List<RequisitionEvidence> pendingEvidence;
+  final VoidCallback onViewPending;
 
   @override
   Widget build(BuildContext context) {
@@ -1208,6 +1361,9 @@ class _SummaryFooter extends StatelessWidget {
       onRetry: onRetry,
       onCancel: onCancelUpload,
       isCancelling: isCancellingUpload,
+      networkAvailable: networkAvailable,
+      pendingEvidence: pendingEvidence,
+      onViewPending: onViewPending,
     );
 
     final offlineAction = _OfflineSyncAction(
@@ -1218,6 +1374,7 @@ class _SummaryFooter extends StatelessWidget {
       availableCount: offlineAvailableCount,
       totalCount: offlineTotalCount,
       onPressed: onSyncOffline,
+      networkAvailable: networkAvailable,
     );
 
     return Column(
@@ -1249,6 +1406,7 @@ class _OfflineSyncAction extends StatelessWidget {
     required this.availableCount,
     required this.totalCount,
     required this.onPressed,
+    required this.networkAvailable,
   });
 
   final EvidenceOfflineSyncProgress? progress;
@@ -1258,6 +1416,7 @@ class _OfflineSyncAction extends StatelessWidget {
   final int availableCount;
   final int totalCount;
   final VoidCallback onPressed;
+  final bool networkAvailable;
 
   @override
   Widget build(BuildContext context) {
@@ -1288,7 +1447,9 @@ class _OfflineSyncAction extends StatelessWidget {
               '${progress!.completed} recuperadas · '
               '${progress!.skipped} ya disponibles · '
               '$failedCount con error.';
-    final title = isSyncing
+    final title = !networkAvailable
+        ? 'Sin conexión · copia local'
+        : isSyncing
         ? progress?.total == null || progress!.total == 0
               ? 'Preparando evidencias offline'
               : 'Sincronizando $processed de $syncTotal'
@@ -1302,12 +1463,16 @@ class _OfflineSyncAction extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final button = AppActionButton(
-          onPressed: allAvailable && !isSyncing ? null : onPressed,
+          onPressed: (allAvailable && !isSyncing) || !networkAvailable
+              ? null
+              : onPressed,
           foregroundColor: theme.colorScheme.primary,
           backgroundColor: theme.colorScheme.primary.withValues(alpha: .10),
           leadingAsset: 'assets/images/icons/sync.svg',
           isLoading: isSyncing,
-          label: allAvailable && !isSyncing
+          label: !networkAvailable
+              ? 'Requiere conexión'
+              : allAvailable && !isSyncing
               ? 'Todo disponible offline'
               : hasFailed
               ? 'Reintentar sincronización'
@@ -1460,6 +1625,9 @@ class _UploadProgressIndicator extends StatelessWidget {
     required this.onRetry,
     required this.onCancel,
     required this.isCancelling,
+    required this.networkAvailable,
+    required this.pendingEvidence,
+    required this.onViewPending,
   });
 
   final EvidenceUploadProgress? progress;
@@ -1470,6 +1638,9 @@ class _UploadProgressIndicator extends StatelessWidget {
   final VoidCallback onRetry;
   final VoidCallback onCancel;
   final bool isCancelling;
+  final bool networkAvailable;
+  final List<RequisitionEvidence> pendingEvidence;
+  final VoidCallback onViewPending;
 
   @override
   Widget build(BuildContext context) {
@@ -1501,7 +1672,9 @@ class _UploadProgressIndicator extends StatelessWidget {
         : hasPending
         ? _pendingTitle(pendingCount, failedCount)
         : 'Evidencias sincronizadas';
-    final subtitle = isCancelling
+    final subtitle = !networkAvailable && hasPending
+        ? 'Guardados localmente. La carga se reanudará al recuperar conexión.'
+        : isCancelling
         ? 'Los archivos seguirán cifrados y guardados en este dispositivo.'
         : progress?.errorMessage ??
               (isPreparingUpload
@@ -1598,9 +1771,16 @@ class _UploadProgressIndicator extends StatelessWidget {
                 spacing: AppSpace.xs,
                 runSpacing: AppSpace.xs,
                 children: [
+                  TextButton.icon(
+                    onPressed: pendingEvidence.isEmpty ? null : onViewPending,
+                    icon: const Icon(Icons.visibility_outlined),
+                    label: const Text('Ver todo'),
+                  ),
                   if (!active)
                     TextButton.icon(
-                      onPressed: isCancelling ? null : onRetry,
+                      onPressed: isCancelling || !networkAvailable
+                          ? null
+                          : onRetry,
                       icon: SvgPicture.asset(
                         'assets/images/icons/sync.svg',
                         width: AppSize.iconS,
@@ -2692,7 +2872,7 @@ class _FolderSummaryCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _categoryTitle(summary.category),
+                  _categoryLabel(summary),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.titleSmall?.copyWith(
@@ -2720,6 +2900,7 @@ class _FolderSummaryCard extends StatelessWidget {
 class _EvidenceSection extends StatelessWidget {
   const _EvidenceSection({
     required this.summary,
+    required this.onShowAll,
     required this.decryptionService,
     required this.onOpenEvidence,
     required this.canDeleteEvidence,
@@ -2734,6 +2915,7 @@ class _EvidenceSection extends StatelessWidget {
   });
 
   final EvidenceCategorySummary summary;
+  final VoidCallback onShowAll;
   final EvidenceDecryptionService decryptionService;
   final ValueChanged<RequisitionEvidence> onOpenEvidence;
   final bool Function(RequisitionEvidence) canDeleteEvidence;
@@ -2749,7 +2931,11 @@ class _EvidenceSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final visible = summary.items.take(6).toList();
-    final title = _categoryTitle(summary.category);
+    final indexById = <String, int>{
+      for (var index = 0; index < visible.length; index++)
+        visible[index].id: index,
+    };
+    final title = _categoryLabel(summary);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2763,7 +2949,7 @@ class _EvidenceSection extends StatelessWidget {
             ),
             if (summary.items.isNotEmpty)
               TextButton(
-                onPressed: () => _showAll(context),
+                onPressed: onShowAll,
                 child: const Text('Ver todo'),
               ),
           ],
@@ -2782,6 +2968,10 @@ class _EvidenceSection extends StatelessWidget {
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 itemCount: visible.length,
+                findChildIndexCallback: (key) {
+                  if (key is ValueKey<String>) return indexById[key.value];
+                  return null;
+                },
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: columns,
                   crossAxisSpacing: AppSpace.s,
@@ -2813,28 +3003,6 @@ class _EvidenceSection extends StatelessWidget {
       ],
     );
   }
-
-  Future<void> _showAll(BuildContext context) => showAppModalBottomSheet<void>(
-    context: context,
-    expand: true,
-    enableDrag: false,
-    builder: (_) => _AllEvidenceSheet(
-      title: _categoryTitle(summary.category),
-      subtitle: '${summary.items.length} elementos · ${summary.totalSizeLabel}',
-      evidence: summary.items,
-      decryptionService: decryptionService,
-      onOpenEvidence: onOpenEvidence,
-      canDeleteEvidence: canDeleteEvidence,
-      isDeletingEvidence: isDeletingEvidence,
-      onDeleteEvidence: onDeleteEvidence,
-      canUploadEvidence: canUploadEvidence,
-      isUploadingEvidence: isUploadingEvidence,
-      onUploadEvidence: onUploadEvidence,
-      onRenameEvidence: onRenameEvidence,
-      onAnchorEvidence: onAnchorEvidence,
-      showSubjectInfo: showSubjectInfo,
-    ),
-  );
 }
 
 class _EvidencePreview extends StatelessWidget {
@@ -2916,6 +3084,7 @@ class _EvidencePreview extends StatelessWidget {
                     ? EvidenceVideoThumbnail(
                         localPath: evidence.localPath,
                         evidenceId: evidence.id,
+                        fileName: evidence.name,
                         wrappedKey: evidence.wrappedKey,
                         plaintextSha256: evidence.plaintextSha256,
                         plaintextByteLength: evidence.plaintextByteLength,
@@ -3185,6 +3354,12 @@ String _categoryTitle(EvidenceCategory category) => switch (category) {
   EvidenceCategory.files => 'Archivos',
 };
 
+String _categoryLabel(EvidenceCategorySummary summary) {
+  final title = _categoryTitle(summary.category);
+  if (summary.pendingCount == 0) return title;
+  return '$title (${summary.pendingCount} ${summary.pendingCount == 1 ? 'pendiente' : 'pendientes'})';
+}
+
 String _evidenceStatusLabel(RequisitionEvidence evidence) =>
     switch (evidence.uploadStatus?.toUpperCase()) {
       'AVAILABLE' =>
@@ -3230,6 +3405,12 @@ class _AllEvidenceSheet extends StatelessWidget {
     required this.onRenameEvidence,
     required this.onAnchorEvidence,
     required this.showSubjectInfo,
+    this.onUploadPending,
+    this.canUploadPending = false,
+    this.pendingUploadLabel = 'Cargar pendientes',
+    this.pendingUploadDisabledMessage,
+    this.emptyMessage,
+    this.onClose,
   });
   final String title;
   final String subtitle;
@@ -3245,10 +3426,20 @@ class _AllEvidenceSheet extends StatelessWidget {
   final ValueChanged<RequisitionEvidence> onRenameEvidence;
   final ValueChanged<RequisitionEvidence> onAnchorEvidence;
   final bool showSubjectInfo;
+  final VoidCallback? onUploadPending;
+  final bool canUploadPending;
+  final String pendingUploadLabel;
+  final String? pendingUploadDisabledMessage;
+  final String? emptyMessage;
+  final VoidCallback? onClose;
 
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
+    final indexById = <String, int>{
+      for (var index = 0; index < evidence.length; index++)
+        evidence[index].id: index,
+    };
 
     return FractionallySizedBox(
       heightFactor: .88,
@@ -3273,76 +3464,136 @@ class _AllEvidenceSheet extends StatelessWidget {
                   title: title,
                   subtitle: subtitle,
                   asset: 'folder.svg',
-                  onClose: () => Navigator.of(context).pop(),
+                  onClose: () => _close(context),
                 ),
                 const SizedBox(height: AppSpace.m),
                 Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final columns = constraints.maxWidth >= 760 ? 2 : 1;
-                      return GridView.builder(
-                        itemCount: evidence.length,
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: columns,
-                          crossAxisSpacing: AppSpace.s,
-                          mainAxisSpacing: AppSpace.s,
-                          mainAxisExtent: showSubjectInfo ? 88 : 68,
-                        ),
-                        itemBuilder: (context, index) => _EvidencePreview(
-                          key: ValueKey(evidence[index].id),
-                          evidence: evidence[index],
-                          decryptionService: decryptionService,
-                          onDelete: canDeleteEvidence(evidence[index])
-                              ? () {
-                                  Navigator.of(context).pop();
-                                  WidgetsBinding.instance.addPostFrameCallback(
-                                    (_) => onDeleteEvidence(evidence[index]),
-                                  );
+                  child: evidence.isEmpty
+                      ? Center(
+                          child: Text(
+                            emptyMessage ?? 'No hay evidencias para mostrar.',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        )
+                      : LayoutBuilder(
+                          builder: (context, constraints) {
+                            final columns = constraints.maxWidth >= 760 ? 2 : 1;
+                            return GridView.builder(
+                              itemCount: evidence.length,
+                              findChildIndexCallback: (key) {
+                                if (key is ValueKey<String>) {
+                                  return indexById[key.value];
                                 }
-                              : null,
-                          onUpload: canUploadEvidence(evidence[index])
-                              ? () {
-                                  Navigator.of(context).pop();
-                                  WidgetsBinding.instance.addPostFrameCallback(
-                                    (_) => onUploadEvidence(evidence[index]),
-                                  );
-                                }
-                              : null,
-                          onRename: () {
-                            Navigator.of(context).pop();
-                            WidgetsBinding.instance.addPostFrameCallback(
-                              (_) => onRenameEvidence(evidence[index]),
+                                return null;
+                              },
+                              gridDelegate:
+                                  SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: columns,
+                                    crossAxisSpacing: AppSpace.s,
+                                    mainAxisSpacing: AppSpace.s,
+                                    mainAxisExtent: showSubjectInfo ? 88 : 68,
+                                  ),
+                              itemBuilder: (context, index) => _EvidencePreview(
+                                key: ValueKey(evidence[index].id),
+                                evidence: evidence[index],
+                                decryptionService: decryptionService,
+                                onDelete: canDeleteEvidence(evidence[index])
+                                    ? () {
+                                        _closeAndRun(
+                                          context,
+                                          () => onDeleteEvidence(
+                                            evidence[index],
+                                          ),
+                                        );
+                                      }
+                                    : null,
+                                onUpload: canUploadEvidence(evidence[index])
+                                    ? () {
+                                        _closeAndRun(
+                                          context,
+                                          () => onUploadEvidence(
+                                            evidence[index],
+                                          ),
+                                        );
+                                      }
+                                    : null,
+                                onRename: () => _closeAndRun(
+                                  context,
+                                  () => onRenameEvidence(evidence[index]),
+                                ),
+                                onAnchor:
+                                    showSubjectInfo &&
+                                        evidence[index].isBackendRecord
+                                    ? () => _closeAndRun(
+                                        context,
+                                        () => onAnchorEvidence(
+                                          evidence[index],
+                                        ),
+                                      )
+                                    : null,
+                                showSubjectInfo: showSubjectInfo,
+                                isDeleting: isDeletingEvidence(evidence[index]),
+                                isUploading: isUploadingEvidence(
+                                  evidence[index],
+                                ),
+                                onOpen: () => _closeAndRun(
+                                  context,
+                                  () => onOpenEvidence(evidence[index]),
+                                ),
+                              ),
                             );
                           },
-                          onAnchor:
-                              showSubjectInfo && evidence[index].isBackendRecord
-                              ? () {
-                                  Navigator.of(context).pop();
-                                  WidgetsBinding.instance.addPostFrameCallback(
-                                    (_) => onAnchorEvidence(evidence[index]),
-                                  );
-                                }
-                              : null,
-                          showSubjectInfo: showSubjectInfo,
-                          isDeleting: isDeletingEvidence(evidence[index]),
-                          isUploading: isUploadingEvidence(evidence[index]),
-                          onOpen: () {
-                            Navigator.of(context).pop();
-                            WidgetsBinding.instance.addPostFrameCallback(
-                              (_) => onOpenEvidence(evidence[index]),
-                            );
-                          },
                         ),
-                      );
-                    },
-                  ),
                 ),
+                if (onUploadPending != null) ...[
+                  const SizedBox(height: AppSpace.s),
+                  if (!canUploadPending)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: AppSpace.xs),
+                      child: Text(
+                        pendingUploadDisabledMessage ??
+                            'Conéctate para cargar las evidencias pendientes.',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: canUploadPending
+                          ? () => _closeAndRun(
+                              context,
+                              () => onUploadPending?.call(),
+                            )
+                          : null,
+                      icon: const Icon(Icons.cloud_upload_outlined),
+                      label: Text(pendingUploadLabel),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
         ),
       ),
     );
+  }
+
+  void _close(BuildContext context) {
+    final close = onClose;
+    if (close != null) {
+      close();
+    } else {
+      Navigator.of(context).pop();
+    }
+  }
+
+  void _closeAndRun(BuildContext context, VoidCallback action) {
+    _close(context);
+    WidgetsBinding.instance.addPostFrameCallback((_) => action());
   }
 }
 

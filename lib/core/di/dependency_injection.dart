@@ -3,14 +3,17 @@ import 'package:file_cast/core/config/config.dart';
 import 'package:file_cast/core/network/http.dart';
 import 'package:file_cast/core/notifications/local_notification_service.dart';
 import 'package:file_cast/core/storage/secure_storage_service.dart';
+import 'package:file_cast/data/datasources/remote/internet_checker.dart';
 import 'package:file_cast/data/repositories/remote_auth_repository.dart';
 import 'package:file_cast/data/repositories/acquisition_repository_impl.dart';
-import 'package:file_cast/data/repositories/remote_requisition_repository.dart';
+import 'package:file_cast/data/repositories/connectivity_repository_impl.dart';
+import 'package:file_cast/data/repositories/offline_first_requisition_repository.dart';
 import 'package:file_cast/data/repositories/remote_requisition_detail_repository.dart';
 import 'package:file_cast/data/repositories/requisition_creation_repository_impl.dart';
 import 'package:file_cast/data/services/requisition_creation_service.dart';
 import 'package:file_cast/data/services/android_acquisition_platform_service.dart';
 import 'package:file_cast/data/services/android_evidence_video_thumbnail_service.dart';
+import 'package:file_cast/data/services/ios_evidence_video_thumbnail_service.dart';
 import 'package:file_cast/data/services/evidence_picker_service.dart';
 import 'package:file_cast/data/services/evidence_crypto_service.dart';
 import 'package:file_cast/data/services/evidence_background_sync_service.dart';
@@ -26,6 +29,7 @@ import 'package:file_cast/data/services/requisition_service.dart';
 import 'package:file_cast/data/services/requisition_detail_service.dart';
 import 'package:file_cast/domain/repositories/auth_repository.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
+import 'package:file_cast/domain/repositories/connectivity_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_creation_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
@@ -35,7 +39,10 @@ import 'package:file_cast/domain/services/evidence_video_thumbnail_service.dart'
 import 'package:file_cast/ui/core/navigation/app_router.dart';
 import 'package:file_cast/ui/core/theme/theme_controller.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
+import 'package:file_cast/ui/features/connectivity/view_models/connectivity_view_model.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
@@ -58,6 +65,32 @@ class DependencyInjection {
         update: (_, storage, previous) =>
             LocalEvidenceDatabaseService(storage: storage),
       ),
+      Provider<Connectivity>(create: (_) => Connectivity()),
+      Provider<InternetChecker>(
+        create: (_) => InternetChecker(
+          client: http.Client(),
+          baseUrl: Config.baseUrl,
+        ),
+      ),
+      ProxyProvider2<Connectivity, InternetChecker, ConnectivityRepository>(
+        update: (_, connectivity, checker, previous) =>
+            previous ??
+            ConnectivityRepositoryImpl(
+              connectivity: connectivity,
+              internetChecker: checker,
+            ),
+      ),
+      ChangeNotifierProxyProvider<
+        ConnectivityRepository,
+        ConnectivityViewModel
+      >(
+        create: (context) => ConnectivityViewModel(
+          repository: context.read<ConnectivityRepository>(),
+        )..initialize(),
+        update: (_, repository, previous) =>
+            previous ??
+            (ConnectivityViewModel(repository: repository)..initialize()),
+      ),
       Provider<LocalNotificationService>(
         create: (_) => LocalNotificationService(),
       ),
@@ -77,10 +110,16 @@ class DependencyInjection {
           baseUrl: Config.baseUrlAuth,
         ),
       ),
-      ProxyProvider<AuthSessionService, AuthRepository>(
-        update: (_, sessionService, previous) => RemoteAuthRepository(
-          sessionService: sessionService,
-        ),
+      ProxyProvider2<
+        AuthSessionService,
+        ConnectivityRepository,
+        AuthRepository
+      >(
+        update: (_, sessionService, connectivity, previous) =>
+            RemoteAuthRepository(
+              sessionService: sessionService,
+              connectivity: connectivity,
+            ),
       ),
       ChangeNotifierProvider<AuthSessionController>(
         create: (context) => AuthSessionController(
@@ -101,19 +140,29 @@ class DependencyInjection {
       ProxyProvider<Http, RequisitionService>(
         update: (_, http, previous) => RequisitionService(http: http),
       ),
+      ProxyProvider<Http, RequisitionDetailService>(
+        update: (_, http, previous) => RequisitionDetailService(http: http),
+      ),
       ProxyProvider2<Http, EvidenceCryptoService, EvidenceKeyExchangeService>(
         update: (_, http, crypto, previous) => EvidenceKeyExchangeService(
           http: http,
           crypto: crypto,
         ),
       ),
-      ProxyProvider<RequisitionService, RequisitionRepository>(
-        update: (_, service, previous) => RemoteRequisitionRepository(
-          service: service,
-        ),
-      ),
-      ProxyProvider<Http, RequisitionDetailService>(
-        update: (_, http, previous) => RequisitionDetailService(http: http),
+      ProxyProvider4<
+        RequisitionService,
+        RequisitionDetailService,
+        LocalEvidenceDatabaseService,
+        ConnectivityRepository,
+        RequisitionRepository
+      >(
+        update: (_, service, detailService, database, connectivity, previous) =>
+            OfflineFirstRequisitionRepository(
+              remote: service,
+              detailService: detailService,
+              local: database,
+              connectivity: connectivity,
+            ),
       ),
       Provider<EvidencePickerService>(
         create: (_) => EvidencePickerService(),
@@ -148,7 +197,7 @@ class DependencyInjection {
       >(
         update:
             (
-              _,
+              context,
               http,
               database,
               crypto,
@@ -165,6 +214,7 @@ class DependencyInjection {
                   keyExchange: keyExchange,
                   notifications: notifications,
                   backgroundScheduler: backgroundScheduler,
+                  connectivity: context.read<ConnectivityRepository>(),
                 )..start()),
       ),
       ProxyProvider6<
@@ -223,6 +273,7 @@ class DependencyInjection {
               database: database,
               syncService: syncService,
               keyExchange: keyExchange,
+              connectivity: context.read<ConnectivityRepository>(),
               offlineSyncService: context.read<EvidenceOfflineSyncService>(),
             ),
       ),
@@ -236,9 +287,12 @@ class DependencyInjection {
         ),
       ),
       Provider<AdbClient>(create: (_) => AdbClient()),
-      ProxyProvider<AdbClient, EvidenceVideoThumbnailService>(
-        update: (_, adbClient, previous) =>
-            AndroidEvidenceVideoThumbnailService(adbClient: adbClient),
+      Provider<EvidenceVideoThumbnailService>(
+        create: (context) => defaultTargetPlatform == TargetPlatform.iOS
+            ? IosEvidenceVideoThumbnailService()
+            : AndroidEvidenceVideoThumbnailService(
+                adbClient: context.read<AdbClient>(),
+              ),
       ),
       ProxyProvider<AdbClient, AndroidAcquisitionPlatformService>(
         update: (_, adbClient, previousService) =>

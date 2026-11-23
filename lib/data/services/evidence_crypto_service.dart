@@ -342,15 +342,30 @@ class EvidenceCryptoService implements EvidenceDecryptionService {
     required String encryptedPath,
     required String wrappedKey,
     String? outputPath,
+    String? outputExtension,
     String? expectedPlaintextSha256,
     int? expectedPlaintextByteLength,
     String? wrapAlgorithm,
   }) async {
     final source = await File(encryptedPath).open();
+    final normalizedExtension = outputExtension
+        ?.replaceAll(RegExp(r'[^A-Za-z0-9]'), '')
+        .toLowerCase();
+    final safeExtension = normalizedExtension == null
+        ? null
+        : normalizedExtension.length > 10
+        ? normalizedExtension.substring(0, 10)
+        : normalizedExtension;
+    final extensionSuffix = safeExtension == null || safeExtension.isEmpty
+        ? ''
+        : '.$safeExtension';
+    final encryptedFileBase = encryptedPath.endsWith('.fce')
+        ? encryptedPath.substring(0, encryptedPath.length - 4)
+        : encryptedPath;
     final targetPath =
         outputPath ??
-        '${encryptedPath.substring(0, encryptedPath.length - 4)}.preview-'
-            '${DateTime.now().microsecondsSinceEpoch}';
+        '$encryptedFileBase.preview-${DateTime.now().microsecondsSinceEpoch}'
+            '$extensionSuffix';
     final target = File(targetPath);
     final plaintextHasher = _StreamingSha256();
     var plaintextLength = 0;

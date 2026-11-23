@@ -33,6 +33,25 @@ class SecureStorageService {
 
   Future<String?> getAuthenticatedUser() =>
       _storage.read(key: StorageKeys.authenticatedUser);
+
+  Future<String?> getAuthenticatedAccountId() async {
+    final raw = await getAuthenticatedUser();
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return null;
+      for (final key in const ['id', 'usuarioId', 'idUsuario', 'userId']) {
+        final value = decoded[key]?.toString().trim();
+        if (value != null && value.isNotEmpty) return value;
+      }
+      final username = decoded['usuario']?.toString().trim();
+      if (username != null && username.isNotEmpty) return 'usuario:$username';
+      return null;
+    } on FormatException {
+      return null;
+    }
+  }
+
   Future<void> saveAuthenticatedUser(Map<String, dynamic> user) => _storage
       .write(key: StorageKeys.authenticatedUser, value: jsonEncode(user));
   Future<void> deleteAuthenticatedUser() =>

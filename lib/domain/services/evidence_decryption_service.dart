@@ -4,6 +4,7 @@ abstract interface class EvidenceDecryptionService {
     required String encryptedPath,
     required String wrappedKey,
     String? outputPath,
+    String? outputExtension,
     String? expectedPlaintextSha256,
     int? expectedPlaintextByteLength,
   });

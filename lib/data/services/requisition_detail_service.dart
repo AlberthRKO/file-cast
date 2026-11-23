@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:file_cast/core/errors/either.dart';
 import 'package:file_cast/core/network/http.dart';
+import 'package:file_cast/data/services/remote_request_exception.dart';
 import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
 
@@ -16,21 +17,37 @@ class RequisitionDetailService {
   final Http _http;
 
   Future<RequisitionDetail> getDetail(String requisitionId) async {
-    final result = await _http.request<RequisitionDetail>(
+    return (await getDetailSnapshot(requisitionId)).detail;
+  }
+
+  Future<RequisitionDetailSnapshot> getDetailSnapshot(
+    String requisitionId,
+  ) async {
+    final result = await _http.request<RequisitionDetailSnapshot>(
       '/api/v1/requisitions/$requisitionId',
-      onSucces: _parseDetail,
+      onSucces: (body) => RequisitionDetailSnapshot(
+        detail: _parseDetail(body),
+        payloadJson: jsonEncode(body),
+      ),
     );
 
     return switch (result) {
-      Left(leftValue: final error) => throw StateError(
-        error.message ?? 'No se pudo cargar el detalle de la requisa.',
+      Left(leftValue: final error) => throw RemoteRequestException(
+        message: error.message ?? 'No se pudo cargar el detalle de la requisa.',
+        statusCode: error.status,
+        isTransportFailure: const {'network', 'timeout'}.contains(
+          error.error?.toString(),
+        ),
       ),
-      Right(rightValue: final detail) => detail,
+      Right(rightValue: final snapshot) => snapshot,
       Either() => throw StateError(
         'Respuesta inesperada al cargar el detalle de la requisa.',
       ),
     };
   }
+
+  RequisitionDetail parseCachedSnapshot(String payloadJson) =>
+      _parseDetail(jsonDecode(payloadJson));
 
   Future<void> deleteEvidence({
     required String requisitionId,
@@ -608,4 +625,14 @@ class RequisitionDetailService {
   static DateTime? _date(Object? value) {
     return DateTime.tryParse(_text(value) ?? '')?.toLocal();
   }
+}
+
+final class RequisitionDetailSnapshot {
+  const RequisitionDetailSnapshot({
+    required this.detail,
+    required this.payloadJson,
+  });
+
+  final RequisitionDetail detail;
+  final String payloadJson;
 }

@@ -5,6 +5,8 @@ import 'package:file_cast/domain/entities/user_entity.dart';
 import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/domain/models/requisition.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
+import 'package:file_cast/domain/repositories/connectivity_repository.dart';
+import 'package:file_cast/data/services/local_evidence_database_service.dart';
 import 'package:file_cast/ui/core/adaptive/adaptive_layout.dart';
 import 'package:file_cast/ui/core/adaptive/constrained_content.dart';
 import 'package:file_cast/ui/core/adaptive/window_size_class.dart';
@@ -35,6 +37,7 @@ class RequisitionListRoute extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (context) => RequisitionListViewModel(
         repository: context.read<RequisitionRepository>(),
+        connectivity: context.read<ConnectivityRepository>(),
       )..load(),
       child: const _RequisitionListConnector(),
     );
@@ -47,17 +50,19 @@ class _RequisitionListConnector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final authSessionController = context.watch<AuthSessionController>();
+    final viewModel = context.watch<RequisitionListViewModel>();
     final user = authSessionController.user;
     final themeController = context.read<ThemeController>();
     final canFinalize =
-        user?.permisos?.any(
-          (permission) =>
-              permission?.trim().toLowerCase() == 'requisitions.finalize',
-        ) ??
-        false;
+        !viewModel.isWorkingOffline &&
+        (user?.permisos?.any(
+              (permission) =>
+                  permission?.trim().toLowerCase() == 'requisitions.finalize',
+            ) ??
+            false);
 
     return RequisitionListView(
-      viewModel: context.watch<RequisitionListViewModel>(),
+      viewModel: viewModel,
       canFinalize: canFinalize,
       identityLabel: _identityLabel(user),
       userName: user?.nombreCompleto?.trim().isNotEmpty == true
@@ -86,9 +91,58 @@ class _RequisitionListConnector extends StatelessWidget {
       builder: (sheetContext) => SettingsActionsSheet(
         themeController: themeController,
         onClose: () => Navigator.of(sheetContext).pop(),
-        onLogout: authSessionController.logout,
+        onLogout: () => _confirmAndLogout(
+          context,
+          authSessionController: authSessionController,
+        ),
       ),
     );
+  }
+
+  Future<void> _confirmAndLogout(
+    BuildContext context, {
+    required AuthSessionController authSessionController,
+  }) async {
+    await Future<void>.delayed(Duration.zero);
+    if (!context.mounted) return;
+
+    var hasPendingEvidence = false;
+    try {
+      hasPendingEvidence =
+          (await context.read<LocalEvidenceDatabaseService>().pending(
+            limit: 1,
+          )).isNotEmpty;
+    } on Object {
+      // Un fallo de lectura no debe borrar datos ni bloquear indefinidamente
+      // el cierre de sesión solicitado por el operador.
+    }
+
+    if (hasPendingEvidence) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          icon: const Icon(Icons.cloud_off_outlined),
+          title: const Text('Hay evidencias pendientes'),
+          content: const Text(
+            'Las evidencias permanecerán cifradas en este dispositivo. '
+            'Para sincronizarlas tendrás que volver a iniciar sesión con esta misma cuenta.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Cerrar sesión'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+
+    await authSessionController.logout();
   }
 
   String _identityLabel(UserEntity? user) {
@@ -161,7 +215,7 @@ class _RequisitionListViewState extends State<RequisitionListView> {
     _scheduleFillViewport();
 
     return Scaffold(
-      floatingActionButton: useCompactActions
+      floatingActionButton: useCompactActions && !_viewModel.isWorkingOffline
           ? _CreateRequisitionLauncher(
               onPressed: () => _openCreateRequisition(
                 RequisitionRegistrationMode.existingCud,
@@ -200,9 +254,11 @@ class _RequisitionListViewState extends State<RequisitionListView> {
                           onStatusChanged: _updateStatus,
                           onDatePressed: () => _selectDateRange(context),
                           onClear: _clearFilters,
-                          onCreate: () => _openCreateRequisition(
-                            RequisitionRegistrationMode.existingCud,
-                          ),
+                          onCreate: _viewModel.isWorkingOffline
+                              ? null
+                              : () => _openCreateRequisition(
+                                  RequisitionRegistrationMode.existingCud,
+                                ),
                         ),
                         const SizedBox(height: AppSpace.s),
                       ],
@@ -460,7 +516,7 @@ class _WideActions extends StatelessWidget {
   final ValueChanged<RequisitionStatus?> onStatusChanged;
   final VoidCallback onDatePressed;
   final VoidCallback onClear;
-  final VoidCallback onCreate;
+  final VoidCallback? onCreate;
 
   @override
   Widget build(BuildContext context) {
