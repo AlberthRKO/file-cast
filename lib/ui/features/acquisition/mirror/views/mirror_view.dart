@@ -3,8 +3,11 @@ import 'dart:math' as math;
 import 'package:file_cast/core/constants/complemento.dart';
 import 'package:file_cast/domain/models/acquisition.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
+import 'package:file_cast/domain/services/audio_playback_service.dart';
+import 'package:file_cast/domain/services/evidence_preview_service.dart';
 import 'package:file_cast/ui/core/navigation/route_args/mirror_route_args.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
+import 'package:file_cast/ui/core/widgets/evidence_preview_dialog.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/view_models/mirror_view_model.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/widgets/interactive_mirror_texture.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_capture_controls.dart';
@@ -32,6 +35,7 @@ class MirrorRoute extends StatelessWidget {
   Widget build(BuildContext context) => ChangeNotifierProvider(
     create: (context) => MirrorViewModel(
       repository: context.read<AcquisitionRepository>(),
+      previewService: context.read<EvidencePreviewService>(),
       requisitionId: requisitionId,
       sessionId: sessionId,
       textureId: args.textureId,
@@ -162,8 +166,17 @@ class MirrorView extends StatelessWidget {
                     evidence: viewModel.evidence,
                     totalEvidence: viewModel.totalEvidence,
                     compact: !expanded,
+                    visible: viewModel.showEvidence,
                     onClose: viewModel.hideEvidence,
                     onRename: viewModel.renameEvidence,
+                    onOpenEvidence: (evidence) => showEvidencePreviewDialog(
+                      context: context,
+                      evidence: evidence,
+                      prepare: () => viewModel.prepareEvidencePreview(evidence),
+                      disposePreview: viewModel.disposeEvidencePreview,
+                      audioPlaybackService: context
+                          .read<AudioPlaybackService>(),
+                    ),
                   )
                 : null;
             if (expanded) {

@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/services/evidence_decryption_service.dart';
 import 'package:file_cast/domain/services/evidence_video_thumbnail_service.dart';
+import 'package:file_cast/domain/services/evidence_image_thumbnail_service.dart';
 import 'package:file_cast/ui/core/feedback/app_feedback.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
@@ -23,8 +24,10 @@ class MirrorEvidencePane extends StatefulWidget {
     required this.evidence,
     required this.totalEvidence,
     required this.compact,
+    required this.visible,
     required this.onClose,
     required this.onRename,
+    required this.onOpenEvidence,
     this.contextLabel,
     super.key,
   });
@@ -32,8 +35,10 @@ class MirrorEvidencePane extends StatefulWidget {
   final List<RequisitionEvidence> evidence;
   final int totalEvidence;
   final bool compact;
+  final bool visible;
   final VoidCallback onClose;
   final RenameMirrorEvidence onRename;
+  final ValueChanged<RequisitionEvidence> onOpenEvidence;
   final String? contextLabel;
 
   @override
@@ -45,47 +50,54 @@ enum _EvidenceLayoutMode { grid, list }
 class _MirrorEvidencePaneState extends State<MirrorEvidencePane> {
   _EvidenceLayoutMode _layoutMode = _EvidenceLayoutMode.grid;
   bool _blurPreviews = false;
+  int _visibleCount = 12;
 
   @override
-  Widget build(BuildContext context) => Card(
-    margin: EdgeInsets.zero,
-    clipBehavior: Clip.antiAlias,
-    child: Padding(
-      padding: const EdgeInsets.all(AppSpace.m),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _EvidencePaneHeader(
-            totalEvidence: widget.totalEvidence,
-            contextLabel: widget.contextLabel,
-            layoutMode: _layoutMode,
-            blurPreviews: _blurPreviews,
-            onToggleLayout: () => setState(() {
-              _layoutMode = _layoutMode == _EvidenceLayoutMode.grid
-                  ? _EvidenceLayoutMode.list
-                  : _EvidenceLayoutMode.grid;
-            }),
-            onToggleBlur: (selected) => setState(() {
-              _blurPreviews = selected;
-            }),
-            onClose: widget.onClose,
+  Widget build(BuildContext context) => !widget.visible
+      ? const SizedBox.shrink()
+      : Card(
+          margin: EdgeInsets.zero,
+          clipBehavior: Clip.antiAlias,
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpace.m),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _EvidencePaneHeader(
+                  totalEvidence: widget.totalEvidence,
+                  contextLabel: widget.contextLabel,
+                  layoutMode: _layoutMode,
+                  blurPreviews: _blurPreviews,
+                  onToggleLayout: () => setState(() {
+                    _layoutMode = _layoutMode == _EvidenceLayoutMode.grid
+                        ? _EvidenceLayoutMode.list
+                        : _EvidenceLayoutMode.grid;
+                  }),
+                  onToggleBlur: (selected) => setState(() {
+                    _blurPreviews = selected;
+                  }),
+                  onClose: widget.onClose,
+                ),
+                const SizedBox(height: AppSpace.s),
+                Expanded(
+                  child: widget.evidence.isEmpty
+                      ? const _EmptyEvidenceState()
+                      : _EvidenceCollection(
+                          evidence: widget.evidence,
+                          layoutMode: _layoutMode,
+                          compact: widget.compact,
+                          blurred: _blurPreviews,
+                          initialVisibleCount: _visibleCount,
+                          onVisibleCountChanged: (count) =>
+                              _visibleCount = count,
+                          onRename: (item) => _renameEvidence(context, item),
+                          onOpenEvidence: widget.onOpenEvidence,
+                        ),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: AppSpace.s),
-          Expanded(
-            child: widget.evidence.isEmpty
-                ? const _EmptyEvidenceState()
-                : _EvidenceCollection(
-                    evidence: widget.evidence,
-                    layoutMode: _layoutMode,
-                    compact: widget.compact,
-                    blurred: _blurPreviews,
-                    onRename: (item) => _renameEvidence(context, item),
-                  ),
-          ),
-        ],
-      ),
-    ),
-  );
+        );
 
   Future<void> _renameEvidence(
     BuildContext context,
@@ -121,14 +133,20 @@ class _EvidenceCollection extends StatefulWidget {
     required this.layoutMode,
     required this.compact,
     required this.blurred,
+    required this.initialVisibleCount,
+    required this.onVisibleCountChanged,
     required this.onRename,
+    required this.onOpenEvidence,
   });
 
   final List<RequisitionEvidence> evidence;
   final _EvidenceLayoutMode layoutMode;
   final bool compact;
   final bool blurred;
+  final int initialVisibleCount;
+  final ValueChanged<int> onVisibleCountChanged;
   final ValueChanged<RequisitionEvidence> onRename;
+  final ValueChanged<RequisitionEvidence> onOpenEvidence;
 
   @override
   State<_EvidenceCollection> createState() => _EvidenceCollectionState();
@@ -142,7 +160,10 @@ class _EvidenceCollectionState extends State<_EvidenceCollection> {
   @override
   void initState() {
     super.initState();
-    _visibleCount = math.min(_pageSize, widget.evidence.length);
+    _visibleCount = math.min(
+      math.max(_pageSize, widget.initialVisibleCount),
+      widget.evidence.length,
+    );
   }
 
   @override
@@ -153,6 +174,7 @@ class _EvidenceCollectionState extends State<_EvidenceCollection> {
       widget.evidence.length,
       math.max(_pageSize, _visibleCount + math.max(0, added)),
     );
+    widget.onVisibleCountChanged(_visibleCount);
   }
 
   bool _onScroll(ScrollNotification notification) {
@@ -171,6 +193,7 @@ class _EvidenceCollectionState extends State<_EvidenceCollection> {
           _visibleCount + _pageSize,
         );
       });
+      widget.onVisibleCountChanged(_visibleCount);
     });
     return false;
   }
@@ -187,6 +210,7 @@ class _EvidenceCollectionState extends State<_EvidenceCollection> {
     return NotificationListener<ScrollNotification>(
       onNotification: _onScroll,
       child: GridView.builder(
+        key: PageStorageKey('mirror-evidence-${widget.layoutMode.name}'),
         scrollDirection: horizontalGrid ? Axis.horizontal : Axis.vertical,
         itemCount: _visibleCount + (_visibleCount < evidence.length ? 1 : 0),
         cacheExtent: evidence.length > 24 ? 0 : null,
@@ -217,6 +241,7 @@ class _EvidenceCollectionState extends State<_EvidenceCollection> {
             layoutMode: widget.layoutMode,
             blurred: widget.blurred,
             onRename: () => widget.onRename(item),
+            onOpen: () => widget.onOpenEvidence(item),
           );
         },
       ),
@@ -335,6 +360,7 @@ class _EvidenceCard extends StatelessWidget {
     required this.layoutMode,
     required this.blurred,
     required this.onRename,
+    required this.onOpen,
     super.key,
   });
 
@@ -342,6 +368,7 @@ class _EvidenceCard extends StatelessWidget {
   final _EvidenceLayoutMode layoutMode;
   final bool blurred;
   final VoidCallback onRename;
+  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -354,96 +381,99 @@ class _EvidenceCard extends StatelessWidget {
           : Theme.of(context).colorScheme.surface,
       borderRadius: BorderRadius.circular(AppRadius.m),
       clipBehavior: Clip.antiAlias,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Positioned(
-            left: listMode ? AppSpace.s : 0,
-            top: listMode ? AppSpace.s : 0,
-            right: listMode ? null : 0,
-            bottom: listMode ? AppSpace.s : 0,
-            width: listMode ? 72 : null,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(
-                listMode ? AppRadius.s : AppRadius.m,
+      child: InkWell(
+        onTap: onOpen,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Positioned(
+              left: listMode ? AppSpace.s : 0,
+              top: listMode ? AppSpace.s : 0,
+              right: listMode ? null : 0,
+              bottom: listMode ? AppSpace.s : 0,
+              width: listMode ? 72 : null,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(
+                  listMode ? AppRadius.s : AppRadius.m,
+                ),
+                child: visual,
               ),
-              child: visual,
             ),
-          ),
-          Positioned(
-            left: listMode ? 72 + (AppSpace.s * 2) : 0,
-            top: listMode ? AppSpace.s : null,
-            right: listMode ? AppSpace.s : 0,
-            bottom: listMode ? AppSpace.s : 0,
-            child: listMode
-                ? Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              evidence.effectiveName,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.labelLarge,
-                            ),
-                            const SizedBox(height: AppSpace.xs),
-                            EvidenceSyncBadge(
-                              uploadStatus: evidence.uploadStatus,
-                              hasLocalCopy: path?.trim().isNotEmpty == true,
-                            ),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: onRename,
-                        tooltip: 'Cambiar nombre',
-                        icon: const Icon(Icons.edit_outlined),
-                      ),
-                    ],
-                  )
-                : Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(AppSpace.s),
-                    color: Colors.black.withValues(alpha: .68),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
+            Positioned(
+              left: listMode ? 72 + (AppSpace.s * 2) : 0,
+              top: listMode ? AppSpace.s : null,
+              right: listMode ? AppSpace.s : 0,
+              bottom: listMode ? AppSpace.s : 0,
+              child: listMode
+                  ? Row(
                       children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
+                        Expanded(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
                                 evidence.effectiveName,
-                                maxLines: 1,
+                                maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                ),
+                                style: Theme.of(context).textTheme.labelLarge,
                               ),
-                            ),
-                            IconButton(
-                              onPressed: onRename,
-                              tooltip: 'Cambiar nombre',
-                              visualDensity: VisualDensity.compact,
-                              color: Colors.white,
-                              icon: const Icon(Icons.edit_outlined, size: 16),
-                            ),
-                          ],
+                              const SizedBox(height: AppSpace.xs),
+                              EvidenceSyncBadge(
+                                uploadStatus: evidence.uploadStatus,
+                                hasLocalCopy: path?.trim().isNotEmpty == true,
+                              ),
+                            ],
+                          ),
                         ),
-                        const SizedBox(height: AppSpace.xs),
-                        EvidenceSyncBadge(
-                          uploadStatus: evidence.uploadStatus,
-                          hasLocalCopy: path?.trim().isNotEmpty == true,
+                        IconButton(
+                          onPressed: onRename,
+                          tooltip: 'Cambiar nombre',
+                          icon: const Icon(Icons.edit_outlined),
                         ),
                       ],
+                    )
+                  : Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(AppSpace.s),
+                      color: Colors.black.withValues(alpha: .68),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  evidence.effectiveName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: onRename,
+                                tooltip: 'Cambiar nombre',
+                                visualDensity: VisualDensity.compact,
+                                color: Colors.white,
+                                icon: const Icon(Icons.edit_outlined, size: 16),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: AppSpace.xs),
+                          EvidenceSyncBadge(
+                            uploadStatus: evidence.uploadStatus,
+                            hasLocalCopy: path?.trim().isNotEmpty == true,
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -465,7 +495,7 @@ class _EvidenceVisual extends StatelessWidget {
         wrappedKey: evidence.wrappedKey,
         plaintextSha256: evidence.plaintextSha256,
         plaintextByteLength: evidence.plaintextByteLength,
-        decryptionService: context.read<EvidenceDecryptionService>(),
+        thumbnailService: context.read<EvidenceImageThumbnailService>(),
         fallback: const Icon(Icons.image_outlined, size: 36),
       ),
       RequisitionEvidenceType.video => EvidenceVideoThumbnail(

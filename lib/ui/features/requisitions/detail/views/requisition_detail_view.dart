@@ -15,6 +15,7 @@ import 'package:file_cast/domain/services/audio_playback_service.dart';
 import 'package:file_cast/domain/services/evidence_decryption_service.dart';
 import 'package:file_cast/domain/services/evidence_preview_service.dart';
 import 'package:file_cast/domain/services/evidence_video_thumbnail_service.dart';
+import 'package:file_cast/domain/services/evidence_image_thumbnail_service.dart';
 import 'package:file_cast/ui/core/adaptive/constrained_content.dart';
 import 'package:file_cast/ui/core/feedback/app_feedback.dart';
 import 'package:file_cast/ui/core/navigation/app_route.dart';
@@ -29,7 +30,7 @@ import 'package:file_cast/ui/core/widgets/evidence_video_thumbnail.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
 import 'package:file_cast/ui/features/requisitions/detail/view_models/requisition_detail_view_model.dart';
 import 'package:file_cast/ui/features/requisitions/detail/widgets/case_detail_sheet.dart';
-import 'package:file_cast/ui/features/requisitions/detail/widgets/evidence_preview_sheet.dart';
+import 'package:file_cast/ui/core/widgets/evidence_preview_dialog.dart';
 import 'package:file_cast/ui/features/requisitions/detail/widgets/import_evidence_preview_dialog.dart';
 import 'package:file_cast/ui/features/requisitions/detail/widgets/participant_role_dropdown.dart';
 import 'package:file_cast/ui/features/requisitions/detail/widgets/participants_sheet.dart';
@@ -138,10 +139,6 @@ class RequisitionDetailView extends StatefulWidget {
 class _RequisitionDetailViewState extends State<RequisitionDetailView> {
   bool _showInfo = true;
   EvidenceCategory? _openEvidenceCategory;
-  // Like the mirror evidence pane, keep visited preview trees mounted while
-  // this requisition detail remains open.
-  final Set<EvidenceCategory> _retainedEvidenceCategories =
-      <EvidenceCategory>{};
 
   RequisitionDetailViewModel get viewModel => widget.viewModel;
 
@@ -152,7 +149,6 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.viewModel != widget.viewModel) {
       _openEvidenceCategory = null;
-      _retainedEvidenceCategories.clear();
     }
   }
 
@@ -321,42 +317,36 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
               semanticsLabel: 'Cerrar lista de evidencias',
             ),
           for (final category in categories)
-            if (_retainedEvidenceCategories.contains(category.category))
+            if (_openEvidenceCategory == category.category)
               Positioned.fill(
                 key: ValueKey(category.category),
-                child: IgnorePointer(
-                  ignoring: _openEvidenceCategory != category.category,
-                  child: AnimatedOpacity(
-                    opacity: _openEvidenceCategory == category.category ? 1 : 0,
-                    duration: const Duration(milliseconds: 180),
-                    child: Align(
-                      alignment: Alignment.bottomCenter,
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: _AllEvidenceSheet(
-                          title: _categoryLabel(category),
-                          subtitle:
-                              '${category.items.length} elementos · ${category.totalSizeLabel}',
-                          evidence: category.items,
-                          decryptionService: decryptionService,
-                          onOpenEvidence: (evidence) =>
-                              _showEvidencePreview(context, evidence),
-                          canDeleteEvidence: viewModel.canDeleteEvidence,
-                          isDeletingEvidence: viewModel.isDeletingEvidence,
-                          onDeleteEvidence: (evidence) =>
-                              _deleteEvidence(context, evidence),
-                          canUploadEvidence: viewModel.canUploadEvidence,
-                          isUploadingEvidence: viewModel.isUploadingEvidence,
-                          onUploadEvidence: (evidence) =>
-                              _uploadEvidence(context, evidence),
-                          onRenameEvidence: (evidence) =>
-                              _renameEvidence(context, evidence),
-                          onAnchorEvidence: (evidence) =>
-                              _anchorEvidence(context, evidence),
-                          showSubjectInfo: detail.requisition.cud != null,
-                          onClose: _closeEvidenceCategory,
-                        ),
-                      ),
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: _AllEvidenceSheet(
+                      storageKey: category.category.name,
+                      title: _categoryLabel(category),
+                      subtitle:
+                          '${category.items.length} elementos · ${category.totalSizeLabel}',
+                      evidence: category.items,
+                      decryptionService: decryptionService,
+                      onOpenEvidence: (evidence) =>
+                          _showEvidencePreview(context, evidence),
+                      canDeleteEvidence: viewModel.canDeleteEvidence,
+                      isDeletingEvidence: viewModel.isDeletingEvidence,
+                      onDeleteEvidence: (evidence) =>
+                          _deleteEvidence(context, evidence),
+                      canUploadEvidence: viewModel.canUploadEvidence,
+                      isUploadingEvidence: viewModel.isUploadingEvidence,
+                      onUploadEvidence: (evidence) =>
+                          _uploadEvidence(context, evidence),
+                      onRenameEvidence: (evidence) =>
+                          _renameEvidence(context, evidence),
+                      onAnchorEvidence: (evidence) =>
+                          _anchorEvidence(context, evidence),
+                      showSubjectInfo: detail.requisition.cud != null,
+                      onClose: _closeEvidenceCategory,
                     ),
                   ),
                 ),
@@ -406,10 +396,7 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
 
   void _showEvidenceCategory(EvidenceCategory category) {
     if (!mounted) return;
-    setState(() {
-      _retainedEvidenceCategories.add(category);
-      _openEvidenceCategory = category;
-    });
+    setState(() => _openEvidenceCategory = category);
   }
 
   void _closeEvidenceCategory() {
@@ -653,30 +640,12 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
   Future<void> _showEvidencePreview(
     BuildContext context,
     RequisitionEvidence evidence,
-  ) => showDialog<void>(
+  ) => showEvidencePreviewDialog(
     context: context,
-    builder: (dialogContext) {
-      final windowSize = MediaQuery.sizeOf(dialogContext);
-      final availableWidth = windowSize.width - (AppSpace.m * 2);
-      final availableHeight = windowSize.height - (AppSpace.m * 2);
-      final dialogWidth = availableWidth > 920 ? 920.0 : availableWidth;
-      final dialogHeight = availableHeight > 820 ? 820.0 : availableHeight;
-      return Dialog(
-        insetPadding: const EdgeInsets.all(AppSpace.m),
-        backgroundColor: Colors.transparent,
-        elevation: 12,
-        child: SizedBox(
-          width: dialogWidth,
-          height: dialogHeight,
-          child: EvidencePreviewSheet(
-            evidence: evidence,
-            prepare: () => viewModel.prepareEvidencePreview(evidence),
-            disposePreview: viewModel.disposeEvidencePreview,
-            audioPlaybackService: context.read<AudioPlaybackService>(),
-          ),
-        ),
-      );
-    },
+    evidence: evidence,
+    prepare: () => viewModel.prepareEvidencePreview(evidence),
+    disposePreview: viewModel.disposeEvidencePreview,
+    audioPlaybackService: context.read<AudioPlaybackService>(),
   );
 
   Future<void> _showPendingEvidence(BuildContext context) {
@@ -3112,7 +3081,8 @@ class _EvidencePreview extends StatelessWidget {
                               wrappedKey: evidence.wrappedKey,
                               plaintextSha256: evidence.plaintextSha256,
                               plaintextByteLength: evidence.plaintextByteLength,
-                              decryptionService: decryptionService,
+                              thumbnailService: context
+                                  .read<EvidenceImageThumbnailService>(),
                               fallback: imageFallback,
                             )
                           : evidence.contentUrl != null && !evidence.encrypted
@@ -3447,6 +3417,7 @@ class _AllEvidenceSheet extends StatelessWidget {
     required this.onRenameEvidence,
     required this.onAnchorEvidence,
     required this.showSubjectInfo,
+    this.storageKey,
     this.onUploadPending,
     this.canUploadPending = false,
     this.pendingUploadLabel = 'Cargar pendientes',
@@ -3468,6 +3439,7 @@ class _AllEvidenceSheet extends StatelessWidget {
   final ValueChanged<RequisitionEvidence> onRenameEvidence;
   final ValueChanged<RequisitionEvidence> onAnchorEvidence;
   final bool showSubjectInfo;
+  final String? storageKey;
   final VoidCallback? onUploadPending;
   final bool canUploadPending;
   final String pendingUploadLabel;
@@ -3522,6 +3494,9 @@ class _AllEvidenceSheet extends StatelessWidget {
                           builder: (context, constraints) {
                             final columns = constraints.maxWidth >= 760 ? 2 : 1;
                             return GridView.builder(
+                              key: PageStorageKey(
+                                'requisition-evidence-${storageKey ?? title}',
+                              ),
                               itemCount: evidence.length,
                               findChildIndexCallback: (key) {
                                 if (key is ValueKey<String>) {

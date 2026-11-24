@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:file_cast/domain/models/acquisition.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
+import 'package:file_cast/domain/services/evidence_preview_service.dart';
 import 'package:file_cast/ui/core/navigation/route_args/multi_mirror_route_args.dart';
 import 'package:flutter/widgets.dart';
 
@@ -11,13 +12,16 @@ enum MultiMirrorLayoutMode { overview, focused }
 class MultiMirrorViewModel extends ChangeNotifier {
   MultiMirrorViewModel({
     required AcquisitionRepository repository,
+    required EvidencePreviewService previewService,
     required this.requisitionId,
     required this.sessionId,
     required List<MultiMirrorSourceArgs> sources,
   }) : _repository = repository,
+       _previewService = previewService,
        _sources = List.of(sources);
 
   final AcquisitionRepository _repository;
+  final EvidencePreviewService _previewService;
   final String requisitionId;
   final String sessionId;
   List<MultiMirrorSourceArgs> _sources;
@@ -127,6 +131,14 @@ class MultiMirrorViewModel extends ChangeNotifier {
   }
 
   int get totalEvidence => _detail?.evidence.length ?? 0;
+
+  Future<PreparedEvidencePreview> prepareEvidencePreview(
+    RequisitionEvidence evidence,
+  ) => _previewService.prepare(evidence);
+
+  Future<void> disposeEvidencePreview(PreparedEvidencePreview preview) =>
+      _previewService.disposePreview(preview);
+
   int get pendingEvidenceCount =>
       _detail?.evidence.where((evidence) {
         final status = evidence.uploadStatus?.toUpperCase();

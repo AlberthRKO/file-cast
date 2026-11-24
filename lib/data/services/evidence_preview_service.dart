@@ -99,16 +99,19 @@ class RemoteEvidencePreviewService implements EvidencePreviewService {
             'Esta evidencia cifrada no tiene una clave disponible para verla.',
           );
         }
-        path = await _crypto.decryptToTemporaryFile(
-          evidenceId: evidence.id,
-          encryptedPath: encryptedPath,
-          wrappedKey: resolvedWrappedKey!,
-          wrapAlgorithm: resolvedWrapAlgorithm,
-          outputPath: _temporaryPathFor(evidence),
-          expectedPlaintextSha256: evidence.plaintextSha256,
-          expectedPlaintextByteLength: evidence.plaintextByteLength,
-        );
-        await _deleteTemporary(encryptedPath);
+        try {
+          path = await _crypto.decryptToTemporaryFile(
+            evidenceId: evidence.id,
+            encryptedPath: encryptedPath,
+            wrappedKey: resolvedWrappedKey!,
+            wrapAlgorithm: resolvedWrapAlgorithm,
+            outputPath: _temporaryPathFor(evidence),
+            expectedPlaintextSha256: evidence.plaintextSha256,
+            expectedPlaintextByteLength: evidence.plaintextByteLength,
+          );
+        } finally {
+          await _deleteTemporary(encryptedPath);
+        }
       } else {
         path = encryptedPath;
       }
@@ -159,13 +162,25 @@ class RemoteEvidencePreviewService implements EvidencePreviewService {
     RequisitionEvidence evidence,
     String url,
   ) async {
+    final extension = _extensionFor(evidence);
+    final file = File(_temporaryPathFor(evidence, extension: extension));
+    final headers = {
+      if (evidence.contentSessionToken != null &&
+          evidence.contentSessionToken!.isNotEmpty)
+        'x-session-token': evidence.contentSessionToken!,
+    };
+    if (evidence.byteLength > 0) {
+      await _http.downloadToFile(
+        url,
+        file.path,
+        expectedBytes: evidence.byteLength,
+        headers: headers,
+      );
+      return file.path;
+    }
     final result = await _http.request<List<int>>(
       url,
-      headers: {
-        if (evidence.contentSessionToken != null &&
-            evidence.contentSessionToken!.isNotEmpty)
-          'x-session-token': evidence.contentSessionToken!,
-      },
+      headers: headers,
       isFileV2: true,
       timeOut: const Duration(seconds: 60),
       onSucces: (body) => body is List<int>
@@ -181,8 +196,6 @@ class RemoteEvidencePreviewService implements EvidencePreviewService {
         'Respuesta inesperada al descargar la evidencia.',
       ),
     };
-    final extension = _extensionFor(evidence);
-    final file = File(_temporaryPathFor(evidence, extension: extension));
     await file.writeAsBytes(bytes, flush: true);
     final downloadedLength = await file.length();
     if (evidence.byteLength > 0 && downloadedLength != evidence.byteLength) {

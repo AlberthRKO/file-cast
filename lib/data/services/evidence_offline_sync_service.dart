@@ -298,21 +298,33 @@ class EvidenceOfflineSyncService {
         isActive: true,
         currentFileName: item.name,
         scope: scope,
-        showSystemProgress: showSystemProgress,
+        showSystemProgress: false,
       );
       try {
         final persisted = localById[item.id];
         if (await _isUsableLocalCopy(persisted, item)) {
           skipped += 1;
-          continue;
+        } else {
+          await _recoverEvidence(item);
+          completed += 1;
         }
-
-        await _recoverEvidence(item);
-        completed += 1;
       } catch (error) {
         failed += 1;
         errors.add('${item.name}: ${_safeMessage(error)}');
       }
+      // Publica el resultado de cada archivo. Cuando se guardó una copia nueva,
+      // la pantalla puede mostrarla antes de terminar el lote completo.
+      _emit(
+        requisitionId: requisitionId,
+        total: total,
+        completed: completed,
+        skipped: skipped,
+        failed: failed,
+        stage: EvidenceOfflineSyncStage.downloading,
+        isActive: true,
+        scope: scope,
+        showSystemProgress: showSystemProgress,
+      );
     }
 
     final hasFailures = failed > 0;
@@ -398,9 +410,14 @@ class EvidenceOfflineSyncService {
         temporaryPath,
         expectedBytes: evidence.byteLength,
       );
-      final ciphertextSha256 = (await crypto.sha256.bind(
-        temporaryFile.openRead(),
-      ).first).toString().toLowerCase();
+      final ciphertextSha256 =
+          (await crypto.sha256
+                  .bind(
+                    temporaryFile.openRead(),
+                  )
+                  .first)
+              .toString()
+              .toLowerCase();
       if (evidence.sha256 != null &&
           ciphertextSha256 != evidence.sha256!.toLowerCase()) {
         throw StateError('El hash de la evidencia descargada no coincide.');

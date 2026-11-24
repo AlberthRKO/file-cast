@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:file_cast/core/storage/secure_storage_service.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 /// Persistencia local cifrada para evidencias y operaciones pendientes.
-/// Nunca guarda el contenido plano; solo la ruta FCE y sus metadatos.
+/// Guarda metadatos FCE y una caché acotada de miniaturas dentro de SQLCipher.
+/// Nunca guarda el archivo original en claro.
 class LocalEvidenceDatabaseService {
   LocalEvidenceDatabaseService({required SecureStorageService storage})
     : _storage = storage;
@@ -111,7 +113,7 @@ class LocalEvidenceDatabaseService {
       return await openDatabase(
         path,
         password: key,
-        version: 9,
+        version: 10,
         onCreate: (db, _) async {
           await db.execute('''
             CREATE TABLE evidencias_locales (
@@ -170,6 +172,7 @@ class LocalEvidenceDatabaseService {
             )
           ''');
           await _createOfflineTables(db);
+          await _createImageThumbnailCache(db);
         },
         onUpgrade: (db, oldVersion, _) async {
           if (oldVersion < 2) {
@@ -234,6 +237,7 @@ class LocalEvidenceDatabaseService {
               ON evidencias_locales(account_id, requisa_id, creado_at)
             ''');
           }
+          if (oldVersion < 10) await _createImageThumbnailCache(db);
         },
       );
     } on Object catch (error, stackTrace) {
@@ -300,6 +304,23 @@ class LocalEvidenceDatabaseService {
     ''');
   }
 
+  Future<void> _createImageThumbnailCache(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS image_thumbnail_cache (
+        account_id TEXT NOT NULL,
+        cache_key TEXT NOT NULL,
+        png_bytes BLOB NOT NULL,
+        byte_length INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (account_id, cache_key)
+      )
+    ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS image_thumbnail_cache_age_idx
+      ON image_thumbnail_cache(account_id, created_at)
+    ''');
+  }
+
   Future<String> _requiredAccountId() async {
     final accountId = await _storage.getAuthenticatedAccountId();
     if (accountId == null || accountId.isEmpty) {
@@ -311,6 +332,67 @@ class LocalEvidenceDatabaseService {
   }
 
   Future<String> currentAccountId() => _requiredAccountId();
+
+  Future<Uint8List?> readImageThumbnail({
+    required String accountId,
+    required String cacheKey,
+  }) async {
+    final rows = await (await database).query(
+      'image_thumbnail_cache',
+      columns: ['png_bytes'],
+      where: 'account_id = ? AND cache_key = ?',
+      whereArgs: [accountId, cacheKey],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final value = rows.first['png_bytes'];
+    if (value is Uint8List) return value;
+    return value is List<int> ? Uint8List.fromList(value) : null;
+  }
+
+  Future<void> saveImageThumbnail({
+    required String accountId,
+    required String cacheKey,
+    required Uint8List bytes,
+  }) async {
+    const maximumBytes = 40 * 1024 * 1024;
+    const maximumItems = 128;
+    if (bytes.isEmpty || bytes.lengthInBytes > 2 * 1024 * 1024) return;
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.insert(
+        'image_thumbnail_cache',
+        {
+          'account_id': accountId,
+          'cache_key': cacheKey,
+          'png_bytes': bytes,
+          'byte_length': bytes.lengthInBytes,
+          'created_at': DateTime.now().toUtc().microsecondsSinceEpoch,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      final rows = await txn.query(
+        'image_thumbnail_cache',
+        columns: ['cache_key', 'byte_length'],
+        where: 'account_id = ?',
+        whereArgs: [accountId],
+        orderBy: 'created_at DESC',
+      );
+      var retainedBytes = 0;
+      for (var index = 0; index < rows.length; index++) {
+        final length = rows[index]['byte_length'] as int;
+        if (index < maximumItems && retainedBytes + length <= maximumBytes) {
+          retainedBytes += length;
+          continue;
+        }
+        await txn.delete(
+          'image_thumbnail_cache',
+          where: 'account_id = ? AND cache_key = ?',
+          whereArgs: [accountId, rows[index]['cache_key']],
+        );
+      }
+    });
+  }
 
   Future<void> saveRequisitionPage({
     required List<LocalRequisitionCacheRecord> records,

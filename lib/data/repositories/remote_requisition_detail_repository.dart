@@ -379,7 +379,9 @@ class RemoteRequisitionDetailRepository implements RequisitionDetailRepository {
   @override
   Future<RequisitionDetail> getCachedDetail(String requisitionId) async {
     await _ensureMemoryAccountScope();
-    final cached = await _persistedOrMemoryDetail(requisitionId);
+    final cached =
+        _cachedRemoteDetails[requisitionId] ??
+        await _persistedOrMemoryDetail(requisitionId);
     if (cached == null) return getDetail(requisitionId);
     try {
       return await _mergeRemoteDetail(cached, requisitionId);

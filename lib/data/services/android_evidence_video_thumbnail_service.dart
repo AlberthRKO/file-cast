@@ -96,16 +96,23 @@ final class AndroidEvidenceVideoThumbnailService
     );
     final temporary = File('${cached.path}.part');
     try {
-      final videoReady = player.stream.videoParams.firstWhere(
-        (params) =>
-            (params.dw ?? params.w ?? 0) > 0 &&
-            (params.dh ?? params.h ?? 0) > 0,
-      );
+      final videoReady = player.stream.videoParams
+          .handleError((Object _, StackTrace __) {})
+          .map(
+            (params) =>
+                (params.dw ?? params.w ?? 0) > 0 &&
+                (params.dh ?? params.h ?? 0) > 0,
+          )
+          .firstWhere((ready) => ready, orElse: () => false);
       await controller.platform.future.timeout(const Duration(seconds: 15));
       await player
           .open(Media(videoPath), play: false)
           .timeout(const Duration(seconds: 15));
-      await videoReady.timeout(const Duration(seconds: 15));
+      if (!await videoReady.timeout(const Duration(seconds: 15))) {
+        throw StateError(
+          'El video terminó sin entregar un cuadro para la miniatura.',
+        );
+      }
 
       final duration = player.state.duration;
       final frameTime = duration > Duration.zero
@@ -115,15 +122,25 @@ final class AndroidEvidenceVideoThumbnailService
                   .toInt(),
             )
           : Duration.zero;
-      await player.seek(frameTime);
-      await player.play();
+      await player.seek(frameTime).timeout(const Duration(seconds: 15));
+      await player.play().timeout(const Duration(seconds: 15));
       await Future.any<void>([
         controller.waitUntilFirstFrameRendered,
         player.stream.position
-            .firstWhere((position) => position > Duration.zero)
-            .then((_) {}),
+            .handleError((Object _, StackTrace __) {})
+            .firstWhere(
+              (position) => position > Duration.zero,
+              orElse: () => Duration.zero,
+            )
+            .then((position) {
+              if (position == Duration.zero) {
+                throw StateError(
+                  'El video terminó antes de producir un cuadro.',
+                );
+              }
+            }),
       ]).timeout(const Duration(seconds: 15));
-      await player.pause();
+      await player.pause().timeout(const Duration(seconds: 15));
 
       final jpeg = await player
           .screenshot(format: 'image/jpeg')
@@ -137,8 +154,11 @@ final class AndroidEvidenceVideoThumbnailService
       await temporary.rename(cached.path);
       return cached.path;
     } finally {
-      await player.dispose();
-      if (await temporary.exists()) await temporary.delete();
+      try {
+        await player.dispose().timeout(const Duration(seconds: 10));
+      } finally {
+        if (await temporary.exists()) await temporary.delete();
+      }
     }
   }
 }

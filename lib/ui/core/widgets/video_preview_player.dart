@@ -523,7 +523,10 @@ class _MediaKitVideoPlaybackAdapter extends _VideoPlaybackAdapterBase {
         _videoReady.future,
         _decoderFailed.future,
         _player.stream.position
-            .firstWhere((position) => position > Duration.zero)
+            .firstWhere(
+              (position) => position > Duration.zero,
+              orElse: () => Duration.zero,
+            )
             .then((_) {}),
       ]).timeout(const Duration(seconds: 30));
     } finally {

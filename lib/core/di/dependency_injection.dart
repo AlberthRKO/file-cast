@@ -19,6 +19,7 @@ import 'package:file_cast/data/services/evidence_picker_service.dart';
 import 'package:file_cast/data/services/evidence_crypto_service.dart';
 import 'package:file_cast/data/services/evidence_background_sync_service.dart';
 import 'package:file_cast/data/services/evidence_key_exchange_service.dart';
+import 'package:file_cast/data/services/evidence_image_thumbnail_service.dart';
 import 'package:file_cast/data/services/evidence_offline_sync_service.dart';
 import 'package:file_cast/data/services/evidence_preview_service.dart';
 import 'package:file_cast/data/services/evidence_sync_service.dart';
@@ -35,6 +36,7 @@ import 'package:file_cast/domain/repositories/requisition_creation_repository.da
 import 'package:file_cast/domain/repositories/requisition_detail_repository.dart';
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
 import 'package:file_cast/domain/services/evidence_decryption_service.dart';
+import 'package:file_cast/domain/services/evidence_image_thumbnail_service.dart';
 import 'package:file_cast/domain/services/audio_playback_service.dart';
 import 'package:file_cast/domain/services/evidence_preview_service.dart';
 import 'package:file_cast/domain/services/evidence_video_thumbnail_service.dart';
@@ -127,6 +129,27 @@ class DependencyInjection {
         create: (context) => AuthSessionController(
           authRepository: context.read<AuthRepository>(),
         )..restore(),
+      ),
+      ProxyProvider3<
+        EvidenceDecryptionService,
+        LocalEvidenceDatabaseService,
+        AuthSessionController,
+        EvidenceImageThumbnailService
+      >(
+        update: (_, decryptionService, database, session, previous) {
+          final service = previous is EvidenceImageThumbnailServiceImpl
+              ? previous
+              : EvidenceImageThumbnailServiceImpl(
+                  decryptionService: decryptionService,
+                  database: database,
+                );
+          service.setOwnerId(
+            session.isAuthenticated
+                ? 'authenticated:${session.user?.id ?? session.user?.numeroDocumento ?? session.user?.usuario ?? ''}'
+                : null,
+          );
+          return service;
+        },
       ),
       ProxyProvider2<AuthSessionService, AuthSessionController, Http>(
         update: (_, sessionService, sessionController, previous) => Http(

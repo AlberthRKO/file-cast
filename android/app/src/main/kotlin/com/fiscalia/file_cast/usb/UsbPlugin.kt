@@ -2467,13 +2467,8 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         val durationUs = durationMs
             .coerceAtLeast(0L)
             .coerceAtMost(Long.MAX_VALUE / 1_000L) * 1_000L
-        val candidateTimes = linkedSetOf<Long>()
-        if (durationUs > 0L) {
-            candidateTimes += minOf(1_000_000L, durationUs / 4L)
-            candidateTimes += durationUs / 2L
-            candidateTimes += durationUs - (durationUs / 4L)
-        }
-        candidateTimes += 0L
+        val preferredTime = if (durationUs > 0L) minOf(1_000_000L, durationUs / 4L) else 0L
+        val candidateTimes = linkedSetOf(preferredTime, 0L)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             val rawWidth = retriever
@@ -2496,41 +2491,29 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
             val targetHeight = (sourceHeight * scale).toInt().coerceAtLeast(1)
             if (sourceWidth > 0 && sourceHeight > 0) {
                 for (timeUs in candidateTimes) {
-                    for (option in listOf(
-                        MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
-                        MediaMetadataRetriever.OPTION_CLOSEST,
-                    )) {
-                        try {
-                            retriever.getScaledFrameAtTime(
-                                timeUs,
-                                option,
-                                targetWidth,
-                                targetHeight,
-                            )?.let { return it }
-                        } catch (_: Exception) {
-                            // Algunos extractores OEM rechazan ciertos seeks.
-                        }
+                    try {
+                        retriever.getScaledFrameAtTime(
+                            timeUs,
+                            MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                            targetWidth,
+                            targetHeight,
+                        )?.let { return it }
+                    } catch (_: Exception) {
+                        // El decoder OEM puede rechazar este instante.
                     }
                 }
             }
         }
 
         for (timeUs in candidateTimes) {
-            for (option in listOf(
-                MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
-                MediaMetadataRetriever.OPTION_CLOSEST,
-            )) {
-                try {
-                    retriever.getFrameAtTime(timeUs, option)?.let { return it }
-                } catch (_: Exception) {
-                    // Probar el siguiente instante/modo antes del fallback.
-                }
+            try {
+                retriever.getFrameAtTime(
+                    timeUs,
+                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                )?.let { return it }
+            } catch (_: Exception) {
+                // Probar un instante más antes del decoder por software.
             }
-        }
-        try {
-            retriever.getFrameAtTime()?.let { return it }
-        } catch (_: Exception) {
-            // El error final se redacta en el bridge.
         }
         throw IllegalStateException("No se pudo extraer un cuadro del video")
     }

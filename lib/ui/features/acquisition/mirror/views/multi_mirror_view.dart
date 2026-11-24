@@ -2,8 +2,11 @@ import 'dart:math' as math;
 
 import 'package:file_cast/domain/models/acquisition.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
+import 'package:file_cast/domain/services/audio_playback_service.dart';
+import 'package:file_cast/domain/services/evidence_preview_service.dart';
 import 'package:file_cast/ui/core/navigation/route_args/multi_mirror_route_args.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
+import 'package:file_cast/ui/core/widgets/evidence_preview_dialog.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/view_models/multi_mirror_view_model.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/widgets/interactive_mirror_texture.dart';
 import 'package:file_cast/ui/features/acquisition/mirror/widgets/mirror_capture_controls.dart';
@@ -32,6 +35,7 @@ class MultiMirrorRoute extends StatelessWidget {
   Widget build(BuildContext context) => ChangeNotifierProvider(
     create: (context) => MultiMirrorViewModel(
       repository: context.read<AcquisitionRepository>(),
+      previewService: context.read<EvidencePreviewService>(),
       requisitionId: requisitionId,
       sessionId: sessionId,
       sources: args.sources,
@@ -108,11 +112,19 @@ class _MultiMirrorBody extends StatelessWidget {
               evidence: viewModel.evidence,
               totalEvidence: viewModel.totalEvidence,
               compact: !wide,
+              visible: viewModel.showEvidence,
               contextLabel: focusedName == null
                   ? null
                   : 'Captura activa: $focusedName',
               onClose: viewModel.hideEvidence,
               onRename: viewModel.renameEvidence,
+              onOpenEvidence: (evidence) => showEvidencePreviewDialog(
+                context: context,
+                evidence: evidence,
+                prepare: () => viewModel.prepareEvidencePreview(evidence),
+                disposePreview: viewModel.disposeEvidencePreview,
+                audioPlaybackService: context.read<AudioPlaybackService>(),
+              ),
             )
           : null;
       if (wide) {

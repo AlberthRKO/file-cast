@@ -1,6 +1,6 @@
 # Base de datos SQLite local de File Cast
 
-Fecha de revisión: 23 de noviembre de 2026  
+Fecha de revisión: 24 de noviembre de 2026
 Fuente de verdad del esquema:
 [`LocalEvidenceDatabaseService`](../lib/data/services/local_evidence_database_service.dart)
 
@@ -11,18 +11,20 @@ File Cast utiliza una única base SQLite cifrada mediante `sqflite_sqlcipher`.
 | Propiedad | Valor |
 |---|---|
 | Archivo | `file_cast_evidence_v1.db` |
-| Versión actual | `9` |
+| Versión actual | `10` |
 | Motor | SQLite + SQLCipher |
 | Ubicación | `getDatabasesPath()` de la plataforma |
 | Clave SQLCipher | 32 bytes aleatorios codificados en Base64 URL |
 | Almacenamiento de la clave | `FlutterSecureStorage`, clave `file_cast_evidence_database_key_v1` |
 | Servicio propietario | `LocalEvidenceDatabaseService` |
-| Tablas | 6 |
+| Tablas | 7 |
 
-La base no contiene el binario de una evidencia. Los archivos FCE cifrados se
+La base no contiene el archivo original de una evidencia. Los FCE cifrados se
 guardan en almacenamiento privado y SQLite conserva su referencia, hashes,
-metadatos y estado de sincronización. En iOS, las nuevas referencias dentro de
-Documentos son relativas al contenedor de la aplicación.
+metadatos y estado de sincronización. También guarda miniaturas PNG reducidas
+dentro de SQLCipher para evitar regenerarlas después de reiniciar. En iOS, las
+nuevas referencias dentro de Documentos son relativas al contenedor de la
+aplicación.
 
 ## 2. Diagrama entidad-relación
 
@@ -112,11 +114,20 @@ erDiagram
         INTEGER expires_at
     }
 
+    IMAGE_THUMBNAIL_CACHE {
+        TEXT account_id PK
+        TEXT cache_key PK
+        BLOB png_bytes
+        INTEGER byte_length
+        INTEGER created_at
+    }
+
     REQUISITION_LIST_CACHE ||--o| REQUISITION_DETAIL_CACHE : "account_id + requisition_id"
     REQUISITION_LIST_CACHE ||--o{ LOCAL_ACQUISITION_SESSIONS : "requisition_id"
     REQUISITION_LIST_CACHE ||--o{ EVIDENCIAS_LOCALES : "requisa_id"
     LOCAL_ACQUISITION_SESSIONS ||--o{ EVIDENCIAS_LOCALES : "local_id = sesion_id"
     EVIDENCIAS_LOCALES ||--o| OUTBOX_EVIDENCIAS : "id = evidencia_id"
+    EVIDENCIAS_LOCALES ||--o{ IMAGE_THUMBNAIL_CACHE : "clave derivada de evidencia y hash"
 ```
 
 > Las líneas representan relaciones lógicas utilizadas por la aplicación. El
@@ -134,6 +145,7 @@ Cuenta autenticada (FlutterSecureStorage)
 │   ├── local_acquisition_sessions
 │   │   └── evidencias_locales
 │   │       └── outbox_evidencias
+│   ├── image_thumbnail_cache (PNG reducidos dentro de SQLCipher)
 │   └── evidencias_locales recuperadas para uso offline
 │
 └── sync_locks (lock singleton compartido entre app y WorkManager)
@@ -309,6 +321,26 @@ la misma fila de la outbox al mismo tiempo.
 La lease dura 10 segundos. Si un isolate muere, otra ejecución puede recuperar
 el lock cuando `expires_at` vence.
 
+### 4.7 `image_thumbnail_cache`
+
+Caché derivada para mostrar imágenes sin volver a descifrar y decodificar el
+archivo original tras un reinicio. Está dentro de SQLCipher y separada por
+`account_id`; la clave incorpora ID, ruta y metadatos de integridad de la
+evidencia. No contiene el archivo original.
+
+| Columna | Tipo | Nulo | Descripción |
+|---|---|---:|---|
+| `account_id` | TEXT | No | Cuenta propietaria. |
+| `cache_key` | TEXT | No | SHA-256 de la identidad y versión de la evidencia. |
+| `png_bytes` | BLOB | No | Miniatura PNG de hasta 384 píxeles en su lado mayor. |
+| `byte_length` | INTEGER | No | Tamaño del PNG para controlar la cuota. |
+| `created_at` | INTEGER | No | Momento de inserción en microsegundos UTC. |
+
+Clave primaria `(account_id, cache_key)` e índice por `(account_id, created_at)`.
+La caché conserva como máximo 128 elementos y 40 MiB por cuenta; no inserta
+miniaturas individuales mayores de 2 MiB. Al superar el límite elimina primero
+las entradas más antiguas. Si falta una miniatura, se regenera desde el FCE.
+
 ## 5. Relaciones y reglas de integridad
 
 ### Relaciones principales
@@ -394,6 +426,7 @@ flowchart TD
 | 7 | `sujeto_person_ids`. |
 | 8 | Cache de requisas, cache de detalle y sesiones locales. |
 | 9 | `account_id` en evidencias e índice por cuenta/requisa. |
+| 10 | Caché cifrada y acotada de miniaturas de imagen. |
 
 Las migraciones de columnas usan `PRAGMA table_info` antes de ejecutar
 `ALTER TABLE`, de modo que una migración previamente interrumpida no repita una

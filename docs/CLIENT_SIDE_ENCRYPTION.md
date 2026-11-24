@@ -50,8 +50,11 @@ La base `file_cast_evidence_v1.db` contiene:
 
 - `evidencias_locales`: ruta FCE, hashes, tamaños, metadata y `wrappedKey`.
 - `outbox_evidencias`: estado de sincronización, intentos y último error.
+- `image_thumbnail_cache`: PNG reducidos, acotados y separados por cuenta.
 
-No se guardan bytes del contenido plano en SQLite. La outbox usa los estados
+No se guarda el archivo original en claro en SQLite. Las miniaturas derivadas
+permanecen dentro de la base SQLCipher y se regeneran desde el FCE si la caché
+se descarta. La outbox usa los estados
 `PENDIENTE`, `ERROR` y `SINCRONIZADA`. `connectivity_plus` dispara nuevos intentos
 cuando vuelve la conectividad, y una captura nueva también intenta consumir la
 outbox.

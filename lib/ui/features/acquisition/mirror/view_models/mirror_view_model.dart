@@ -3,22 +3,26 @@ import 'dart:async';
 import 'package:file_cast/domain/models/acquisition.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/repositories/acquisition_repository.dart';
+import 'package:file_cast/domain/services/evidence_preview_service.dart';
 import 'package:flutter/foundation.dart';
 
 class MirrorViewModel extends ChangeNotifier {
   MirrorViewModel({
     required AcquisitionRepository repository,
+    required EvidencePreviewService previewService,
     required this.requisitionId,
     required this.sessionId,
     required int textureId,
     required int videoWidth,
     required int videoHeight,
   }) : _repository = repository,
+       _previewService = previewService,
        _textureId = textureId,
        _videoWidth = videoWidth,
        _videoHeight = videoHeight;
 
   final AcquisitionRepository _repository;
+  final EvidencePreviewService _previewService;
   final String requisitionId;
   final String sessionId;
   int _textureId;
@@ -114,6 +118,14 @@ class MirrorViewModel extends ChangeNotifier {
   }
 
   int get totalEvidence => _detail?.evidence.length ?? 0;
+
+  Future<PreparedEvidencePreview> prepareEvidencePreview(
+    RequisitionEvidence evidence,
+  ) => _previewService.prepare(evidence);
+
+  Future<void> disposeEvidencePreview(PreparedEvidencePreview preview) =>
+      _previewService.disposePreview(preview);
+
   int get pendingEvidenceCount =>
       _detail?.evidence.where((evidence) {
         final status = evidence.uploadStatus?.toUpperCase();

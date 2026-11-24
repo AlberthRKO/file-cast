@@ -33,8 +33,7 @@ class EvidenceVideoThumbnail extends StatefulWidget {
   State<EvidenceVideoThumbnail> createState() => _EvidenceVideoThumbnailState();
 }
 
-class _EvidenceVideoThumbnailState extends State<EvidenceVideoThumbnail>
-    with AutomaticKeepAliveClientMixin<EvidenceVideoThumbnail> {
+class _EvidenceVideoThumbnailState extends State<EvidenceVideoThumbnail> {
   String? _thumbnailPath;
   Future<void>? _loading;
   var _generation = 0;
@@ -42,7 +41,7 @@ class _EvidenceVideoThumbnailState extends State<EvidenceVideoThumbnail>
   @override
   void initState() {
     super.initState();
-    _loading = _prepare(_generation);
+    _loading = _prepareWithVisibleDeadline(_generation);
   }
 
   @override
@@ -55,9 +54,18 @@ class _EvidenceVideoThumbnailState extends State<EvidenceVideoThumbnail>
         oldWidget.plaintextByteLength != widget.plaintextByteLength) {
       _thumbnailPath = null;
       _generation++;
-      _loading = _prepare(_generation);
+      _loading = _prepareWithVisibleDeadline(_generation);
     }
   }
+
+  Future<void> _prepareWithVisibleDeadline(int generation) =>
+      _prepare(generation).timeout(
+        const Duration(seconds: 12),
+        onTimeout: () {
+          // La extracción continúa y publica la imagen si termina después.
+          // Mientras tanto, la tarjeta muestra el icono de video.
+        },
+      );
 
   Future<void> _prepare(int generation) async {
     String? cachedThumbnail;
@@ -137,7 +145,6 @@ class _EvidenceVideoThumbnailState extends State<EvidenceVideoThumbnail>
 
   @override
   Widget build(BuildContext context) {
-    super.build(context);
     final path = _thumbnailPath;
     if (path == null) {
       if (widget.localPath == null) return widget.fallback;
@@ -156,31 +163,38 @@ class _EvidenceVideoThumbnailState extends State<EvidenceVideoThumbnail>
               ),
       );
     }
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        Image.file(
-          File(path),
-          fit: BoxFit.cover,
-          cacheWidth: 480,
-          errorBuilder: (context, error, stackTrace) => widget.fallback,
-        ),
-        const Center(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: Color(0x99000000),
-              shape: BoxShape.circle,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cacheWidth = constraints.hasBoundedWidth
+            ? (constraints.maxWidth * MediaQuery.devicePixelRatioOf(context))
+                  .ceil()
+                  .clamp(1, 480)
+                  .toInt()
+            : 480;
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.file(
+              File(path),
+              fit: BoxFit.cover,
+              cacheWidth: cacheWidth,
+              errorBuilder: (context, error, stackTrace) => widget.fallback,
             ),
-            child: Padding(
-              padding: EdgeInsets.all(6),
-              child: Icon(Icons.play_arrow_rounded, color: Colors.white),
+            const Center(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Color(0x99000000),
+                  shape: BoxShape.circle,
+                ),
+                child: Padding(
+                  padding: EdgeInsets.all(6),
+                  child: Icon(Icons.play_arrow_rounded, color: Colors.white),
+                ),
+              ),
             ),
-          ),
-        ),
-      ],
+          ],
+        );
+      },
     );
   }
-
-  @override
-  bool get wantKeepAlive => true;
 }

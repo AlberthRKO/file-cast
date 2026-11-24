@@ -362,6 +362,8 @@ class RequisitionDetailViewModel extends ChangeNotifier {
           if (!progress.isActive) unawaited(_reloadSilently());
           return;
         }
+        final newlyAvailable =
+            progress.completed > (_offlineSyncProgress?.completed ?? 0);
         _offlineSyncProgress = progress;
         _offlineSyncError = progress.errorMessage;
         _offlineSyncErrors = progress.errors;
@@ -371,6 +373,9 @@ class RequisitionDetailViewModel extends ChangeNotifier {
           _isOfflineSyncing = false;
         }
         notifyListeners();
+        if (newlyAvailable && progress.isActive) {
+          unawaited(_reloadSilently());
+        }
       },
     );
     _phase = RequisitionDetailPhase.loading;
