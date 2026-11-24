@@ -228,7 +228,9 @@ class RemoteLocationCard extends StatelessWidget {
                       ),
                       const SizedBox(height: AppSpace.xs),
                       Text(
-                        location.path.replaceFirst('/sdcard/', ''),
+                        location.path.startsWith('mtp:')
+                            ? 'Carpetas publicadas por MTP/PTP'
+                            : location.path.replaceFirst('/sdcard/', ''),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodySmall,

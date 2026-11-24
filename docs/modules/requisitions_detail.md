@@ -36,7 +36,7 @@ El gesto pull-to-refresh usa una consulta remota estricta y reemplaza el snapsho
 
 - El botón flotante **+** abre un `ModalBottomSheet` con las acciones de adquisición disponibles mientras la requisa está en `DRAFT` o `IN_PROGRESS`: en Android incluye captura, transferencia e importación; en iOS conserva únicamente la importación local.
 - **Captura de pantalla:** en Android crea o reutiliza una sesión `OPEN` en el backend con `ANDROID`/`USB_OTG_SCRCPY` y abre la conexión asociada a `requisitionId` y `sessionId`.
-- **Transferencia de archivos:** en Android crea o reutiliza la misma sesión con `ANDROID`/`USB_OTG_ADB` y continúa en `/requisitions/:requisitionId/acquisitions/:sessionId/transfer`.
+- **Transferencia de archivos:** en Android crea o reutiliza la misma sesión y continúa en `/requisitions/:requisitionId/acquisitions/:sessionId/transfer`. El selector permite ADB en objetivos Android y MTP/PTP de solo lectura cuando un iPad publica la interfaz USB `6/1/1`; el browser MTP usa únicamente los almacenamientos y objetos que el objetivo expone. El backend conserva temporalmente el método genérico `DEVICE_TRANSFER` y la sesión `ANDROID`/`USB_OTG_ADB` hasta acordar identificadores específicos para MTP.
 - **Importar archivos:** en Android e iOS selecciona uno o varios archivos mediante el selector del sistema, muestra el preview de confirmación, crea o reutiliza una sesión de tipo `FILE_CAST`/`SYSTEM_PICKER` al aceptar, cifra y registra el lote en el outbox local, y muestra su progreso junto al contenido de evidencias.
 - **Sellar requisa:** solicita confirmación y llama `POST /api/v1/requisitions/:id/finalize`; el backend valida el caso y que las evidencias estén disponibles antes de cambiar el estado a `SEALED`.
 

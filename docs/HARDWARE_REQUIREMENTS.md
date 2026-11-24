@@ -17,6 +17,7 @@ Este documento distingue el **dispositivo inspector** —donde corre File Cast�
 | B. Capturadora HDMI/UVC | Android USB Host o iPad Air 4/iPadOS 27 | iPhone o Android con salida HDMI | Salida de video -> HDMI -> UVC | Sí, solo imagen/audio | No | No por el mismo enlace |
 | C. Archivos iPhone experimental | Android USB Host | iPhone/iPad desbloqueado y confiado | USB OTG + usbmux/lockdownd/AFC | No | No | Solo ubicaciones publicadas por iOS |
 | D. Backup lógico iPhone futuro | Android USB Host | iPhone/iPad desbloqueado y confiado | USB + MobileBackup2 | No | No | Backup lógico, no filesystem físico |
+| C2. Archivos iPad MTP/PTP | Android USB Host | iPad que publique interfaz `6/1/1`, desbloqueado y autorizado | USB OTG + MTP/PTP | No | No | Solo objetos y carpetas publicados por el dispositivo; validación de File Cast pendiente |
 
 ## Kit mínimo para Android directo
 

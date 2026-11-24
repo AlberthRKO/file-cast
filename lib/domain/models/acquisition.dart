@@ -49,6 +49,7 @@ final class AcquisitionDevice {
   final String connectionLabel;
   final String interfaceSummary;
   final String? serialNumber;
+  bool get supportsMtp => deviceType == 'mtp';
 
   String get shortSerial {
     final value = serialNumber?.trim();
@@ -101,12 +102,14 @@ final class AcquisitionConnectionSession {
     required this.sessionId,
     required this.deviceName,
     this.usbDeviceId,
+    this.transport = 'adb',
   });
 
   final String requisitionId;
   final String sessionId;
   final String deviceName;
   final String? usbDeviceId;
+  final String transport;
 }
 
 final class RemoteFileEntry {

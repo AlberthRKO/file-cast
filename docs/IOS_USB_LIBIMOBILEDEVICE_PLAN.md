@@ -4,6 +4,13 @@ Fecha: 10 de septiembre de 2026
 
 Estado: **plan aprobado para investigación futura; sin implementación**
 
+Actualización 24 de noviembre de 2026: el propietario confirmó que Host MTP en
+Android abre cuatro carpetas de un iPad autorizado. File Cast incorpora una
+vertical independiente MTP/PTP de solo lectura sobre `MtpDevice` para esas
+ubicaciones publicadas; la validación física del nuevo código sigue pendiente.
+Este hallazgo no sustituye la PoC AFC/House Arrest para ubicaciones que MTP no
+publique, ni proporciona video o control del iPad.
+
 Prioridad actual: completar y validar el vertical Android existente.
 
 Este documento define cómo investigar e implementar, en una fase posterior, la

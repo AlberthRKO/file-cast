@@ -78,7 +78,7 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
     }
     final generation = ++_refreshGeneration;
     var devices = await _repository.getDevices();
-    if (devices.isEmpty || !devices.any((device) => device.supportsAdb)) {
+    if (devices.isEmpty || !devices.any(_isSelectable)) {
       for (final delay in const [
         Duration(milliseconds: 400),
         Duration(milliseconds: 800),
@@ -86,13 +86,13 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
         await Future<void>.delayed(delay);
         if (_disposed || generation != _refreshGeneration) return;
         devices = await _repository.getDevices();
-        if (devices.any((device) => device.supportsAdb)) break;
+        if (devices.any(_isSelectable)) break;
       }
     }
     if (_disposed || generation != _refreshGeneration) return;
     _devices = devices;
     final availableIds = devices
-        .where((device) => device.supportsAdb)
+        .where(_isSelectable)
         .map((device) => device.id)
         .toSet();
     _selectedDeviceIds.retainWhere(availableIds.contains);
@@ -126,7 +126,7 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
 
   Future<void> selectDevice(AcquisitionDevice device) async {
     if (isBusy) return;
-    if (!device.supportsAdb) {
+    if (!_isSelectable(device)) {
       _selectedDeviceId = null;
       _message = _nonAdbMessage(device);
       _phase = AcquisitionConnectionPhase.error;
@@ -154,9 +154,9 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
     }
     _phase = AcquisitionConnectionPhase.requestingPermission;
     _pendingPermissionDeviceId = device.id;
-    _message =
-        'En el inspector, concede a File Cast el acceso al dispositivo USB. '
-        'La autorización RSA aparecerá después en el objetivo.';
+    _message = device.supportsMtp && !device.supportsAdb
+        ? 'Concede a File Cast el permiso USB y permite el acceso en el iPad.'
+        : 'En el inspector, concede a File Cast el acceso USB. La autorización RSA aparecerá después en el objetivo.';
     _safeNotify();
     final granted = await _repository.requestPermission(device.id);
     if (granted == true) {
@@ -174,7 +174,7 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
         _phase == AcquisitionConnectionPhase.preparingMirror) {
       return;
     }
-    if (!device.supportsAdb) {
+    if (!_isSelectable(device)) {
       _phase = AcquisitionConnectionPhase.error;
       _message = _nonAdbMessage(device);
       _safeNotify();
@@ -184,7 +184,9 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
     final wasAuthorized = _authorizedDeviceIds.contains(device.id);
     _diagnosticLog = '';
     _phase = AcquisitionConnectionPhase.connecting;
-    _message = 'Autorizando la conexión ADB…';
+    _message = device.supportsMtp && !device.supportsAdb
+        ? 'Abriendo las carpetas MTP/PTP publicadas por el dispositivo…'
+        : 'Autorizando la conexión ADB…';
     _safeNotify();
     try {
       if (isMultiMirror) {
@@ -237,12 +239,16 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
       _message = 'Dispositivo conectado.';
     } on TimeoutException {
       await _captureConnectionDiagnostics(
-        'Timeout esperando la respuesta del transporte ADB.',
+        device.supportsMtp && !device.supportsAdb
+            ? 'Timeout esperando la respuesta MTP/PTP.'
+            : 'Timeout esperando la respuesta del transporte ADB.',
         device: device,
       );
       if (!isMultiMirror) _selectedDeviceId = null;
       _phase = AcquisitionConnectionPhase.error;
-      _message = wasAuthorized
+      _message = device.supportsMtp && !device.supportsAdb
+          ? 'El iPad no respondió por MTP/PTP. Desbloquéalo, permite el acceso y reconecta el cable.'
+          : wasAuthorized
           ? 'El dispositivo no respondió durante la reconexión. La identidad RSA guardada se conserva; revisa el diagnóstico.'
           : 'El dispositivo no respondió. Confirma la depuración USB y acepta su huella RSA.';
       if (isMultiMirror) {
@@ -254,10 +260,9 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
       await _captureConnectionDiagnostics(error.toString(), device: device);
       if (!isMultiMirror) _selectedDeviceId = null;
       _phase = AcquisitionConnectionPhase.error;
-      _message = _friendlyError(
-        error,
-        wasAuthorized: wasAuthorized,
-      );
+      _message = device.supportsMtp && !device.supportsAdb
+          ? 'No se pudo abrir el acceso MTP/PTP: $error'
+          : _friendlyError(error, wasAuthorized: wasAuthorized);
       if (isMultiMirror) {
         await _repository.disconnectMulti();
       } else {
@@ -266,6 +271,10 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
     }
     _safeNotify();
   }
+
+  bool _isSelectable(AcquisitionDevice device) =>
+      device.supportsAdb ||
+      (destination == AcquisitionDestination.transfer && device.supportsMtp);
 
   Future<void> connectSelected() async {
     if (!isMultiMirror || _selectedDeviceIds.isEmpty || isBusy) return;
@@ -359,7 +368,9 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
     required AcquisitionDevice device,
   }) async {
     final header = StringBuffer()
-      ..writeln('=== FILE CAST · DIAGNÓSTICO ADB ===')
+      ..writeln(
+        '=== FILE CAST · DIAGNÓSTICO ${device.supportsMtp && !device.supportsAdb ? 'MTP/PTP' : 'ADB'} ===',
+      )
       ..writeln('Error: $fallback')
       ..writeln('Dispositivo: ${device.name}')
       ..writeln(
@@ -407,10 +418,12 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
     AcquisitionDevice device,
   ) => switch (device.deviceType) {
     'mtp' =>
-      'El inspector sí enumeró el objetivo por USB, pero solo como MTP '
-          '(archivos/galería), sin ADB. En el objetivo activa Depuración USB, '
-          'desbloquéalo, desconecta y vuelve a conectar; luego acepta la huella '
-          'RSA. Interfaces: ${device.interfaceSummary}.',
+      device.vendorId == 0x05ac
+          ? 'El iPad expone una interfaz MTP/PTP para archivos, pero no ADB para mirror. '
+                'Usa Transferencia de archivos para explorar lo que publique. '
+                'Interfaces: ${device.interfaceSummary}.'
+          : 'El dispositivo expone MTP/PTP, pero no ADB para mirror. '
+                'Interfaces: ${device.interfaceSummary}.',
     'hub' =>
       'El hub fue detectado, pero todavía no aparece ningún objetivo con ADB. '
           'Usa un puerto USB-A de datos y confirma Depuración USB en el objetivo.',

@@ -151,7 +151,7 @@ class UsbDeviceListView extends StatelessWidget {
                   const SizedBox(height: AppSpace.xs),
                   Text(
                     viewModel.destination == AcquisitionDestination.transfer
-                        ? 'Conecta el cable OTG y autoriza ADB para explorar el almacenamiento compartido.'
+                        ? 'Conecta el objetivo por USB. Android usa ADB; iPad puede mostrar las carpetas MTP/PTP que autorice.'
                         : viewModel.isMultiMirror
                         ? 'Selecciona uno o varios objetivos ADB conectados al hub USB y luego inicia sus mirrors.'
                         : 'Conecta el cable OTG, activa la depuración USB y acepta la huella RSA en el equipo objetivo.',
@@ -384,7 +384,7 @@ class _DeviceCard extends StatelessWidget {
                             : Icons.radio_button_unchecked
                       : authorized
                       ? Icons.check_circle
-                      : !device.supportsAdb
+                      : !device.supportsAdb && !device.supportsMtp
                       ? Icons.info_outline
                       : device.hasPermission
                       ? Icons.arrow_forward

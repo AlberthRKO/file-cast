@@ -13,9 +13,9 @@ import 'package:file_cast/domain/repositories/requisition_detail_repository.dart
 import 'package:file_cast/domain/repositories/requisition_repository.dart';
 import 'package:file_cast/domain/services/audio_playback_service.dart';
 import 'package:file_cast/domain/services/evidence_decryption_service.dart';
+import 'package:file_cast/domain/services/evidence_image_thumbnail_service.dart';
 import 'package:file_cast/domain/services/evidence_preview_service.dart';
 import 'package:file_cast/domain/services/evidence_video_thumbnail_service.dart';
-import 'package:file_cast/domain/services/evidence_image_thumbnail_service.dart';
 import 'package:file_cast/ui/core/adaptive/constrained_content.dart';
 import 'package:file_cast/ui/core/feedback/app_feedback.dart';
 import 'package:file_cast/ui/core/navigation/app_route.dart';
@@ -23,6 +23,7 @@ import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:file_cast/ui/core/widgets/app_action_button.dart';
 import 'package:file_cast/ui/core/widgets/app_form_input_icon.dart';
 import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
+import 'package:file_cast/ui/core/widgets/evidence_preview_dialog.dart';
 import 'package:file_cast/ui/core/widgets/evidence_rename_sheet.dart';
 import 'package:file_cast/ui/core/widgets/evidence_sync_badge.dart';
 import 'package:file_cast/ui/core/widgets/evidence_thumbnail.dart';
@@ -30,7 +31,6 @@ import 'package:file_cast/ui/core/widgets/evidence_video_thumbnail.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
 import 'package:file_cast/ui/features/requisitions/detail/view_models/requisition_detail_view_model.dart';
 import 'package:file_cast/ui/features/requisitions/detail/widgets/case_detail_sheet.dart';
-import 'package:file_cast/ui/core/widgets/evidence_preview_dialog.dart';
 import 'package:file_cast/ui/features/requisitions/detail/widgets/import_evidence_preview_dialog.dart';
 import 'package:file_cast/ui/features/requisitions/detail/widgets/participant_role_dropdown.dart';
 import 'package:file_cast/ui/features/requisitions/detail/widgets/participants_sheet.dart';
@@ -3638,26 +3638,25 @@ class _AcquisitionActionSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
     final actions = <_ActionData>[
-      if (showAndroidUsbActions) ...[
-        _ActionData(
-          title: 'Capturar pantalla',
-          subtitle: 'Conecta el dispositivo e inicia la captura.',
-          asset: 'camera.svg',
-          onTap: onCapture,
-        ),
-        _ActionData(
-          title: 'Mirror múltiple',
-          subtitle: 'Conecta varios Android mediante un hub USB.',
-          asset: 'camera.svg',
-          onTap: onMultiMirror,
-        ),
-        _ActionData(
-          title: 'Transferencia de archivos',
-          subtitle: 'Recibe archivos desde el dispositivo conectado.',
-          asset: 'share.svg',
-          onTap: onTransfer,
-        ),
-      ],
+      _ActionData(
+        title: 'Capturar pantalla',
+        subtitle: 'Conecta el dispositivo e inicia la captura.',
+        asset: 'camera.svg',
+        onTap: onCapture,
+      ),
+      _ActionData(
+        title: 'Mirror múltiple',
+        subtitle: 'Conecta varios Android mediante un hub USB.',
+        asset: 'camera.svg',
+        onTap: onMultiMirror,
+      ),
+      _ActionData(
+        title: 'Transferencia de archivos',
+        subtitle: 'Recibe archivos desde el dispositivo conectado.',
+        asset: 'share.svg',
+        onTap: onTransfer,
+      ),
+
       _ActionData(
         title: 'Importar archivos',
         subtitle: 'Selecciona documentos y archivos desde Archivos.',

@@ -109,6 +109,57 @@ class AdbClient {
     }
   }
 
+  Future<void> connectMtp(String deviceName) async {
+    await _methodChannel.invokeMethod<bool>('connectMtp', {
+      'deviceName': deviceName,
+    });
+  }
+
+  Future<bool> isMtpConnected(String deviceName) async =>
+      await _methodChannel.invokeMethod<bool>('isMtpConnected', {
+        'deviceName': deviceName,
+      }) ??
+      false;
+
+  Future<void> disconnectMtp() async {
+    await _methodChannel.invokeMethod<bool>('disconnectMtp');
+  }
+
+  Future<List<Map<String, dynamic>>> listMtpFiles(String path) async {
+    final raw = await _methodChannel.invokeMethod<List>('listMtpFiles', {
+      'remotePath': path,
+    });
+    return (raw ?? const [])
+        .whereType<Map>()
+        .map(
+          (item) => item.map((key, value) => MapEntry(key.toString(), value)),
+        )
+        .toList(growable: false);
+  }
+
+  Future<Map<String, dynamic>> pullMtpFiles({
+    required String requisitionId,
+    required String sessionId,
+    required String transferId,
+    required List<String> remotePaths,
+    bool previewOnly = false,
+  }) async {
+    final raw = await _methodChannel.invokeMethod<Map>('pullMtpFiles', {
+      'requisitionId': requisitionId,
+      'sessionId': sessionId,
+      'transferId': transferId,
+      'remotePaths': remotePaths,
+      'previewOnly': previewOnly,
+    });
+    if (raw == null)
+      throw StateError('La transferencia MTP no devolvió resultado.');
+    return raw.map((key, value) => MapEntry(key.toString(), value));
+  }
+
+  Future<void> cancelMtpTransfer() async {
+    await _methodChannel.invokeMethod<bool>('cancelMtpTransfer');
+  }
+
   /// Disconnect ADB
   Future<bool> disconnectAdb() async {
     try {

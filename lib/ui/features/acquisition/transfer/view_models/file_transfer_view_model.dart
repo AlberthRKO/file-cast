@@ -80,6 +80,8 @@ class FileTransferViewModel extends ChangeNotifier {
   String? _deviceKey;
   AcquisitionConnectionSession? _connection;
   String? _currentPath;
+  List<RemoteFileEntry> _mtpRoots = const [];
+  final List<RemoteFileEntry> _mtpTrail = [];
   List<RemoteFileEntry> _entries = const [];
   final Map<String, RemoteFileEntry> _selected = {};
   FileTransferProgress? _progress;
@@ -107,8 +109,12 @@ class FileTransferViewModel extends ChangeNotifier {
   RemoteFilePreview? get preview => _preview;
   RemoteStorageScope get storageScope => _storageScope;
   bool get isCompleteStorage => _storageScope == RemoteStorageScope.complete;
-  List<RemoteFileEntry> get visibleLocations =>
-      isCompleteStorage ? [internalStorageLocation] : commonLocations;
+  bool get isMtp => _connection?.transport == 'mtp';
+  List<RemoteFileEntry> get visibleLocations => isMtp
+      ? _mtpRoots
+      : isCompleteStorage
+      ? [internalStorageLocation]
+      : commonLocations;
   bool get showingLocations => _currentPath == null;
   int get selectedBytes => _selected.values.fold(
     0,
@@ -157,6 +163,13 @@ class FileTransferViewModel extends ChangeNotifier {
   List<FileBreadcrumb> get breadcrumbs {
     final path = _currentPath;
     if (path == null) return const [FileBreadcrumb(label: 'Ubicaciones')];
+    if (isMtp)
+      return [
+        const FileBreadcrumb(label: 'Ubicaciones'),
+        ..._mtpTrail.map(
+          (entry) => FileBreadcrumb(label: entry.name, path: entry.path),
+        ),
+      ];
     if (isCompleteStorage) {
       return _breadcrumbsFromRoot(internalStorageLocation, path);
     }
@@ -225,6 +238,9 @@ class FileTransferViewModel extends ChangeNotifier {
             'Conecta el dispositivo objetivo para explorar sus archivos.';
       } else {
         _phase = FileBrowserPhase.content;
+        if (isMtp) {
+          _mtpRoots = await _repository.listRemoteFiles('mtp:/');
+        }
       }
     } catch (_) {
       _phase = FileBrowserPhase.error;
@@ -234,12 +250,27 @@ class FileTransferViewModel extends ChangeNotifier {
   }
 
   Future<void> openDirectory(RemoteFileEntry directory) =>
-      openPath(directory.path);
+      _openDirectory(directory);
+
+  Future<void> _openDirectory(RemoteFileEntry directory) async {
+    if (isMtp) {
+      final existing = _mtpTrail.indexWhere(
+        (entry) => entry.path == directory.path,
+      );
+      if (existing >= 0) {
+        _mtpTrail.removeRange(existing + 1, _mtpTrail.length);
+      } else {
+        _mtpTrail.add(directory);
+      }
+    }
+    await openPath(directory.path);
+  }
 
   Future<void> openPath(String? path) async {
     if (_isTransferring || _isPreparingPreview) return;
     if (path == null) {
       _currentPath = null;
+      _mtpTrail.clear();
       _entries = const [];
       _phase = FileBrowserPhase.content;
       _message = null;
@@ -247,6 +278,10 @@ class FileTransferViewModel extends ChangeNotifier {
       return;
     }
     _phase = FileBrowserPhase.loading;
+    if (isMtp && path != _mtpTrail.lastOrNull?.path) {
+      final index = _mtpTrail.indexWhere((entry) => entry.path == path);
+      if (index >= 0) _mtpTrail.removeRange(index + 1, _mtpTrail.length);
+    }
     _message = null;
     _safeNotify();
     try {

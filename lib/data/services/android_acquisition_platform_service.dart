@@ -88,7 +88,7 @@ class AndroidAcquisitionPlatformService {
       requisitionId: requisitionId,
       sessionId: sessionId,
     );
-    if (reusable != null) return reusable;
+    if (reusable != null && reusable.usbDeviceId == device.id) return reusable;
 
     await connectForTransfer(
       device: device,
@@ -166,29 +166,37 @@ class AndroidAcquisitionPlatformService {
     required String requisitionId,
     required String sessionId,
   }) async {
-    _ensureAdbDevice(device);
+    if (!device.supportsAdb && !device.supportsMtp) {
+      throw StateError('El dispositivo no expone ADB ni MTP/PTP.');
+    }
     await _awaitPendingDisconnect();
     final reusable = await activeConnection(
       requisitionId: requisitionId,
       sessionId: sessionId,
     );
-    if (reusable != null) return reusable;
+    if (reusable != null && reusable.usbDeviceId == device.id) return reusable;
 
     _activeSession = null;
     _restartableSingleSession = null;
     _activeConnection = null;
     await _resetNativeSession();
-    final connection = await _adbClient
-        .connectAdb(device.id)
-        .timeout(const Duration(seconds: 45));
-    if (connection == null) {
-      throw StateError('ADB no confirmó la conexión con el dispositivo.');
+    if (device.supportsMtp && !device.supportsAdb) {
+      await _adbClient
+          .connectMtp(device.id)
+          .timeout(const Duration(seconds: 45));
+    } else {
+      final connection = await _adbClient
+          .connectAdb(device.id)
+          .timeout(const Duration(seconds: 45));
+      if (connection == null)
+        throw StateError('ADB no confirmó la conexión con el dispositivo.');
     }
     final session = AcquisitionConnectionSession(
       requisitionId: requisitionId,
       sessionId: sessionId,
       deviceName: device.name,
       usbDeviceId: device.id,
+      transport: device.supportsMtp && !device.supportsAdb ? 'mtp' : 'adb',
     );
     _activeConnection = session;
     return session;
@@ -812,8 +820,13 @@ class AndroidAcquisitionPlatformService {
         current?.sessionId != sessionId) {
       return null;
     }
-    final state = await _adbClient.getAdbState();
-    if (state?['connected'] == true) return current;
+    if (current?.transport == 'mtp') {
+      if (await _adbClient.isMtpConnected(current!.usbDeviceId ?? ''))
+        return current;
+    } else {
+      final state = await _adbClient.getAdbState();
+      if (state?['connected'] == true) return current;
+    }
     _activeConnection = null;
     _activeSession = null;
     return null;
@@ -906,7 +919,9 @@ class AndroidAcquisitionPlatformService {
         'La transferencia ADB solo está disponible en Android.',
       );
     }
-    final entries = await _adbClient.listRemoteFiles(remotePath);
+    final entries = remotePath.startsWith('mtp:')
+        ? await _adbClient.listMtpFiles(remotePath)
+        : await _adbClient.listRemoteFiles(remotePath);
     return entries.map(_mapRemoteFile).toList(growable: false);
   }
 
@@ -916,12 +931,19 @@ class AndroidAcquisitionPlatformService {
     required List<RemoteFileEntry> files,
   }) async {
     final transferId = 'transfer_${DateTime.now().microsecondsSinceEpoch}';
-    final result = await _adbClient.pullRemoteFiles(
-      requisitionId: requisitionId,
-      sessionId: sessionId,
-      transferId: transferId,
-      remotePaths: files.map((file) => file.path).toList(growable: false),
-    );
+    final result = _activeConnection?.transport == 'mtp'
+        ? await _adbClient.pullMtpFiles(
+            requisitionId: requisitionId,
+            sessionId: sessionId,
+            transferId: transferId,
+            remotePaths: files.map((file) => file.path).toList(growable: false),
+          )
+        : await _adbClient.pullRemoteFiles(
+            requisitionId: requisitionId,
+            sessionId: sessionId,
+            transferId: transferId,
+            remotePaths: files.map((file) => file.path).toList(growable: false),
+          );
     final rawFiles = result['files'];
     final captured = rawFiles is List
         ? rawFiles
@@ -966,14 +988,22 @@ class AndroidAcquisitionPlatformService {
     required String sessionId,
     required RemoteFileEntry file,
   }) async {
-    final result = await _adbClient.pullRemoteFiles(
-      requisitionId: requisitionId,
-      sessionId: sessionId,
-      transferId: 'preview_${DateTime.now().microsecondsSinceEpoch}',
-      remotePaths: [file.path],
-      previewOnly: true,
-      timeoutMs: 120000,
-    );
+    final result = _activeConnection?.transport == 'mtp'
+        ? await _adbClient.pullMtpFiles(
+            requisitionId: requisitionId,
+            sessionId: sessionId,
+            transferId: 'preview_${DateTime.now().microsecondsSinceEpoch}',
+            remotePaths: [file.path],
+            previewOnly: true,
+          )
+        : await _adbClient.pullRemoteFiles(
+            requisitionId: requisitionId,
+            sessionId: sessionId,
+            transferId: 'preview_${DateTime.now().microsecondsSinceEpoch}',
+            remotePaths: [file.path],
+            previewOnly: true,
+            timeoutMs: 120000,
+          );
     final rawFiles = result['files'];
     if (rawFiles is! List || rawFiles.isEmpty || rawFiles.first is! Map) {
       throw StateError('No se pudo preparar la vista previa.');
@@ -996,7 +1026,9 @@ class AndroidAcquisitionPlatformService {
     sessionId: sessionId,
   );
 
-  Future<void> cancelFileTransfer() => _adbClient.cancelFileTransfer();
+  Future<void> cancelFileTransfer() => _activeConnection?.transport == 'mtp'
+      ? _adbClient.cancelMtpTransfer()
+      : _adbClient.cancelFileTransfer();
 
   RemoteFileEntry _mapRemoteFile(Map<String, dynamic> map) {
     final name = map['name'] as String? ?? '';
@@ -1079,6 +1111,7 @@ class AndroidAcquisitionPlatformService {
     _serverLogHistory = '';
     _latestVideoWidth = null;
     _latestVideoHeight = null;
+    await _adbClient.disconnectMtp();
     await _adbClient.stopMirror();
     await _adbClient.disconnectAdb();
   }

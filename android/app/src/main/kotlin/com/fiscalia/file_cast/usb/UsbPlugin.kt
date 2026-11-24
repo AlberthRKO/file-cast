@@ -51,6 +51,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     }
 
     private val usbManager: UsbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+    private val mtpTransfer = MtpTransferBridge(context)
     private val mainHandler = Handler(Looper.getMainLooper())
     private var eventSink: EventChannel.EventSink? = null
     private var pendingDevice: UsbDevice? = null
@@ -140,6 +141,9 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
                     if (device != null) {
+                        mtpTransfer.cancel()
+                        Thread { mtpTransfer.disconnect(device.deviceName) }
+                            .apply { name = "DetachMtp"; isDaemon = true; start() }
                         Log.d(TAG, "USB DEVICE DETACHED: ${device.deviceName}")
 
                         // If we're in the middle of handshake, set flag for re-attach
@@ -182,6 +186,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
     }
 
     fun unregister() {
+        mtpTransfer.disconnect()
         disconnectAdb()
         multiSessions.keys.toList().forEach { disconnectMultiSession(it, notify = false) }
         try {
@@ -210,6 +215,62 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                     val deviceName = call.argument<String>("deviceName")
                     connectAdb(deviceName, result)
                 }
+                "connectMtp" -> {
+                    val name = call.argument<String>("deviceName")
+                    if (name == null) {
+                        result.error("INVALID_ARGS", "deviceName is required", null)
+                    } else {
+                        Thread {
+                            try {
+                                mtpTransfer.connect(name)
+                                mainHandler.post { result.success(true) }
+                            } catch (error: Exception) {
+                                mainHandler.post { result.error("MTP_CONNECT_ERROR", error.message, null) }
+                            }
+                        }.apply { this.name = "ConnectMtp"; isDaemon = true; start() }
+                    }
+                }
+                "isMtpConnected" -> result.success(mtpTransfer.isConnected(call.argument<String>("deviceName")))
+                "disconnectMtp" -> {
+                    mtpTransfer.disconnect()
+                    result.success(true)
+                }
+                "listMtpFiles" -> {
+                    val path = call.argument<String>("remotePath")
+                    if (path == null) result.error("INVALID_ARGS", "remotePath is required", null)
+                    else Thread {
+                        try {
+                            val entries = mtpTransfer.list(path)
+                            mainHandler.post { result.success(entries) }
+                        } catch (error: Exception) {
+                            mainHandler.post { result.error("MTP_LIST_ERROR", error.message, null) }
+                        }
+                    }.apply { name = "ListMtp"; isDaemon = true; start() }
+                }
+                "pullMtpFiles" -> {
+                    val requisition = call.argument<String>("requisitionId")
+                    val session = call.argument<String>("sessionId")
+                    val transferId = call.argument<String>("transferId")
+                    val paths = call.argument<List<String>>("remotePaths")
+                    val preview = call.argument<Boolean>("previewOnly") ?: false
+                    if (requisition == null || session == null || transferId == null || paths == null) {
+                        result.error("INVALID_ARGS", "MTP transfer arguments are required", null)
+                    } else Thread {
+                        try {
+                            val transferred = mtpTransfer.pull(requisition, session, paths, preview) { progress ->
+                                postTransferEvent(progress + ("transferId" to transferId))
+                            }
+                            postTransferEvent(mapOf("transferId" to transferId,
+                                "state" to if (transferred["cancelled"] == true) "cancelled" else "completed"))
+                            mainHandler.post { result.success(transferred) }
+                        } catch (error: Exception) {
+                            postTransferEvent(mapOf("transferId" to transferId, "state" to "error",
+                                "message" to (error.message ?: "Falló la transferencia MTP")))
+                            mainHandler.post { result.error("MTP_PULL_ERROR", error.message, null) }
+                        }
+                    }.apply { name = "PullMtp"; isDaemon = true; start() }
+                }
+                "cancelMtpTransfer" -> { mtpTransfer.cancel(); result.success(true) }
                 "disconnectAdb" -> {
                     disconnectAdb()
                     result.success(true)
@@ -2572,7 +2633,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
             "deviceType" to when {
                 hasAdb -> "android_adb"
                 device.deviceClass == 9 || 9 in interfaceClasses -> "hub"
-                device.deviceClass == 6 || 6 in interfaceClasses -> "mtp"
+                MtpTransferBridge.isImagingDevice(device) -> "mtp"
                 device.deviceClass == 3 || 3 in interfaceClasses -> "hid"
                 device.deviceClass == 14 || 14 in interfaceClasses -> "video"
                 else -> "other"

@@ -120,12 +120,13 @@ class _ExpandedTransferLayout extends StatelessWidget {
           children: [
             Text('Ubicaciones', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: AppSpace.s),
-            StorageScopeSelector(
-              complete: viewModel.isCompleteStorage,
-              enabled:
-                  !viewModel.isTransferring && !viewModel.isPreparingPreview,
-              onChanged: viewModel.setCompleteStorage,
-            ),
+            if (!viewModel.isMtp)
+              StorageScopeSelector(
+                complete: viewModel.isCompleteStorage,
+                enabled:
+                    !viewModel.isTransferring && !viewModel.isPreparingPreview,
+                onChanged: viewModel.setCompleteStorage,
+              ),
             const SizedBox(height: AppSpace.s),
             Expanded(
               child: RemoteLocationList(
@@ -156,11 +157,12 @@ class _CompactTransferLayout extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      StorageScopeSelector(
-        complete: viewModel.isCompleteStorage,
-        enabled: !viewModel.isTransferring && !viewModel.isPreparingPreview,
-        onChanged: viewModel.setCompleteStorage,
-      ),
+      if (!viewModel.isMtp)
+        StorageScopeSelector(
+          complete: viewModel.isCompleteStorage,
+          enabled: !viewModel.isTransferring && !viewModel.isPreparingPreview,
+          onChanged: viewModel.setCompleteStorage,
+        ),
       const SizedBox(height: AppSpace.s),
       Expanded(child: _BrowserPane(viewModel: viewModel)),
     ],
@@ -220,7 +222,9 @@ class _BrowserContent extends StatelessWidget {
       FileBrowserPhase.empty => _StateCard(
         icon: Icons.folder_open_rounded,
         title: 'Esta carpeta está vacía',
-        subtitle: 'No hay archivos accesibles mediante ADB en esta ubicación.',
+        subtitle: viewModel.isMtp
+            ? 'El dispositivo no publicó archivos en esta carpeta MTP/PTP.'
+            : 'No hay archivos accesibles mediante ADB en esta ubicación.',
         actionLabel: 'Actualizar',
         onAction: viewModel.refresh,
       ),
