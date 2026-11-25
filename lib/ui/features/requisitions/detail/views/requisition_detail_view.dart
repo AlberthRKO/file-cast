@@ -3638,25 +3638,26 @@ class _AcquisitionActionSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
     final actions = <_ActionData>[
-      _ActionData(
-        title: 'Capturar pantalla',
-        subtitle: 'Conecta el dispositivo e inicia la captura.',
-        asset: 'camera.svg',
-        onTap: onCapture,
-      ),
-      _ActionData(
-        title: 'Mirror múltiple',
-        subtitle: 'Conecta varios Android mediante un hub USB.',
-        asset: 'camera.svg',
-        onTap: onMultiMirror,
-      ),
-      _ActionData(
-        title: 'Transferencia de archivos',
-        subtitle: 'Recibe archivos desde el dispositivo conectado.',
-        asset: 'share.svg',
-        onTap: onTransfer,
-      ),
-
+      if (showAndroidUsbActions) ...[
+        _ActionData(
+          title: 'Capturar pantalla',
+          subtitle: 'Conecta el dispositivo e inicia la captura.',
+          asset: 'camera.svg',
+          onTap: onCapture,
+        ),
+        _ActionData(
+          title: 'Mirror múltiple',
+          subtitle: 'Conecta varios Android mediante un hub USB.',
+          asset: 'camera.svg',
+          onTap: onMultiMirror,
+        ),
+        _ActionData(
+          title: 'Transferencia de archivos',
+          subtitle: 'Recibe archivos desde el dispositivo conectado.',
+          asset: 'share.svg',
+          onTap: onTransfer,
+        ),
+      ],
       _ActionData(
         title: 'Importar archivos',
         subtitle: 'Selecciona documentos y archivos desde Archivos.',
