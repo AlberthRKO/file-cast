@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:file_cast/core/adb/adb_client.dart';
 import 'package:file_cast/domain/services/evidence_video_thumbnail_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -17,6 +19,7 @@ final class AndroidEvidenceVideoThumbnailService
   final AdbClient _adbClient;
   Future<void> _lastExtraction = Future<void>.value();
   DateTime? _nativeUnavailableUntil;
+  final Set<String> _nativeUnsupportedKeys = {};
 
   @override
   Future<String?> findCachedThumbnail({required String cacheKey}) async {
@@ -44,6 +47,16 @@ final class AndroidEvidenceVideoThumbnailService
   }
 
   Future<String> _createThumbnail(String videoPath, String cacheKey) async {
+    final cached = _softwareCacheFile(cacheKey);
+    if (await cached.exists() && await cached.length() > 0) {
+      return cached.path;
+    }
+    // Los MOV de iPhone pueden contener Dolby Vision/HEVC que el extractor OEM
+    // no decodifica, aunque MediaKit sí pueda reproducirlos.
+    if (videoPath.toLowerCase().endsWith('.mov') ||
+        _nativeUnsupportedKeys.contains(cacheKey)) {
+      return _extractWithSoftwareDecoder(videoPath, cacheKey);
+    }
     final nativeUnavailableUntil = _nativeUnavailableUntil;
     if (nativeUnavailableUntil != null &&
         DateTime.now().isBefore(nativeUnavailableUntil)) {
@@ -55,6 +68,10 @@ final class AndroidEvidenceVideoThumbnailService
           .timeout(const Duration(seconds: 45));
     } on Object catch (error) {
       if (error is! PlatformException && error is! TimeoutException) rethrow;
+      if (error is PlatformException &&
+          error.message?.contains('No se pudo extraer un cuadro') == true) {
+        _nativeUnsupportedKeys.add(cacheKey);
+      }
       if (error is TimeoutException) {
         // El hilo nativo puede seguir ocupado aunque Dart haya agotado el
         // tiempo. No encolar más extractores OEM mientras se recupera.
@@ -96,57 +113,28 @@ final class AndroidEvidenceVideoThumbnailService
     );
     final temporary = File('${cached.path}.part');
     try {
-      final videoReady = player.stream.videoParams
-          .handleError((Object _, StackTrace __) {})
-          .map(
-            (params) =>
-                (params.dw ?? params.w ?? 0) > 0 &&
-                (params.dh ?? params.h ?? 0) > 0,
-          )
-          .firstWhere((ready) => ready, orElse: () => false);
       await controller.platform.future.timeout(const Duration(seconds: 15));
       await player
-          .open(Media(videoPath), play: false)
-          .timeout(const Duration(seconds: 15));
-      if (!await videoReady.timeout(const Duration(seconds: 15))) {
-        throw StateError(
-          'El video terminó sin entregar un cuadro para la miniatura.',
-        );
+          .open(Media(videoPath), play: true)
+          .timeout(const Duration(seconds: 20));
+      // videoParams y waitUntilFirstFrameRendered pueden completarse antes de
+      // tener un cuadro visible en Android. screenshot devuelve null hasta
+      // que libmpv haya decodificado un frame real.
+      final deadline = DateTime.now().add(const Duration(seconds: 45));
+      Uint8List? jpeg;
+      while (DateTime.now().isBefore(deadline)) {
+        try {
+          jpeg = await player
+              .screenshot(format: 'image/jpeg')
+              .timeout(const Duration(seconds: 5));
+        } on Object catch (error) {
+          if (kDebugMode) debugPrint('MediaKit thumbnail: $error');
+        }
+        if (jpeg != null && jpeg.isNotEmpty) break;
+        await Future<void>.delayed(const Duration(milliseconds: 500));
       }
-
-      final duration = player.state.duration;
-      final frameTime = duration > Duration.zero
-          ? Duration(
-              milliseconds: (duration.inMilliseconds ~/ 4)
-                  .clamp(0, 1000)
-                  .toInt(),
-            )
-          : Duration.zero;
-      await player.seek(frameTime).timeout(const Duration(seconds: 15));
-      await player.play().timeout(const Duration(seconds: 15));
-      await Future.any<void>([
-        controller.waitUntilFirstFrameRendered,
-        player.stream.position
-            .handleError((Object _, StackTrace __) {})
-            .firstWhere(
-              (position) => position > Duration.zero,
-              orElse: () => Duration.zero,
-            )
-            .then((position) {
-              if (position == Duration.zero) {
-                throw StateError(
-                  'El video terminó antes de producir un cuadro.',
-                );
-              }
-            }),
-      ]).timeout(const Duration(seconds: 15));
-      await player.pause().timeout(const Duration(seconds: 15));
-
-      final jpeg = await player
-          .screenshot(format: 'image/jpeg')
-          .timeout(const Duration(seconds: 15));
       if (jpeg == null || jpeg.isEmpty) {
-        throw StateError('No se pudo extraer un cuadro del video.');
+        throw StateError('MediaKit no entregó un cuadro del video.');
       }
 
       await cached.parent.create(recursive: true);
@@ -156,6 +144,8 @@ final class AndroidEvidenceVideoThumbnailService
     } finally {
       try {
         await player.dispose().timeout(const Duration(seconds: 10));
+      } on Object catch (error) {
+        if (kDebugMode) debugPrint('MediaKit thumbnail dispose: $error');
       } finally {
         if (await temporary.exists()) await temporary.delete();
       }

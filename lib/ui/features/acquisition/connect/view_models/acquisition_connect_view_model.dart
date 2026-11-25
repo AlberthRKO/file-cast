@@ -185,7 +185,7 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
     _diagnosticLog = '';
     _phase = AcquisitionConnectionPhase.connecting;
     _message = device.supportsMtp && !device.supportsAdb
-        ? 'Abriendo las carpetas MTP/PTP publicadas por el dispositivo…'
+        ? 'Desbloquea el iPad y permite el acceso a sus archivos. Esperando las carpetas…'
         : 'Autorizando la conexión ADB…';
     _safeNotify();
     try {
@@ -217,7 +217,9 @@ class AcquisitionConnectViewModel extends ChangeNotifier {
         return;
       }
       if (destination == AcquisitionDestination.transfer) {
-        _message = 'Preparando el acceso seguro a los archivos…';
+        _message = device.supportsMtp && !device.supportsAdb
+            ? 'Esperando que el iPad autorice el acceso a sus carpetas…'
+            : 'Preparando el acceso seguro a los archivos…';
         _safeNotify();
         _transferConnection = await _repository.connectForTransfer(
           device: device,

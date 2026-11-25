@@ -11,8 +11,8 @@ import 'package:video_player/video_player.dart' as platform_video;
 /// Reproductor local de evidencia con controles consistentes entre las
 /// previews del detalle y de transferencia.
 ///
-/// En Android se fuerza la decodificación por software para evitar fallos del
-/// decodificador MediaCodec de ciertos fabricantes. iOS conserva AVPlayer.
+/// Android e iOS usan MediaKit. En Android se fuerza la decodificación por
+/// software para evitar fallos del decodificador MediaCodec de ciertos equipos.
 class VideoPreviewPlayer extends StatefulWidget {
   const VideoPreviewPlayer({
     required this.path,
@@ -33,6 +33,7 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
 
   Duration? _scrubPosition;
   bool _wasPlayingBeforeScrub = false;
+  bool _isPriming = false;
   double _volume = 1;
   double _lastAudibleVolume = 1;
 
@@ -56,15 +57,17 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
   }
 
   void _replaceAdapter() {
-    _adapter = Platform.isAndroid
+    final useMediaKit = Platform.isAndroid || Platform.isIOS;
+    _isPriming = useMediaKit;
+    _adapter = useMediaKit
         ? _MediaKitVideoPlaybackAdapter(widget.path)
         : _VideoPlayerPlaybackAdapter(widget.path);
-    _initialization = _initialize();
+    _initialization = _initialize(_adapter);
   }
 
-  Future<void> _initialize() async {
+  Future<void> _initialize(_VideoPlaybackAdapter adapter) async {
     try {
-      await _adapter.initialize();
+      await adapter.initialize();
     } on TimeoutException {
       throw StateError(
         'El video tardó demasiado en abrirse. Puede estar incompleto o usar '
@@ -72,7 +75,8 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
       );
     }
 
-    final aspectRatio = _adapter.state.value.aspectRatio;
+    if (!mounted || !identical(_adapter, adapter)) return;
+    final aspectRatio = adapter.state.value.aspectRatio;
     if (widget.onAspectRatio != null &&
         aspectRatio.isFinite &&
         aspectRatio > 0) {
@@ -80,6 +84,41 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
         if (mounted) widget.onAspectRatio!(aspectRatio);
       });
     }
+    if (adapter is _MediaKitVideoPlaybackAdapter) {
+      // Prepara un cuadro con la textura montada y el audio silenciado.
+      // Al terminar, el video debe quedar pausado en el inicio.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && identical(_adapter, adapter)) {
+          unawaited(_primeMediaKitPlayback(adapter));
+        }
+      });
+    }
+  }
+
+  Future<void> _primeMediaKitPlayback(
+    _MediaKitVideoPlaybackAdapter adapter,
+  ) async {
+    try {
+      await adapter.waitForPlaybackProgress().timeout(
+        const Duration(seconds: 45),
+      );
+    } on Object catch (error) {
+      // Un archivo puede no informar posición durante la preparación. Deja
+      // disponibles los controles para intentar reproducirlo manualmente.
+      if (kDebugMode) debugPrint('VideoPreviewPlayer: $error');
+    }
+    if (!mounted || !identical(_adapter, adapter)) return;
+    try {
+      await adapter.pause().timeout(const Duration(seconds: 10));
+      await adapter.seek(Duration.zero).timeout(const Duration(seconds: 10));
+      await adapter.setVolume(1).timeout(const Duration(seconds: 10));
+    } on Object {
+      if (!mounted || !identical(_adapter, adapter)) return;
+      adapter.reportStartupFailure();
+      return;
+    }
+    if (!mounted || !identical(_adapter, adapter)) return;
+    setState(() => _isPriming = false);
   }
 
   @override
@@ -192,7 +231,18 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
                               alignment: Alignment.center,
                               children: [
                                 _adapter.buildVideoSurface(),
-                                if (value.isBuffering)
+                                if (_isPriming)
+                                  const Positioned.fill(
+                                    child: ColoredBox(
+                                      color: Colors.black,
+                                      child: Center(
+                                        child: CircularProgressIndicator(
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                if (!_isPriming && value.isBuffering)
                                   const IgnorePointer(
                                     child: SizedBox(
                                       width: 42,
@@ -203,7 +253,9 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
                                       ),
                                     ),
                                   ),
-                                if (!value.isPlaying && !value.isBuffering)
+                                if (!_isPriming &&
+                                    !value.isPlaying &&
+                                    !value.isBuffering)
                                   IconButton(
                                     tooltip: 'Reproducir',
                                     iconSize: 38,
@@ -226,101 +278,103 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
                       ),
                     ),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                      AppSpace.m,
-                      AppSpace.s,
-                      AppSpace.m,
-                      AppSpace.xs,
-                    ),
-                    child: Column(
-                      children: [
-                        SliderTheme(
-                          data: SliderTheme.of(context).copyWith(
-                            trackHeight: 4,
-                            thumbShape: const RoundSliderThumbShape(
-                              enabledThumbRadius: 7,
+                  if (!_isPriming)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        AppSpace.m,
+                        AppSpace.s,
+                        AppSpace.m,
+                        AppSpace.xs,
+                      ),
+                      child: Column(
+                        children: [
+                          SliderTheme(
+                            data: SliderTheme.of(context).copyWith(
+                              trackHeight: 4,
+                              thumbShape: const RoundSliderThumbShape(
+                                enabledThumbRadius: 7,
+                              ),
+                              overlayShape: const RoundSliderOverlayShape(
+                                overlayRadius: 15,
+                              ),
+                              activeTrackColor: scheme.primary,
+                              inactiveTrackColor: scheme.onSurface.withValues(
+                                alpha: .22,
+                              ),
+                              thumbColor: scheme.primary,
                             ),
-                            overlayShape: const RoundSliderOverlayShape(
-                              overlayRadius: 15,
+                            child: Slider(
+                              max: maximum > 0 ? maximum : 1,
+                              value: sliderValue,
+                              onChangeStart: maximum <= 0
+                                  ? null
+                                  : _onScrubStart,
+                              onChanged: maximum <= 0 ? null : _onScrubChanged,
+                              onChangeEnd: maximum <= 0 ? null : _onScrubEnd,
                             ),
-                            activeTrackColor: scheme.primary,
-                            inactiveTrackColor: scheme.onSurface.withValues(
-                              alpha: .22,
-                            ),
-                            thumbColor: scheme.primary,
                           ),
-                          child: Slider(
-                            max: maximum > 0 ? maximum : 1,
-                            value: sliderValue,
-                            onChangeStart: maximum <= 0 ? null : _onScrubStart,
-                            onChanged: maximum <= 0 ? null : _onScrubChanged,
-                            onChangeEnd: maximum <= 0 ? null : _onScrubEnd,
-                          ),
-                        ),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              _formatVideoDuration(position),
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                              ),
-                            ),
-                            Text(
-                              _formatVideoDuration(duration),
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                        Row(
-                          children: [
-                            IconButton(
-                              tooltip: value.isPlaying
-                                  ? 'Pausar'
-                                  : 'Reproducir',
-                              color: scheme.onSurface,
-                              iconSize: 27,
-                              onPressed: () =>
-                                  unawaited(_togglePlayback(value)),
-                              icon: Icon(
-                                value.isPlaying
-                                    ? Icons.pause_rounded
-                                    : Icons.play_arrow_rounded,
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: _volume == 0
-                                  ? 'Activar sonido'
-                                  : 'Silenciar',
-                              color: scheme.onSurface,
-                              iconSize: 25,
-                              onPressed: _toggleMute,
-                              icon: Icon(
-                                _volume == 0
-                                    ? Icons.volume_off_rounded
-                                    : Icons.volume_up_rounded,
-                              ),
-                            ),
-                            Flexible(
-                              fit: FlexFit.loose,
-                              child: SizedBox(
-                                width: AppSize.mediaVolumeSliderWidth,
-                                child: Slider(
-                                  value: _volume,
-                                  onChanged: _setVolume,
-                                  semanticFormatterCallback: (value) =>
-                                      'Volumen ${(value * 100).round()} por ciento',
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                _formatVideoDuration(position),
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: scheme.onSurfaceVariant,
                                 ),
                               ),
-                            ),
-                          ],
-                        ),
-                      ],
+                              Text(
+                                _formatVideoDuration(duration),
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                          Row(
+                            children: [
+                              IconButton(
+                                tooltip: value.isPlaying
+                                    ? 'Pausar'
+                                    : 'Reproducir',
+                                color: scheme.onSurface,
+                                iconSize: 27,
+                                onPressed: () =>
+                                    unawaited(_togglePlayback(value)),
+                                icon: Icon(
+                                  value.isPlaying
+                                      ? Icons.pause_rounded
+                                      : Icons.play_arrow_rounded,
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: _volume == 0
+                                    ? 'Activar sonido'
+                                    : 'Silenciar',
+                                color: scheme.onSurface,
+                                iconSize: 25,
+                                onPressed: _toggleMute,
+                                icon: Icon(
+                                  _volume == 0
+                                      ? Icons.volume_off_rounded
+                                      : Icons.volume_up_rounded,
+                                ),
+                              ),
+                              Flexible(
+                                child: SizedBox(
+                                  width: AppSize.mediaVolumeSliderWidth,
+                                  child: Slider(
+                                    value: _volume,
+                                    onChanged: _setVolume,
+                                    semanticFormatterCallback: (value) =>
+                                        'Volumen ${(value * 100).round()} por ciento',
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -470,7 +524,9 @@ class _MediaKitVideoPlaybackAdapter extends _VideoPlaybackAdapterBase {
   _MediaKitVideoPlaybackAdapter(this._path) {
     _videoController = VideoController(
       _player,
-      configuration: const VideoControllerConfiguration(hwdec: 'no'),
+      configuration: Platform.isAndroid
+          ? const VideoControllerConfiguration(hwdec: 'no')
+          : const VideoControllerConfiguration(),
     );
     _subscriptions.addAll([
       _player.stream.playing.listen(
@@ -494,8 +550,37 @@ class _MediaKitVideoPlaybackAdapter extends _VideoPlaybackAdapterBase {
   final Player _player = Player();
   late final VideoController _videoController;
   final List<StreamSubscription<dynamic>> _subscriptions = [];
-  final Completer<void> _videoReady = Completer<void>();
-  final Completer<void> _decoderFailed = Completer<void>();
+  Future<void>? _disposal;
+  String? _lastPlayerError;
+
+  Future<void> waitForPlaybackProgress() async {
+    bool advanced(Duration position) {
+      final duration = state.value.duration;
+      final target =
+          duration > Duration.zero && duration < const Duration(seconds: 2)
+          ? Duration(
+              milliseconds: (duration.inMilliseconds ~/ 2).clamp(1, 1000),
+            )
+          : const Duration(seconds: 1);
+      return position >= target;
+    }
+
+    if (advanced(state.value.position)) return;
+    await _player.stream.position.firstWhere(
+      advanced,
+    );
+  }
+
+  void reportStartupFailure() {
+    final detail = _lastPlayerError;
+    _update(
+      (current) => current.copyWith(
+        error: detail == null || detail.isEmpty
+            ? 'El video no comenzó a reproducirse. El dispositivo puede no admitir este perfil de video.'
+            : 'El video no comenzó a reproducirse. MediaKit: $detail',
+      ),
+    );
+  }
 
   @override
   Future<void> initialize() async {
@@ -512,28 +597,8 @@ class _MediaKitVideoPlaybackAdapter extends _VideoPlaybackAdapterBase {
       const Duration(seconds: 20),
     );
     await _player.setVolume(0).timeout(const Duration(seconds: 5));
-    await _player
-        .open(Media(_path), play: true)
-        .timeout(const Duration(seconds: 30));
-    try {
-      // Algunos contenedores publican las dimensiones recién después de
-      // empezar a decodificar. Con play:false se esperaba hasta agotar el
-      // timeout aunque el archivo pudiera reproducirse.
-      await Future.any<void>([
-        _videoReady.future,
-        _decoderFailed.future,
-        _player.stream.position
-            .firstWhere(
-              (position) => position > Duration.zero,
-              orElse: () => Duration.zero,
-            )
-            .then((_) {}),
-      ]).timeout(const Duration(seconds: 30));
-    } finally {
-      await _player.pause().timeout(const Duration(seconds: 5));
-      await _player.setVolume(100).timeout(const Duration(seconds: 5));
-    }
-
+    await _player.open(Media(_path)).timeout(const Duration(seconds: 30));
+    // Los metadatos de video pueden llegar antes del primer cuadro visible.
     if (state.value.error != null) {
       throw StateError(state.value.error!);
     }
@@ -552,19 +617,13 @@ class _MediaKitVideoPlaybackAdapter extends _VideoPlaybackAdapterBase {
             : current.aspectRatio,
       ),
     );
-    if (width != null && height != null && width > 0 && height > 0) {
-      if (!_videoReady.isCompleted) _videoReady.complete();
-    }
   }
 
-  void _updatePlayerError(String _) {
-    const fallback =
-        'No se pudo decodificar el video en este dispositivo. El archivo puede '
-        'usar un formato, perfil o resolución que el reproductor no admite.';
-    _update((current) => current.copyWith(error: fallback));
-    if (!_videoReady.isCompleted && !_decoderFailed.isCompleted) {
-      _decoderFailed.complete();
-    }
+  void _updatePlayerError(String detail) {
+    _lastPlayerError = detail.trim();
+    if (kDebugMode) debugPrint('VideoPreviewPlayer MediaKit: $detail');
+    // Algunos decodificadores fallan durante el sondeo y libmpv se recupera.
+    // Conserva la textura y deja que el usuario intente reproducir el archivo.
   }
 
   void _update(_VideoPlaybackState Function(_VideoPlaybackState) change) {
@@ -584,7 +643,9 @@ class _MediaKitVideoPlaybackAdapter extends _VideoPlaybackAdapterBase {
   Future<void> setVolume(double volume) => _player.setVolume(volume * 100);
 
   @override
-  Future<void> dispose() async {
+  Future<void> dispose() => _disposal ??= _disposeOnce();
+
+  Future<void> _disposeOnce() async {
     await Future.wait(
       _subscriptions.map((subscription) => subscription.cancel()),
     );

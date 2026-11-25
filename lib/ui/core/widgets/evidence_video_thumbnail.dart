@@ -41,7 +41,7 @@ class _EvidenceVideoThumbnailState extends State<EvidenceVideoThumbnail> {
   @override
   void initState() {
     super.initState();
-    _loading = _prepareWithVisibleDeadline(_generation);
+    _loading = _prepare(_generation);
   }
 
   @override
@@ -54,18 +54,9 @@ class _EvidenceVideoThumbnailState extends State<EvidenceVideoThumbnail> {
         oldWidget.plaintextByteLength != widget.plaintextByteLength) {
       _thumbnailPath = null;
       _generation++;
-      _loading = _prepareWithVisibleDeadline(_generation);
+      _loading = _prepare(_generation);
     }
   }
-
-  Future<void> _prepareWithVisibleDeadline(int generation) =>
-      _prepare(generation).timeout(
-        const Duration(seconds: 12),
-        onTimeout: () {
-          // La extracción continúa y publica la imagen si termina después.
-          // Mientras tanto, la tarjeta muestra el icono de video.
-        },
-      );
 
   Future<void> _prepare(int generation) async {
     String? cachedThumbnail;

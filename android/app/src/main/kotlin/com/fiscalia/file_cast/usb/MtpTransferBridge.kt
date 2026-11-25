@@ -8,11 +8,13 @@ import android.mtp.MtpDevice
 import android.mtp.MtpObjectInfo
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import java.io.File
 import java.io.FileInputStream
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Read-only access to the objects actually published by a USB MTP/PTP target. */
 internal class MtpTransferBridge(private val context: Context) {
@@ -22,6 +24,7 @@ internal class MtpTransferBridge(private val context: Context) {
     private var deviceName: String? = null
     private val cancelled = AtomicBoolean(false)
     private val busy = AtomicBoolean(false)
+    private val connectionVersion = AtomicInteger(0)
 
     fun isConnected(name: String?): Boolean = synchronized(lock) {
         name != null && name == deviceName && device != null &&
@@ -32,26 +35,63 @@ internal class MtpTransferBridge(private val context: Context) {
         check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             "La transferencia MTP de File Cast requiere Android 7 o posterior"
         }
-        val usb = manager.deviceList.values.firstOrNull { it.deviceName == name }
-            ?: error("El dispositivo USB ya no está conectado")
-        check(isImagingDevice(usb)) { "El dispositivo no expone MTP/PTP" }
-        check(manager.hasPermission(usb)) { "File Cast necesita permiso USB para este dispositivo" }
+        val version = connectionVersion.incrementAndGet()
         synchronized(lock) {
             closeLocked()
-            val connection = manager.openDevice(usb) ?: error("No se pudo abrir el dispositivo USB")
-            val candidate = MtpDevice(usb)
-            if (!candidate.open(connection)) error("El dispositivo rechazó la sesión MTP/PTP")
-            check(candidate.storageIds?.isNotEmpty() == true) {
-                candidate.close()
-                "El dispositivo no publicó carpetas accesibles. Desbloquéalo y permite el acceso."
-            }
-            device = candidate
-            deviceName = name
         }
+        val deadline = SystemClock.elapsedRealtime() + 90_000L
+        while (SystemClock.elapsedRealtime() < deadline) {
+            check(connectionVersion.get() == version) { "Se canceló la conexión MTP/PTP" }
+            val usb = manager.deviceList.values.firstOrNull { it.deviceName == name }
+                ?: error("El dispositivo USB ya no está conectado")
+            check(isImagingDevice(usb)) { "El dispositivo no expone MTP/PTP" }
+            check(manager.hasPermission(usb)) { "File Cast necesita permiso USB para este dispositivo" }
+            val connection = manager.openDevice(usb)
+            if (connection != null) {
+                val candidate = MtpDevice(usb)
+                var retained = false
+                var opened = false
+                try {
+                    opened = candidate.open(connection)
+                    if (opened) {
+                        // El iPad puede publicar el almacenamiento antes de que el usuario
+                        // confirme "Permitir". Una carpeta legible confirma el acceso real.
+                        val readable = candidate.storageIds?.any { storageId ->
+                            candidate.getObjectHandles(storageId, 0, -1)
+                                ?.any { handle -> candidate.getObjectInfo(handle) != null } == true
+                        } == true
+                        if (readable) {
+                            synchronized(lock) {
+                                check(connectionVersion.get() == version) {
+                                    "Se canceló la conexión MTP/PTP"
+                                }
+                                device = candidate
+                                deviceName = name
+                                retained = true
+                            }
+                            return
+                        }
+                    }
+                } catch (error: RuntimeException) {
+                    if (connectionVersion.get() != version) throw error
+                    // La sesión puede rechazar consultas hasta que el iPad sea autorizado.
+                } finally {
+                    if (!retained) {
+                        if (opened) candidate.close()
+                        connection.close()
+                    }
+                }
+            }
+            Thread.sleep(600)
+        }
+        error("El dispositivo no publicó carpetas accesibles. Desbloquéalo y permite el acceso.")
     }
 
-    fun disconnect(name: String? = null) = synchronized(lock) {
-        if (name == null || name == deviceName) closeLocked()
+    fun disconnect(name: String? = null) {
+        connectionVersion.incrementAndGet()
+        synchronized(lock) {
+            if (name == null || name == deviceName) closeLocked()
+        }
     }
 
     private fun closeLocked() {

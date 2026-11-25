@@ -183,7 +183,7 @@ class AndroidAcquisitionPlatformService {
     if (device.supportsMtp && !device.supportsAdb) {
       await _adbClient
           .connectMtp(device.id)
-          .timeout(const Duration(seconds: 45));
+          .timeout(const Duration(seconds: 95));
     } else {
       final connection = await _adbClient
           .connectAdb(device.id)
