@@ -381,10 +381,16 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
   Future<void> discardRemoteFilePreview({
     required String requisitionId,
     required String sessionId,
-  }) => _platformService.discardRemoteFilePreview(
-    requisitionId: requisitionId,
-    sessionId: sessionId,
-  );
+  }) async {
+    try {
+      await _documentPreviewService.purgeOfficeViewerCache();
+    } finally {
+      await _platformService.discardRemoteFilePreview(
+        requisitionId: requisitionId,
+        sessionId: sessionId,
+      );
+    }
+  }
 
   @override
   Future<FileTransferResult> transferRemoteFiles({
@@ -476,12 +482,17 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
       'pdf',
       'doc',
       'docx',
+      'docm',
       'xls',
       'xlsx',
+      'xlsm',
       'ppt',
       'pptx',
+      'pptm',
+      'rtf',
       'txt',
       'csv',
+      'tsv',
       'json',
       'xml',
       'log',
@@ -513,8 +524,25 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
         _ => 'video/mp4',
       },
       RequisitionEvidenceType.audio => 'audio/mpeg',
-      RequisitionEvidenceType.document =>
-        extension == 'pdf' ? 'application/pdf' : 'application/octet-stream',
+      RequisitionEvidenceType.document => switch (extension) {
+        'pdf' => 'application/pdf',
+        'docx' =>
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'docm' => 'application/vnd.ms-word.document.macroEnabled.12',
+        'doc' => 'application/msword',
+        'xls' => 'application/vnd.ms-excel',
+        'xlsx' =>
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'xlsm' => 'application/vnd.ms-excel.sheet.macroEnabled.12',
+        'ppt' => 'application/vnd.ms-powerpoint',
+        'pptx' =>
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'pptm' => 'application/vnd.ms-powerpoint.presentation.macroEnabled.12',
+        'rtf' => 'application/rtf',
+        'csv' => 'text/csv',
+        'tsv' => 'text/tab-separated-values',
+        _ => 'application/octet-stream',
+      },
       RequisitionEvidenceType.other => 'application/octet-stream',
     };
   }

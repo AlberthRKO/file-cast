@@ -7,6 +7,8 @@ import 'package:file_cast/domain/services/evidence_preview_service.dart';
 import 'package:file_cast/domain/services/audio_playback_service.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:file_cast/ui/core/widgets/audio_preview_player.dart';
+import 'package:file_cast/ui/core/widgets/document_preview_content.dart';
+import 'package:file_cast/ui/core/widgets/office_document_preview.dart';
 import 'package:file_cast/ui/core/widgets/video_preview_player.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_pdfview/flutter_pdfview.dart';
@@ -37,6 +39,29 @@ class _EvidencePreviewSheetState extends State<EvidencePreviewSheet> {
   PreparedEvidencePreview? _preview;
   int _preparationGeneration = 0;
   double? _mediaAspectRatio;
+  bool _closing = false;
+
+  bool get _needsNativeViewerTeardown {
+    final extension = widget.evidence.name.toLowerCase().split('.').last;
+    return _isPdf(widget.evidence) ||
+        OfficeDocumentPreview.supportedExtensions.contains(extension);
+  }
+
+  Future<void> _close() async {
+    if (_closing) return;
+    if (!_needsNativeViewerTeardown) {
+      Navigator.of(context).pop();
+      return;
+    }
+    setState(() => _closing = true);
+    // Remove the native WebView before the sheet's reverse animation starts.
+    // Its Android surface may otherwise expose a white frame during dispose.
+    await WidgetsBinding.instance.endOfFrame;
+    await Future<void>.delayed(const Duration(milliseconds: 64));
+    if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+      Navigator.of(context).pop();
+    }
+  }
 
   void _setMediaAspectRatio(double value) {
     if (!value.isFinite || value <= 0) return;
@@ -47,8 +72,11 @@ class _EvidencePreviewSheetState extends State<EvidencePreviewSheet> {
   }
 
   double _heightFactor(Size available) {
-    if (_isPdf(widget.evidence) ||
-        widget.evidence.type == RequisitionEvidenceType.document) {
+    final extension = widget.evidence.name.toLowerCase().split('.').last;
+    if (widget.evidence.type == RequisitionEvidenceType.image ||
+        _isPdf(widget.evidence) ||
+        widget.evidence.type == RequisitionEvidenceType.document ||
+        OfficeDocumentPreview.supportedExtensions.contains(extension)) {
       return .9;
     }
     if (widget.evidence.type == RequisitionEvidenceType.audio) {
@@ -143,7 +171,7 @@ class _EvidencePreviewSheetState extends State<EvidencePreviewSheet> {
             if (widget.showHandle) const Center(child: _PreviewSheetHandle()),
             _PreviewHeader(
               evidence: widget.evidence,
-              onClose: () => Navigator.of(context).pop(),
+              onClose: () => unawaited(_close()),
             ),
             const SizedBox(height: AppSpace.s),
             Expanded(
@@ -151,27 +179,30 @@ class _EvidencePreviewSheetState extends State<EvidencePreviewSheet> {
                 borderRadius: BorderRadius.circular(AppRadius.m),
                 child: ColoredBox(
                   color: theme.scaffoldBackgroundColor,
-                  child: FutureBuilder<PreparedEvidencePreview>(
-                    future: _previewFuture,
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState != ConnectionState.done) {
-                        return const _PreviewLoading();
-                      }
-                      if (snapshot.hasError || !snapshot.hasData) {
-                        return _PreviewError(
-                          message: _previewErrorMessage(snapshot.error),
-                          onRetry: _retryPreparation,
-                        );
-                      }
-                      _preview ??= snapshot.data;
-                      return _PreviewContent(
-                        evidence: widget.evidence,
-                        preview: snapshot.data!,
-                        audioPlaybackService: widget.audioPlaybackService,
-                        onAspectRatio: _setMediaAspectRatio,
-                      );
-                    },
-                  ),
+                  child: _closing
+                      ? const SizedBox.expand()
+                      : FutureBuilder<PreparedEvidencePreview>(
+                          future: _previewFuture,
+                          builder: (context, snapshot) {
+                            if (snapshot.connectionState !=
+                                ConnectionState.done) {
+                              return const _PreviewLoading();
+                            }
+                            if (snapshot.hasError || !snapshot.hasData) {
+                              return _PreviewError(
+                                message: _previewErrorMessage(snapshot.error),
+                                onRetry: _retryPreparation,
+                              );
+                            }
+                            _preview ??= snapshot.data;
+                            return _PreviewContent(
+                              evidence: widget.evidence,
+                              preview: snapshot.data!,
+                              audioPlaybackService: widget.audioPlaybackService,
+                              onAspectRatio: _setMediaAspectRatio,
+                            );
+                          },
+                        ),
                 ),
               ),
             ),
@@ -285,10 +316,19 @@ class _PreviewContent extends StatelessWidget {
     if (_isPdf(evidence)) {
       return PDFView(filePath: preview.path, enableSwipe: true);
     }
+    final extension = evidence.name.toLowerCase().split('.').last;
+    if (OfficeDocumentPreview.supportedExtensions.contains(extension)) {
+      return OfficeDocumentPreview(
+        path: preview.path,
+        name: evidence.name,
+        extension: extension,
+        fallbackText: preview.documentText,
+      );
+    }
     if (preview.documentText != null) {
-      return SingleChildScrollView(
-        padding: const EdgeInsets.all(AppSpace.m),
-        child: SelectableText(preview.documentText!),
+      return DocumentPreviewContent(
+        content: preview.documentText!,
+        extension: extension,
       );
     }
     return const _PreviewError(
@@ -386,6 +426,7 @@ bool _isPdf(RequisitionEvidence evidence) =>
     evidence.mimeType == 'application/pdf';
 
 String _previewErrorMessage(Object? error) {
+  if (error is FormatException) return error.message;
   final message = error?.toString().replaceFirst('Bad state: ', '').trim();
   return message == null || message.isEmpty
       ? 'No se pudo preparar la vista previa.'

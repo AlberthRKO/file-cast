@@ -120,7 +120,22 @@ class RemoteEvidencePreviewService implements EvidencePreviewService {
 
     try {
       String? documentText;
-      if (evidence.type == RequisitionEvidenceType.document) {
+      final extension = evidence.name.toLowerCase().split('.').last;
+      if (evidence.type == RequisitionEvidenceType.document ||
+          const {
+            'doc',
+            'docx',
+            'docm',
+            'xls',
+            'xlsx',
+            'xlsm',
+            'ppt',
+            'pptx',
+            'pptm',
+            'rtf',
+            'csv',
+            'tsv',
+          }.contains(extension)) {
         documentText = await _documentPreview.extractReadableText(path!);
       }
       return PreparedEvidencePreview(
@@ -154,8 +169,11 @@ class RemoteEvidencePreviewService implements EvidencePreviewService {
 
   @override
   Future<void> disposePreview(PreparedEvidencePreview preview) async {
-    if (!preview.isTemporary) return;
-    await _deleteTemporary(preview.path);
+    try {
+      await _documentPreview.purgeOfficeViewerCache();
+    } finally {
+      if (preview.isTemporary) await _deleteTemporary(preview.path);
+    }
   }
 
   Future<String> _downloadToTemporaryFile(

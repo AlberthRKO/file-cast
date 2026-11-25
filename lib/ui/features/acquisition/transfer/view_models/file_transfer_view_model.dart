@@ -351,7 +351,17 @@ class FileTransferViewModel extends ChangeNotifier {
       'flac',
       'amr',
       'pdf',
+      'doc',
       'docx',
+      'docm',
+      'xls',
+      'xlsx',
+      'xlsm',
+      'ppt',
+      'pptx',
+      'pptm',
+      'rtf',
+      'tsv',
       'txt',
       'csv',
       'json',
@@ -368,14 +378,26 @@ class FileTransferViewModel extends ChangeNotifier {
     final isReadableText = const {
       'txt',
       'csv',
+      'tsv',
       'json',
       'xml',
       'log',
     }.contains(extension);
     final maxBytes = isReadableText
         ? 10 * 1024 * 1024
-        : extension == 'docx'
-        ? 25 * 1024 * 1024
+        : const {
+            'doc',
+            'docx',
+            'docm',
+            'xls',
+            'xlsx',
+            'xlsm',
+            'ppt',
+            'pptx',
+            'pptm',
+            'rtf',
+          }.contains(extension)
+        ? 80 * 1024 * 1024
         : file.kind == RemoteFileKind.video
         ? 256 * 1024 * 1024
         : file.kind == RemoteFileKind.audio
@@ -550,6 +572,7 @@ class FileTransferViewModel extends ChangeNotifier {
   }
 
   String _friendlyError(Object error) {
+    if (error is FormatException) return error.message;
     final text = error.toString().replaceFirst('Bad state: ', '').trim();
     if (_isDisconnectedError(error))
       return 'Se perdió la conexión con el dispositivo objetivo.';

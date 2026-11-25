@@ -252,10 +252,17 @@ class EvidencePickerService {
       'pdf' ||
       'doc' ||
       'docx' ||
+      'docm' ||
       'xls' ||
       'xlsx' ||
+      'xlsm' ||
+      'ppt' ||
+      'pptx' ||
+      'pptm' ||
+      'rtf' ||
       'txt' ||
       'csv' ||
+      'tsv' ||
       'json' ||
       'xml' ||
       'log' => RequisitionEvidenceType.document,
@@ -304,6 +311,18 @@ class EvidencePickerService {
     'doc' => 'application/msword',
     'docx' =>
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'docm' => 'application/vnd.ms-word.document.macroEnabled.12',
+    'xls' => 'application/vnd.ms-excel',
+    'xlsx' =>
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'xlsm' => 'application/vnd.ms-excel.sheet.macroEnabled.12',
+    'ppt' => 'application/vnd.ms-powerpoint',
+    'pptx' =>
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'pptm' => 'application/vnd.ms-powerpoint.presentation.macroEnabled.12',
+    'rtf' => 'application/rtf',
+    'csv' => 'text/csv',
+    'tsv' => 'text/tab-separated-values',
     _ => 'application/octet-stream',
   };
 }

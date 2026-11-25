@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -6,6 +7,8 @@ import 'package:file_cast/domain/repositories/acquisition_repository.dart';
 import 'package:file_cast/domain/services/audio_playback_service.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
 import 'package:file_cast/ui/core/widgets/audio_preview_player.dart';
+import 'package:file_cast/ui/core/widgets/document_preview_content.dart';
+import 'package:file_cast/ui/core/widgets/office_document_preview.dart';
 import 'package:file_cast/ui/core/widgets/video_preview_player.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -38,6 +41,27 @@ class RemoteFilePreviewSheet extends StatefulWidget {
 class _RemoteFilePreviewSheetState extends State<RemoteFilePreviewSheet> {
   late bool _selected;
   double? _mediaAspectRatio;
+  bool _closing = false;
+
+  bool get _needsNativeViewerTeardown {
+    final extension = widget.file.name.toLowerCase().split('.').last;
+    return extension == 'pdf' ||
+        OfficeDocumentPreview.supportedExtensions.contains(extension);
+  }
+
+  Future<void> _close() async {
+    if (_closing) return;
+    if (!_needsNativeViewerTeardown) {
+      Navigator.of(context).pop();
+      return;
+    }
+    setState(() => _closing = true);
+    await WidgetsBinding.instance.endOfFrame;
+    await Future<void>.delayed(const Duration(milliseconds: 64));
+    if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+      Navigator.of(context).pop();
+    }
+  }
 
   @override
   void initState() {
@@ -61,9 +85,10 @@ class _RemoteFilePreviewSheetState extends State<RemoteFilePreviewSheet> {
 
   double _heightFactor(Size windowSize) {
     final extension = widget.file.name.toLowerCase().split('.').last;
-    if (extension == 'pdf' ||
-        extension == 'docx' ||
-        const {'txt', 'csv', 'json', 'xml', 'log'}.contains(extension)) {
+    if (widget.file.kind == RemoteFileKind.image ||
+        extension == 'pdf' ||
+        OfficeDocumentPreview.supportedExtensions.contains(extension) ||
+        const {'txt', 'json', 'xml', 'log'}.contains(extension)) {
       return .9;
     }
     if (widget.file.kind == RemoteFileKind.audio) {
@@ -85,62 +110,76 @@ class _RemoteFilePreviewSheetState extends State<RemoteFilePreviewSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final windowSize = MediaQuery.sizeOf(context);
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
-    return Align(
-      alignment: Alignment.bottomCenter,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-        width: double.infinity,
-        height: windowSize.height * _heightFactor(windowSize),
-        child: Material(
-          color: theme.cardColor,
-          borderRadius: const BorderRadius.vertical(
-            top: Radius.circular(AppRadius.l),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: SafeArea(
-            top: false,
-            bottom: false,
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(
-                AppSpace.m,
-                AppSpace.s,
-                AppSpace.m,
-                AppSpace.m + bottomInset,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Center(child: _SheetHandle()),
-                  const SizedBox(height: AppSpace.s),
-                  _PreviewHeader(
-                    file: widget.file,
-                    sizeLabel: widget.sizeLabel,
-                    selected: _selected,
-                    onSelected: _setSelected,
-                  ),
-                  const SizedBox(height: AppSpace.m),
-                  Expanded(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(AppRadius.l),
-                      child: ColoredBox(
-                        color: theme.scaffoldBackgroundColor,
-                        child: _PreviewContent(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) unawaited(_close());
+      },
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final available = constraints.biggest;
+          return Align(
+            alignment: Alignment.bottomCenter,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOutCubic,
+              width: double.infinity,
+              height: available.height * _heightFactor(available),
+              child: Material(
+                color: theme.cardColor,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(AppRadius.l),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: SafeArea(
+                  top: false,
+                  bottom: false,
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      AppSpace.m,
+                      AppSpace.s,
+                      AppSpace.m,
+                      AppSpace.m + bottomInset,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Center(child: _SheetHandle()),
+                        const SizedBox(height: AppSpace.s),
+                        _PreviewHeader(
                           file: widget.file,
-                          preview: widget.preview,
-                          onAspectRatio: _setMediaAspectRatio,
-                          audioPlaybackService: widget.audioPlaybackService,
+                          sizeLabel: widget.sizeLabel,
+                          selected: _selected,
+                          onSelected: _setSelected,
+                          onClose: () => unawaited(_close()),
                         ),
-                      ),
+                        const SizedBox(height: AppSpace.m),
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(AppRadius.l),
+                            child: ColoredBox(
+                              color: theme.scaffoldBackgroundColor,
+                              child: _closing
+                                  ? const SizedBox.expand()
+                                  : _PreviewContent(
+                                      file: widget.file,
+                                      preview: widget.preview,
+                                      onAspectRatio: _setMediaAspectRatio,
+                                      audioPlaybackService:
+                                          widget.audioPlaybackService,
+                                    ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
+                ),
               ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -152,12 +191,14 @@ class _PreviewHeader extends StatelessWidget {
     required this.sizeLabel,
     required this.selected,
     required this.onSelected,
+    required this.onClose,
   });
 
   final RemoteFileEntry file;
   final String sizeLabel;
   final bool selected;
   final ValueChanged<bool?> onSelected;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -210,7 +251,7 @@ class _PreviewHeader extends StatelessWidget {
           child: Checkbox(value: selected, onChanged: onSelected),
         ),
         IconButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: onClose,
           tooltip: 'Cerrar',
           icon: const Icon(Icons.close_rounded),
         ),
@@ -256,11 +297,19 @@ class _PreviewContent extends StatelessWidget {
     if (extension == 'pdf') {
       return _PdfPreview(localPath: preview.localPath);
     }
-    if (extension == 'docx' ||
-        const {'txt', 'csv', 'json', 'xml', 'log'}.contains(extension)) {
-      return _DocxPreview(
+    if (OfficeDocumentPreview.supportedExtensions.contains(extension)) {
+      return OfficeDocumentPreview(
+        path: preview.localPath,
+        name: file.name,
+        extension: extension,
+        fallbackText: preview.documentText,
+      );
+    }
+    if (const {'txt', 'json', 'xml', 'log'}.contains(extension)) {
+      return DocumentPreviewContent(
         content:
             preview.documentText ?? 'No se encontró texto previsualizable.',
+        extension: extension,
       );
     }
     return const _PreviewFailure(
@@ -328,89 +377,6 @@ class _ImagePreviewState extends State<_ImagePreview> {
       ),
     ),
   );
-}
-
-class _DocxPreview extends StatelessWidget {
-  const _DocxPreview({required this.content});
-
-  final String content;
-
-  @override
-  Widget build(BuildContext context) {
-    final pages = _paginate(content);
-    return ColoredBox(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      child: ListView.separated(
-        padding: const EdgeInsets.all(AppSpace.m),
-        itemCount: pages.length,
-        separatorBuilder: (context, index) =>
-            const SizedBox(height: AppSpace.m),
-        itemBuilder: (context, index) => Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
-            child: LayoutBuilder(
-              builder: (context, constraints) => Container(
-                constraints: BoxConstraints(
-                  minHeight: constraints.maxWidth * 1.32,
-                ),
-                padding: const EdgeInsets.all(AppSpace.l),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(AppRadius.s),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: .18),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      'Página ${index + 1}',
-                      textAlign: TextAlign.right,
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: Colors.black54,
-                      ),
-                    ),
-                    const SizedBox(height: AppSpace.m),
-                    SelectableText(
-                      pages[index],
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Colors.black87,
-                        height: 1.55,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  List<String> _paginate(String source) {
-    const targetCharacters = 2400;
-    final pages = <String>[];
-    for (final explicitPage in source.split('\f')) {
-      final buffer = StringBuffer();
-      for (final paragraph in explicitPage.split('\n\n')) {
-        if (buffer.length > 0 &&
-            buffer.length + paragraph.length > targetCharacters) {
-          pages.add(buffer.toString().trim());
-          buffer.clear();
-        }
-        if (buffer.length > 0) buffer.write('\n\n');
-        buffer.write(paragraph);
-      }
-      if (buffer.length > 0) pages.add(buffer.toString().trim());
-    }
-    return pages.isEmpty ? ['Documento sin contenido visible.'] : pages;
-  }
 }
 
 class _PdfPreview extends StatefulWidget {

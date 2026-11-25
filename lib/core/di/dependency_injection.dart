@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:file_cast/core/adb/adb_client.dart';
 import 'package:file_cast/core/config/config.dart';
 import 'package:file_cast/core/network/http.dart';
@@ -197,7 +199,12 @@ class DependencyInjection {
         create: (_) => JustAudioPlaybackService(),
       ),
       Provider<RemoteDocumentPreviewService>(
-        create: (_) => const RemoteDocumentPreviewService(),
+        lazy: false,
+        create: (_) {
+          const service = RemoteDocumentPreviewService();
+          unawaited(service.purgeOfficeViewerCache().catchError((Object _) {}));
+          return service;
+        },
       ),
       ProxyProvider4<
         Http,

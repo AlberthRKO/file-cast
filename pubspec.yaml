@@ -8,7 +8,9 @@ environment:
   flutter: ^3.35.0
 
 dependencies:
-  archive: 4.2.0
+  # image 4.11.1 (requerido por pdfrx_engine) usa ZLibDecoder.decodeLazy,
+  # disponible a partir de archive 4.4.0.
+  archive: 4.4.0
   connectivity_plus: ^7.0.0
   crypto: ^3.0.6
   cryptography: ^2.9.0
@@ -20,6 +22,9 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   flutter_local_notifications: ^18.0.1
+  # 6.1.5 recursa en AndroidInternalStoragePathHandler.toMap al abrir Office.
+  # 6.2.0-beta.3 incluye la corrección y conserva soporte para iOS 14.
+  flutter_inappwebview: 6.2.0-beta.3
   flutter_pdfview: 1.4.5
   flutter_secure_storage: ^10.0.0
   flutter_svg: ^2.2.3
@@ -29,6 +34,7 @@ dependencies:
   http: ^1.6.0
   intl: ^0.20.2
   image_picker: ^1.1.2
+  image: 4.11.1
   just_audio: 0.10.6
   latlong2: ^0.9.1
   json_annotation: ^4.9.0
@@ -37,6 +43,9 @@ dependencies:
   # Alineado con el reproductor media_kit incluido para Android.
   media_kit_video: 2.0.1
   modal_bottom_sheet: ^3.0.0
+  offline_document_viewer:
+    path: third_party/offline_document_viewer
+  path_provider: ^2.1.6
   provider: ^6.1.5+1
   permission_handler: ^11.4.0
   searchfield: ^0.9.9
@@ -78,6 +87,7 @@ flutter:
     - assets/images/illustrations/
     # common assets
     - assets/common/logos/
+    - docs/OFFICE_VIEWER_THIRD_PARTY_NOTICES.md
 
     # cliente1
     - assets/cliente1/logos/
