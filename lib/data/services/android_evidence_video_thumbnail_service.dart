@@ -36,31 +36,42 @@ final class AndroidEvidenceVideoThumbnailService
     required String videoPath,
     required String cacheKey,
   }) {
-    final extraction = _lastExtraction.then(
-      (_) => _createThumbnail(videoPath, cacheKey),
-    );
-    _lastExtraction = extraction.then<void>(
-      (_) {},
-      onError: (Object _, StackTrace __) {},
-    );
-    return extraction;
+    final ready = Completer<String>();
+    _lastExtraction = _lastExtraction.then((_) async {
+      try {
+        final path = await _createThumbnail(
+          videoPath,
+          cacheKey,
+          onReady: (path) {
+            if (!ready.isCompleted) ready.complete(path);
+          },
+        );
+        if (!ready.isCompleted) ready.complete(path);
+      } on Object catch (error, stackTrace) {
+        if (!ready.isCompleted) ready.completeError(error, stackTrace);
+      }
+    });
+    return ready.future;
   }
 
-  Future<String> _createThumbnail(String videoPath, String cacheKey) async {
+  Future<String> _createThumbnail(
+    String videoPath,
+    String cacheKey, {
+    required void Function(String) onReady,
+  }) async {
     final cached = _softwareCacheFile(cacheKey);
     if (await cached.exists() && await cached.length() > 0) {
       return cached.path;
     }
-    // Los MOV de iPhone pueden contener Dolby Vision/HEVC que el extractor OEM
-    // no decodifica, aunque MediaKit sí pueda reproducirlos.
-    if (videoPath.toLowerCase().endsWith('.mov') ||
-        _nativeUnsupportedKeys.contains(cacheKey)) {
-      return _extractWithSoftwareDecoder(videoPath, cacheKey);
+    // Algunos MOV sí son compatibles con el extractor nativo y se resuelven
+    // mucho más rápido. Solo omitirlo si ya falló para esta evidencia.
+    if (_nativeUnsupportedKeys.contains(cacheKey)) {
+      return _extractWithSoftwareDecoder(videoPath, cacheKey, onReady: onReady);
     }
     final nativeUnavailableUntil = _nativeUnavailableUntil;
     if (nativeUnavailableUntil != null &&
         DateTime.now().isBefore(nativeUnavailableUntil)) {
-      return _extractWithSoftwareDecoder(videoPath, cacheKey);
+      return _extractWithSoftwareDecoder(videoPath, cacheKey, onReady: onReady);
     }
     try {
       return await _adbClient
@@ -80,7 +91,7 @@ final class AndroidEvidenceVideoThumbnailService
         );
       }
       // Algunos extractores OEM no pueden leer cuadros que libmpv sí reproduce.
-      return _extractWithSoftwareDecoder(videoPath, cacheKey);
+      return _extractWithSoftwareDecoder(videoPath, cacheKey, onReady: onReady);
     }
   }
 
@@ -93,8 +104,9 @@ final class AndroidEvidenceVideoThumbnailService
 
   Future<String> _extractWithSoftwareDecoder(
     String videoPath,
-    String cacheKey,
-  ) async {
+    String cacheKey, {
+    required void Function(String) onReady,
+  }) async {
     final cached = _softwareCacheFile(cacheKey);
     if (await cached.exists() && await cached.length() > 0) {
       return cached.path;
@@ -111,35 +123,54 @@ final class AndroidEvidenceVideoThumbnailService
       player,
       configuration: const VideoControllerConfiguration(hwdec: 'no'),
     );
-    final temporary = File('${cached.path}.part');
+    // Cada intento usa un temporal distinto antes de instalar el JPEG en caché.
+    final temporary = File(
+      '${cached.path}.${DateTime.now().microsecondsSinceEpoch}.part.jpg',
+    );
     try {
       await controller.platform.future.timeout(const Duration(seconds: 15));
       await player
           .open(Media(videoPath), play: true)
           .timeout(const Duration(seconds: 20));
-      // videoParams y waitUntilFirstFrameRendered pueden completarse antes de
-      // tener un cuadro visible en Android. screenshot devuelve null hasta
-      // que libmpv haya decodificado un frame real.
-      final deadline = DateTime.now().add(const Duration(seconds: 45));
+      if (player.state.position < const Duration(milliseconds: 250)) {
+        try {
+          await player.stream.position
+              .firstWhere(
+                (position) => position >= const Duration(milliseconds: 250),
+              )
+              .timeout(const Duration(seconds: 30));
+        } on Object catch (error) {
+          // Algunos contenedores no publican posición antes del primer frame.
+          if (kDebugMode) debugPrint('MediaKit thumbnail progress: $error');
+        }
+      }
+      await cached.parent.create(recursive: true);
       Uint8List? jpeg;
-      while (DateTime.now().isBefore(deadline)) {
+      for (var attempt = 0; attempt < 3; attempt++) {
         try {
           jpeg = await player
               .screenshot(format: 'image/jpeg')
-              .timeout(const Duration(seconds: 5));
+              .timeout(const Duration(seconds: 25));
+        } on TimeoutException {
+          // La captura original puede seguir ejecutándose: no lanzar otra.
+          rethrow;
         } on Object catch (error) {
           if (kDebugMode) debugPrint('MediaKit thumbnail: $error');
         }
         if (jpeg != null && jpeg.isNotEmpty) break;
-        await Future<void>.delayed(const Duration(milliseconds: 500));
+        if (attempt < 2) {
+          await Future<void>.delayed(const Duration(seconds: 1));
+        }
       }
       if (jpeg == null || jpeg.isEmpty) {
         throw StateError('MediaKit no entregó un cuadro del video.');
       }
 
-      await cached.parent.create(recursive: true);
       await temporary.writeAsBytes(jpeg, flush: true);
       await temporary.rename(cached.path);
+      // La tarjeta ya puede mostrar el JPEG. El servicio conserva la cola
+      // mientras MediaKit libera el decoder y la textura en finally.
+      onReady(cached.path);
       return cached.path;
     } finally {
       try {

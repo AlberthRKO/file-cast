@@ -82,6 +82,21 @@ class _EvidenceVideoThumbnailState extends State<EvidenceVideoThumbnail> {
 
   Future<void> _prepareWhenScheduled(int generation) async {
     if (!mounted || generation != _generation) return;
+    // Otra tarjeta pudo generar la miniatura mientras esta esperaba en cola.
+    // Evita volver a descifrar y decodificar la misma evidencia.
+    try {
+      final cachedThumbnail = await widget.thumbnailService.findCachedThumbnail(
+        cacheKey: widget.evidenceId,
+      );
+      if (cachedThumbnail != null && await File(cachedThumbnail).exists()) {
+        if (mounted && generation == _generation) {
+          setState(() => _thumbnailPath = cachedThumbnail);
+        }
+        return;
+      }
+    } on Object {
+      // Si falla la caché, todavía se puede crear desde la copia local.
+    }
     final encryptedPath = widget.localPath;
     if (encryptedPath == null || !await File(encryptedPath).exists()) return;
 

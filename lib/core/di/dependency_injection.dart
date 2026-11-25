@@ -26,6 +26,7 @@ import 'package:file_cast/data/services/evidence_sync_service.dart';
 import 'package:file_cast/data/services/auth_session_service.dart';
 import 'package:file_cast/data/services/local_evidence_database_service.dart';
 import 'package:file_cast/data/services/location_service.dart';
+import 'package:file_cast/data/services/persisted_evidence_video_thumbnail_service.dart';
 import 'package:file_cast/data/services/remote_document_preview_service.dart';
 import 'package:file_cast/data/services/requisition_service.dart';
 import 'package:file_cast/data/services/requisition_detail_service.dart';
@@ -316,11 +317,14 @@ class DependencyInjection {
       ),
       Provider<AdbClient>(create: (_) => AdbClient()),
       Provider<EvidenceVideoThumbnailService>(
-        create: (context) => defaultTargetPlatform == TargetPlatform.iOS
-            ? IosEvidenceVideoThumbnailService()
-            : AndroidEvidenceVideoThumbnailService(
-                adbClient: context.read<AdbClient>(),
-              ),
+        create: (context) => PersistedEvidenceVideoThumbnailService(
+          platformService: defaultTargetPlatform == TargetPlatform.iOS
+              ? IosEvidenceVideoThumbnailService()
+              : AndroidEvidenceVideoThumbnailService(
+                  adbClient: context.read<AdbClient>(),
+                ),
+          database: context.read<LocalEvidenceDatabaseService>(),
+        ),
       ),
       ProxyProvider<AdbClient, AndroidAcquisitionPlatformService>(
         update: (_, adbClient, previousService) =>

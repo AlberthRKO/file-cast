@@ -1006,6 +1006,16 @@ class AndroidAcquisitionPlatformService {
           );
     final rawFiles = result['files'];
     if (rawFiles is! List || rawFiles.isEmpty || rawFiles.first is! Map) {
+      final failures = result['failures'];
+      if (failures is List && failures.isNotEmpty && failures.first is Map) {
+        final message = (failures.first as Map)['message']?.toString().trim();
+        if (message != null && message.isNotEmpty) {
+          throw StateError(message);
+        }
+      }
+      if (result['cancelled'] == true) {
+        throw StateError('Se canceló la copia para la vista previa.');
+      }
       throw StateError('No se pudo preparar la vista previa.');
     }
     final fileMap = (rawFiles.first as Map).map(

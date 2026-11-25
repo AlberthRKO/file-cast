@@ -194,15 +194,34 @@ internal class MtpTransferBridge(private val context: Context) {
                     onProgress(mapOf("state" to "transferring", "fileName" to fileName,
                         "fileIndex" to index, "fileCount" to entries.size, "fileBytes" to 0L,
                         "fileTotalBytes" to size, "batchBytes" to transferred, "batchTotalBytes" to total))
-                    val ok = synchronized(lock) {
-                        val mtp = device ?: error("El dispositivo fue desconectado")
-                        ParcelFileDescriptor.open(part, ParcelFileDescriptor.MODE_CREATE or
-                            ParcelFileDescriptor.MODE_WRITE_ONLY or ParcelFileDescriptor.MODE_TRUNCATE).use { descriptor ->
-                            mtp.importFile(handle, descriptor)
+                    // Algunos dispositivos iOS tardan en entregar el objeto
+                    // después de enumerarlo. Reintentar solo la copia de vista
+                    // previa; nunca aceptar una descarga parcial.
+                    val attempts = if (previewOnly) 3 else 1
+                    var copyError: Exception? = null
+                    for (attempt in 1..attempts) {
+                        if (cancelled.get()) break
+                        try {
+                            val ok = synchronized(lock) {
+                                val mtp = device ?: error("El dispositivo fue desconectado")
+                                ParcelFileDescriptor.open(part, ParcelFileDescriptor.MODE_CREATE or
+                                    ParcelFileDescriptor.MODE_WRITE_ONLY or ParcelFileDescriptor.MODE_TRUNCATE).use { descriptor ->
+                                    mtp.importFile(handle, descriptor)
+                                }
+                            }
+                            check(ok && !cancelled.get()) { "No se completó la copia MTP" }
+                            check(part.length() == size) { "El tamaño copiado no coincide con el objeto MTP" }
+                            copyError = null
+                            break
+                        } catch (error: Exception) {
+                            copyError = error
+                            part.delete()
+                            if (attempt == attempts || cancelled.get()) break
+                            Thread.sleep(400L * attempt)
                         }
                     }
-                    check(ok && !cancelled.get()) { "No se completó la copia MTP" }
-                    check(part.length() == size) { "El tamaño copiado no coincide con el objeto MTP" }
+                    if (cancelled.get()) error("Se canceló la copia MTP")
+                    if (copyError != null) throw copyError
                     java.io.FileOutputStream(part, true).use { it.fd.sync() }
                     val digest = MessageDigest.getInstance("SHA-256")
                     FileInputStream(part).use { input ->

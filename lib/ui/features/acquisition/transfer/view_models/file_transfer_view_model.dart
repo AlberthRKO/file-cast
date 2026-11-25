@@ -550,7 +550,7 @@ class FileTransferViewModel extends ChangeNotifier {
   }
 
   String _friendlyError(Object error) {
-    final text = error.toString();
+    final text = error.toString().replaceFirst('Bad state: ', '').trim();
     if (_isDisconnectedError(error))
       return 'Se perdió la conexión con el dispositivo objetivo.';
     if (text.contains('TRANSFER_BUSY'))

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_cast/domain/services/evidence_preview_service.dart';
@@ -35,6 +36,31 @@ class _EvidencePreviewSheetState extends State<EvidencePreviewSheet> {
   late Future<PreparedEvidencePreview> _previewFuture;
   PreparedEvidencePreview? _preview;
   int _preparationGeneration = 0;
+  double? _mediaAspectRatio;
+
+  void _setMediaAspectRatio(double value) {
+    if (!value.isFinite || value <= 0) return;
+    if (_mediaAspectRatio != null && (_mediaAspectRatio! - value).abs() < .01) {
+      return;
+    }
+    setState(() => _mediaAspectRatio = value);
+  }
+
+  double _heightFactor(Size available) {
+    if (_isPdf(widget.evidence) ||
+        widget.evidence.type == RequisitionEvidenceType.document) {
+      return .9;
+    }
+    if (widget.evidence.type == RequisitionEvidenceType.audio) {
+      return available.height < 480 ? .86 : .58;
+    }
+    final aspectRatio = _mediaAspectRatio;
+    if (aspectRatio == null) return .72;
+    final contentWidth = math.min(available.width - AppSpace.m * 2, 840.0);
+    final desiredHeight = contentWidth / aspectRatio + 180;
+    final minimum = available.height < 480 ? .72 : .32;
+    return (desiredHeight / available.height).clamp(minimum, .9).toDouble();
+  }
 
   @override
   void initState() {
@@ -78,63 +104,82 @@ class _EvidencePreviewSheetState extends State<EvidencePreviewSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
-    return Material(
-      color: theme.cardColor,
-      borderRadius: BorderRadius.circular(24),
-      clipBehavior: Clip.antiAlias,
-      child: SafeArea(
-        top: false,
-        bottom: false,
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(
-            AppSpace.m,
-            AppSpace.s,
-            AppSpace.m,
-            AppSpace.m + bottomInset,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final available = constraints.biggest;
+        return Align(
+          alignment: Alignment.bottomCenter,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            width: double.infinity,
+            height: available.height * _heightFactor(available),
+            child: _buildSheet(theme, bottomInset),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (widget.showHandle) const Center(child: _PreviewSheetHandle()),
-              _PreviewHeader(
-                evidence: widget.evidence,
-                onClose: () => Navigator.of(context).pop(),
-              ),
-              const SizedBox(height: AppSpace.s),
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(AppRadius.m),
-                  child: ColoredBox(
-                    color: theme.scaffoldBackgroundColor,
-                    child: FutureBuilder<PreparedEvidencePreview>(
-                      future: _previewFuture,
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState != ConnectionState.done) {
-                          return const _PreviewLoading();
-                        }
-                        if (snapshot.hasError || !snapshot.hasData) {
-                          return _PreviewError(
-                            message: _previewErrorMessage(snapshot.error),
-                            onRetry: _retryPreparation,
-                          );
-                        }
-                        _preview ??= snapshot.data;
-                        return _PreviewContent(
-                          evidence: widget.evidence,
-                          preview: snapshot.data!,
-                          audioPlaybackService: widget.audioPlaybackService,
+        );
+      },
+    );
+  }
+
+  Widget _buildSheet(ThemeData theme, double bottomInset) => Material(
+    color: theme.cardColor,
+    borderRadius: const BorderRadius.vertical(
+      top: Radius.circular(AppRadius.l),
+    ),
+    clipBehavior: Clip.antiAlias,
+    child: SafeArea(
+      top: false,
+      bottom: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          AppSpace.m,
+          AppSpace.s,
+          AppSpace.m,
+          AppSpace.m + bottomInset,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (widget.showHandle) const Center(child: _PreviewSheetHandle()),
+            _PreviewHeader(
+              evidence: widget.evidence,
+              onClose: () => Navigator.of(context).pop(),
+            ),
+            const SizedBox(height: AppSpace.s),
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(AppRadius.m),
+                child: ColoredBox(
+                  color: theme.scaffoldBackgroundColor,
+                  child: FutureBuilder<PreparedEvidencePreview>(
+                    future: _previewFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState != ConnectionState.done) {
+                        return const _PreviewLoading();
+                      }
+                      if (snapshot.hasError || !snapshot.hasData) {
+                        return _PreviewError(
+                          message: _previewErrorMessage(snapshot.error),
+                          onRetry: _retryPreparation,
                         );
-                      },
-                    ),
+                      }
+                      _preview ??= snapshot.data;
+                      return _PreviewContent(
+                        evidence: widget.evidence,
+                        preview: snapshot.data!,
+                        audioPlaybackService: widget.audioPlaybackService,
+                        onAspectRatio: _setMediaAspectRatio,
+                      );
+                    },
                   ),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  );
 }
 
 class _PreviewHeader extends StatelessWidget {
@@ -200,11 +245,13 @@ class _PreviewContent extends StatelessWidget {
     required this.evidence,
     required this.preview,
     required this.audioPlaybackService,
+    required this.onAspectRatio,
   });
 
   final RequisitionEvidence evidence;
   final PreparedEvidencePreview preview;
   final AudioPlaybackService audioPlaybackService;
+  final ValueChanged<double> onAspectRatio;
 
   @override
   Widget build(BuildContext context) {
@@ -224,7 +271,10 @@ class _PreviewContent extends StatelessWidget {
       );
     }
     if (evidence.type == RequisitionEvidenceType.video) {
-      return VideoPreviewPlayer(path: preview.path);
+      return VideoPreviewPlayer(
+        path: preview.path,
+        onAspectRatio: onAspectRatio,
+      );
     }
     if (evidence.type == RequisitionEvidenceType.audio) {
       return AudioPreviewPlayer(

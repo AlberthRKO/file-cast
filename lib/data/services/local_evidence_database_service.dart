@@ -113,7 +113,7 @@ class LocalEvidenceDatabaseService {
       return await openDatabase(
         path,
         password: key,
-        version: 10,
+        version: 11,
         onCreate: (db, _) async {
           await db.execute('''
             CREATE TABLE evidencias_locales (
@@ -173,6 +173,7 @@ class LocalEvidenceDatabaseService {
           ''');
           await _createOfflineTables(db);
           await _createImageThumbnailCache(db);
+          await _createVideoThumbnailCache(db);
         },
         onUpgrade: (db, oldVersion, _) async {
           if (oldVersion < 2) {
@@ -238,6 +239,7 @@ class LocalEvidenceDatabaseService {
             ''');
           }
           if (oldVersion < 10) await _createImageThumbnailCache(db);
+          if (oldVersion < 11) await _createVideoThumbnailCache(db);
         },
       );
     } on Object catch (error, stackTrace) {
@@ -321,6 +323,23 @@ class LocalEvidenceDatabaseService {
     ''');
   }
 
+  Future<void> _createVideoThumbnailCache(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS video_thumbnail_cache (
+        account_id TEXT NOT NULL,
+        cache_key TEXT NOT NULL,
+        jpeg_bytes BLOB NOT NULL,
+        byte_length INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (account_id, cache_key)
+      )
+    ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS video_thumbnail_cache_age_idx
+      ON video_thumbnail_cache(account_id, created_at)
+    ''');
+  }
+
   Future<String> _requiredAccountId() async {
     final accountId = await _storage.getAuthenticatedAccountId();
     if (accountId == null || accountId.isEmpty) {
@@ -332,6 +351,67 @@ class LocalEvidenceDatabaseService {
   }
 
   Future<String> currentAccountId() => _requiredAccountId();
+
+  Future<Uint8List?> readVideoThumbnail({
+    required String accountId,
+    required String cacheKey,
+  }) async {
+    final rows = await (await database).query(
+      'video_thumbnail_cache',
+      columns: ['jpeg_bytes'],
+      where: 'account_id = ? AND cache_key = ?',
+      whereArgs: [accountId, cacheKey],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final value = rows.first['jpeg_bytes'];
+    if (value is Uint8List) return value;
+    return value is List<int> ? Uint8List.fromList(value) : null;
+  }
+
+  Future<void> saveVideoThumbnail({
+    required String accountId,
+    required String cacheKey,
+    required Uint8List bytes,
+  }) async {
+    const maximumBytes = 80 * 1024 * 1024;
+    const maximumItems = 256;
+    if (bytes.isEmpty || bytes.lengthInBytes > 8 * 1024 * 1024) return;
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.insert(
+        'video_thumbnail_cache',
+        {
+          'account_id': accountId,
+          'cache_key': cacheKey,
+          'jpeg_bytes': bytes,
+          'byte_length': bytes.lengthInBytes,
+          'created_at': DateTime.now().toUtc().microsecondsSinceEpoch,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      final rows = await txn.query(
+        'video_thumbnail_cache',
+        columns: ['cache_key', 'byte_length'],
+        where: 'account_id = ?',
+        whereArgs: [accountId],
+        orderBy: 'created_at DESC',
+      );
+      var retainedBytes = 0;
+      for (var index = 0; index < rows.length; index++) {
+        final length = rows[index]['byte_length'] as int;
+        if (index < maximumItems && retainedBytes + length <= maximumBytes) {
+          retainedBytes += length;
+          continue;
+        }
+        await txn.delete(
+          'video_thumbnail_cache',
+          where: 'account_id = ? AND cache_key = ?',
+          whereArgs: [accountId, rows[index]['cache_key']],
+        );
+      }
+    });
+  }
 
   Future<Uint8List?> readImageThumbnail({
     required String accountId,

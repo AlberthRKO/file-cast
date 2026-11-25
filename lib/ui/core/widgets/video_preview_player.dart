@@ -34,6 +34,8 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
   Duration? _scrubPosition;
   bool _wasPlayingBeforeScrub = false;
   bool _isPriming = false;
+  bool _isInitialized = false;
+  double? _reportedAspectRatio;
   double _volume = 1;
   double _lastAudibleVolume = 1;
 
@@ -47,6 +49,7 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
   void didUpdateWidget(covariant VideoPreviewPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.path != widget.path) {
+      _adapter.state.removeListener(_reportAspectRatio);
       unawaited(_adapter.dispose());
       _scrubPosition = null;
       _wasPlayingBeforeScrub = false;
@@ -59,10 +62,31 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
   void _replaceAdapter() {
     final useMediaKit = Platform.isAndroid || Platform.isIOS;
     _isPriming = useMediaKit;
+    _isInitialized = false;
+    _reportedAspectRatio = null;
     _adapter = useMediaKit
         ? _MediaKitVideoPlaybackAdapter(widget.path)
         : _VideoPlayerPlaybackAdapter(widget.path);
+    _adapter.state.addListener(_reportAspectRatio);
     _initialization = _initialize(_adapter);
+  }
+
+  void _reportAspectRatio() {
+    if (!_isInitialized || widget.onAspectRatio == null) return;
+    final adapter = _adapter;
+    final ratio = adapter.state.value.aspectRatio;
+    if (!ratio.isFinite ||
+        ratio <= 0 ||
+        (_reportedAspectRatio != null &&
+            (_reportedAspectRatio! - ratio).abs() < .01)) {
+      return;
+    }
+    _reportedAspectRatio = ratio;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && identical(_adapter, adapter)) {
+        widget.onAspectRatio?.call(ratio);
+      }
+    });
   }
 
   Future<void> _initialize(_VideoPlaybackAdapter adapter) async {
@@ -70,20 +94,14 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
       await adapter.initialize();
     } on TimeoutException {
       throw StateError(
-        'El video tardó demasiado en abrirse. Puede estar incompleto o usar '
-        'un formato no compatible.',
+        'El reproductor tardó demasiado en preparar el video en este '
+        'dispositivo. Cierra la vista previa e inténtalo de nuevo.',
       );
     }
 
     if (!mounted || !identical(_adapter, adapter)) return;
-    final aspectRatio = adapter.state.value.aspectRatio;
-    if (widget.onAspectRatio != null &&
-        aspectRatio.isFinite &&
-        aspectRatio > 0) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) widget.onAspectRatio!(aspectRatio);
-      });
-    }
+    _isInitialized = true;
+    _reportAspectRatio();
     if (adapter is _MediaKitVideoPlaybackAdapter) {
       // Prepara un cuadro con la textura montada y el audio silenciado.
       // Al terminar, el video debe quedar pausado en el inicio.
@@ -99,6 +117,10 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
     _MediaKitVideoPlaybackAdapter adapter,
   ) async {
     try {
+      // MediaKit abre el archivo pausado; iniciar la decodificación solo
+      // después de montar la textura evita bloquear la apertura en equipos
+      // con decodificación por software lenta.
+      await adapter.play().timeout(const Duration(seconds: 15));
       await adapter.waitForPlaybackProgress().timeout(
         const Duration(seconds: 45),
       );
@@ -111,6 +133,12 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
     try {
       await adapter.pause().timeout(const Duration(seconds: 10));
       await adapter.seek(Duration.zero).timeout(const Duration(seconds: 10));
+      try {
+        await adapter.waitForStartFrame().timeout(const Duration(seconds: 3));
+      } on Object catch (error) {
+        // No bloquear Play si el decoder no emite el evento de posición cero.
+        if (kDebugMode) debugPrint('VideoPreviewPlayer start frame: $error');
+      }
       await adapter.setVolume(1).timeout(const Duration(seconds: 10));
     } on Object {
       if (!mounted || !identical(_adapter, adapter)) return;
@@ -123,6 +151,7 @@ class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
 
   @override
   void dispose() {
+    _adapter.state.removeListener(_reportAspectRatio);
     unawaited(_adapter.dispose());
     super.dispose();
   }
@@ -559,9 +588,9 @@ class _MediaKitVideoPlaybackAdapter extends _VideoPlaybackAdapterBase {
       final target =
           duration > Duration.zero && duration < const Duration(seconds: 2)
           ? Duration(
-              milliseconds: (duration.inMilliseconds ~/ 2).clamp(1, 1000),
+              milliseconds: (duration.inMilliseconds ~/ 2).clamp(1, 250),
             )
-          : const Duration(seconds: 1);
+          : const Duration(milliseconds: 250);
       return position >= target;
     }
 
@@ -569,6 +598,21 @@ class _MediaKitVideoPlaybackAdapter extends _VideoPlaybackAdapterBase {
     await _player.stream.position.firstWhere(
       advanced,
     );
+  }
+
+  Future<void> waitForStartFrame() async {
+    if (state.value.position > const Duration(milliseconds: 100)) {
+      await _player.stream.position.firstWhere(
+        (position) => position <= const Duration(milliseconds: 100),
+      );
+    }
+    if (state.value.isBuffering) {
+      await _player.stream.buffering.firstWhere((buffering) => !buffering);
+    }
+    // El evento de posición precede al repintado de la textura en Android.
+    // Mantener la cubierta durante unos cuadros evita mostrar el salto de
+    // preparación antes de habilitar Play.
+    await Future<void>.delayed(const Duration(milliseconds: 250));
   }
 
   void reportStartupFailure() {
@@ -597,7 +641,11 @@ class _MediaKitVideoPlaybackAdapter extends _VideoPlaybackAdapterBase {
       const Duration(seconds: 20),
     );
     await _player.setVolume(0).timeout(const Duration(seconds: 5));
-    await _player.open(Media(_path)).timeout(const Duration(seconds: 30));
+    await _player
+        .open(Media(_path), play: false)
+        .timeout(
+          const Duration(seconds: 45),
+        );
     // Los metadatos de video pueden llegar antes del primer cuadro visible.
     if (state.value.error != null) {
       throw StateError(state.value.error!);
