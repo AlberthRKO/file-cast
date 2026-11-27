@@ -2,12 +2,23 @@ import 'package:file_cast/core/theme/colors.dart';
 import 'package:file_cast/ui/core/theme/app_text_theme.dart';
 import 'package:file_cast/ui/core/theme/brand_theme.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
+import 'package:file_cast/ui/core/theme/login_verification_theme.dart';
 import 'package:flutter/material.dart';
 
 ThemeData get dark => ThemeData(
   fontFamily: 'Montserrat',
   brightness: Brightness.dark,
   extensions: const [
+    LoginVerificationTheme(
+      background: fondoColorDark,
+      surface: colorCardDark,
+      primary: primaryDark,
+      primarySoft: editColor,
+      text: textDark,
+      mutedText: greyDark,
+      error: deleteColor,
+      telegram: primaryDark,
+    ),
     BrandTheme(
       headerGradientStart: Color(0xFF312C69),
       onDark: textWhite,

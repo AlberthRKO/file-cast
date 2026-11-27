@@ -4,6 +4,7 @@ class StorageKeys {
   static const String token = 'token';
   static const String refreshToken = 'refresh_token';
   static const String tokenExpiresAt = 'token_expires_at';
+  static const String trustedDeviceToken = 'trusted_device_token';
   static const String authenticatedUser = 'authenticated_user';
   static const String deviceId = 'file_cast_device_id_v1';
   static const String encryptionDeviceId = 'file_cast_encryption_device_id_v1';

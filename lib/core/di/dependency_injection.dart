@@ -25,7 +25,9 @@ import 'package:file_cast/data/services/evidence_image_thumbnail_service.dart';
 import 'package:file_cast/data/services/evidence_offline_sync_service.dart';
 import 'package:file_cast/data/services/evidence_preview_service.dart';
 import 'package:file_cast/data/services/evidence_sync_service.dart';
+import 'package:file_cast/data/services/auth_external_link_service.dart';
 import 'package:file_cast/data/services/auth_session_service.dart';
+import 'package:file_cast/data/services/auth_sms_code_service.dart';
 import 'package:file_cast/data/services/local_evidence_database_service.dart';
 import 'package:file_cast/data/services/location_service.dart';
 import 'package:file_cast/data/services/persisted_evidence_video_thumbnail_service.dart';
@@ -117,15 +119,30 @@ class DependencyInjection {
           baseUrl: Config.baseUrlAuth,
         ),
       ),
-      ProxyProvider2<
+      Provider<AuthExternalLinkService>(
+        create: (_) => AuthExternalLinkService(),
+      ),
+      Provider<AuthSmsCodeService>(create: (_) => AuthSmsCodeService()),
+      ProxyProvider4<
         AuthSessionService,
         ConnectivityRepository,
+        AuthExternalLinkService,
+        AuthSmsCodeService,
         AuthRepository
       >(
-        update: (_, sessionService, connectivity, previous) =>
-            RemoteAuthRepository(
+        update:
+            (
+              _,
+              sessionService,
+              connectivity,
+              externalLinkService,
+              smsCodeService,
+              previous,
+            ) => RemoteAuthRepository(
               sessionService: sessionService,
               connectivity: connectivity,
+              externalLinkService: externalLinkService,
+              smsCodeService: smsCodeService,
             ),
       ),
       ChangeNotifierProvider<AuthSessionController>(

@@ -6,6 +6,7 @@ import 'package:file_cast/ui/core/adaptive/adaptive_layout.dart';
 import 'package:file_cast/ui/core/feedback/app_feedback.dart';
 import 'package:file_cast/ui/features/auth/login/view_models/login_state.dart';
 import 'package:file_cast/ui/features/auth/login/view_models/login_view_model.dart';
+import 'package:file_cast/ui/features/auth/login/widgets/login_challenge.dart';
 import 'package:file_cast/ui/features/auth/login/widgets/login_layout.dart';
 import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart';
 import 'package:flutter/material.dart';
@@ -105,24 +106,40 @@ class _LoginViewState extends State<LoginView> {
 
   @override
   Widget build(BuildContext context) {
+    final state = _viewModel.state;
+    if (state.phase == LoginPhase.challenge && state.challenge != null) {
+      return LoginChallenge(
+        revision: state.challengeRevision,
+        challenge: state.challenge!,
+        errorMessage: state.errorMessage,
+        trustedDevice: state.trustedDevice,
+        sendingCode: state.sendingCode,
+        verifyingCode: state.verifyingCode,
+        onMediumSelected: _viewModel.sendCode,
+        onConfirm: _viewModel.confirmCode,
+        onTrustedDeviceChanged: _viewModel.setTrustedDevice,
+        onBack: _viewModel.cancelChallenge,
+        onOpenTelegram: _viewModel.openTelegram,
+        onListenForSmsCode: _viewModel.listenForSmsCode,
+        onStopSmsCodeListener: _viewModel.stopSmsCodeListener,
+      );
+    }
     return Scaffold(
       resizeToAvoidBottomInset: false,
       body: AdaptiveLayout(
-        builder: (context, window) {
-          return LoginLayout(
-            appName: Config.appName,
-            window: window,
-            state: _viewModel.state,
-            documentController: _documentController,
-            passwordController: _passwordController,
-            formKey: _formKey,
-            onDocumentChanged: _viewModel.updateDocument,
-            onPasswordChanged: _viewModel.updatePassword,
-            validateDocument: _viewModel.validateDocument,
-            validatePassword: _viewModel.validatePassword,
-            onSubmit: _submit,
-          );
-        },
+        builder: (context, window) => LoginLayout(
+          appName: Config.appName,
+          window: window,
+          state: state,
+          documentController: _documentController,
+          passwordController: _passwordController,
+          formKey: _formKey,
+          onDocumentChanged: _viewModel.updateDocument,
+          onPasswordChanged: _viewModel.updatePassword,
+          validateDocument: _viewModel.validateDocument,
+          validatePassword: _viewModel.validatePassword,
+          onSubmit: _submit,
+        ),
       ),
     );
   }

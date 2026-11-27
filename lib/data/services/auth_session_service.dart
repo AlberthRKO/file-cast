@@ -29,6 +29,8 @@ class AuthSessionService {
   static const _refreshPath = '/v1/auth/refresh-token';
   static const _logoutPath = '/v1/auth/logout';
   static const _mePath = '/v1/auth/me';
+  static const _sendCodePath = '/v1/2fa/generar';
+  static const _verifyCodePath = '/v1/auth/verificar-totp';
   static const _userAgent = 'FileCast';
 
   final http.Client _client;
@@ -75,7 +77,7 @@ class AuthSessionService {
     return accessToken;
   }
 
-  Future<UserModel> login({
+  Future<Object> login({
     required String numeroDocumento,
     required String password,
   }) async {
@@ -103,6 +105,10 @@ class AuthSessionService {
           'aplicacion': appMp,
         },
       );
+      if (_challengeData(body) != null) {
+        _debugLog('login.challenge');
+        return body as Map<String, dynamic>;
+      }
       await _persistTokenResponse(body);
 
       _debugLog('login.profile_request');
@@ -123,6 +129,66 @@ class AuthSessionService {
       await _storage.clearAuthSession();
       rethrow;
     }
+  }
+
+  Future<Map<String, dynamic>> sendLoginCode(int usuarioId, int medio) async {
+    final body = await _requestJson(
+      _sendCodePath,
+      method: 'POST',
+      body: {
+        'deviceId': await _getOrCreateDeviceId(),
+        'usuarioId': usuarioId,
+        'aplicacion': appMp,
+        'medio': medio,
+        'isLogin': true,
+      },
+    );
+    if (_challengeData(body) == null) {
+      throw const AuthSessionException(
+        message: 'No se recibió un desafío 2FA válido.',
+      );
+    }
+    return body as Map<String, dynamic>;
+  }
+
+  Future<UserModel> confirmLoginCode({
+    required String usuario,
+    required String code,
+    required bool trustedDevice,
+  }) async {
+    final otp = int.tryParse(code);
+    if (otp == null || code.length != 6) {
+      throw const AuthSessionException(
+        message: 'Ingresa un código de seis dígitos.',
+      );
+    }
+    final body = await _requestJson(
+      _verifyCodePath,
+      method: 'POST',
+      body: {
+        'numeroDocumento': usuario,
+        'deviceId': await _getOrCreateDeviceId(),
+        'aplicacion': appMp,
+        'otp': otp,
+        'dispositivoConfianza': trustedDevice,
+        'isLogin': true,
+      },
+    );
+    try {
+      await _persistTokenResponse(body);
+      final user = await _fetchCurrentUser();
+      await _persistAuthenticatedUser(user);
+      return user;
+    } catch (_) {
+      await _storage.clearAuthSession();
+      rethrow;
+    }
+  }
+
+  Map<String, dynamic>? _challengeData(dynamic body) {
+    final root = _mapValue(body);
+    final response = _mapValue(root?['response']);
+    return _mapValue(response?['data']);
   }
 
   Future<UserModel> restoreCurrentUser() async {
@@ -334,7 +400,13 @@ class AuthSessionService {
     dynamic body, {
     bool preserveUser = false,
   }) async {
-    final payload = _payload(body);
+    final root = _mapValue(body);
+    final response = _mapValue(root?['response']);
+    final payload =
+        response != null &&
+            _firstString([response['token'], response['accessToken']]) != null
+        ? response
+        : _payload(body);
     final accessToken = _firstString([
       payload['accessToken'],
       payload['token'],
@@ -350,6 +422,11 @@ class AuthSessionService {
     await _storage.saveToken(accessToken);
     if (refreshToken != null && refreshToken.isNotEmpty) {
       await _storage.saveRefreshToken(refreshToken);
+    }
+
+    final trustedToken = _firstString([payload['tokenDispositivoConfianza']]);
+    if (trustedToken != null) {
+      await _storage.saveTrustedDeviceToken(trustedToken);
     }
 
     final expiresAt = _firstString([payload['expiresAt']]);
@@ -426,11 +503,16 @@ class AuthSessionService {
   }) async {
     final uri = _uri(path);
     final deviceId = await _getOrCreateDeviceId();
+    final trustedToken = path == _loginPath
+        ? await _storage.getTrustedDeviceToken()
+        : null;
     final headers = <String, String>{
       'Accept': 'application/json',
       'user-agent': _userAgent,
       'x-aplicacion': appMp,
       'x-dispositivo-unico': deviceId,
+      if (trustedToken?.isNotEmpty == true)
+        'x-dispositivo-confianza': trustedToken!,
       if (body != null) 'Content-Type': 'application/json',
       if (accessToken != null && accessToken.isNotEmpty)
         'Authorization': 'Bearer $accessToken',
@@ -465,7 +547,7 @@ class AuthSessionService {
           'method': method,
           'url': uri.toString(),
           'statusCode': response.statusCode,
-          'body': _responseSummary(responseBody),
+          'body': _responseBodyForLog(responseBody),
         },
       );
 
@@ -643,7 +725,7 @@ class AuthSessionService {
     developer.log(
       jsonEncode(_valueForLog(payload)),
       name: 'FileCast.AuthSession',
-      error: error,
+      error: error == null ? null : _redactText(error.toString()),
       stackTrace: stackTrace,
     );
   }
@@ -673,6 +755,7 @@ class AuthSessionService {
     if (value is Iterable) {
       return value.map((item) => _valueForLog(item)).toList(growable: false);
     }
+    if (value is String) return _redactText(value);
     return value;
   }
 
@@ -683,44 +766,47 @@ class AuthSessionService {
         normalized.contains('token') ||
         normalized.contains('deviceid') ||
         normalized.contains('dispositivounico') ||
-        normalized.contains('numerodocumento');
+        normalized.contains('numerodocumento') ||
+        normalized.contains('otp') ||
+        normalized.contains('codigo') ||
+        normalized.contains('usuario') ||
+        normalized.contains('contacto') ||
+        normalized.contains('email') ||
+        normalized.contains('celular') ||
+        normalized.contains('telefono') ||
+        normalized.contains('phone') ||
+        normalized.contains('nombre') ||
+        normalized.contains('destino') ||
+        normalized.contains('challenge') ||
+        normalized.contains('desafio') ||
+        normalized.contains('sessionid') ||
+        normalized == 'url';
   }
 
   String _maskedSecret(String value) {
     if (value.isEmpty) return '(vacío)';
-    if (value.length <= 10) return '***';
-    return '${value.substring(0, 4)}...${value.substring(value.length - 3)}';
+    return '[redactado]';
   }
 
-  Map<String, dynamic> _responseSummary(dynamic value) {
-    if (value is Map) {
-      final map = Map<String, dynamic>.from(value);
-      final message = _messageFrom(value);
-      return {
-        'type': 'json_object',
-        'keys': map.keys.toList(growable: false),
-        if (message != null) 'message': message,
-      };
-    }
-    if (value is List) {
-      return {'type': 'json_array', 'length': value.length};
-    }
-    if (value is String) {
-      final preview = value.length > 160
-          ? '${value.substring(0, 160)}...'
-          : value;
-      return {
-        'type': 'text',
-        'length': value.length,
-        if (preview.isNotEmpty) 'preview': preview,
-      };
-    }
-    return {'type': value.runtimeType.toString()};
+  dynamic _responseBodyForLog(dynamic value) {
+    final safe = _valueForLog(value);
+    final encoded = jsonEncode(safe);
+    if (encoded.length <= 12000) return safe;
+    return {
+      'truncated': true,
+      'preview': encoded.substring(0, 12000),
+    };
   }
+
+  String _redactText(String value) => value
+      .replaceAll(RegExp(r'Bearer\s+\S+', caseSensitive: false), 'Bearer ***')
+      .replaceAll(RegExp(r'[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}'), '[correo]')
+      .replaceAll(RegExp(r'\b\d{6,}\b'), '[número]');
 
   String _safeErrorMessage(Object error) {
     final message = error.toString();
-    return message.length > 240 ? '${message.substring(0, 240)}...' : message;
+    final safe = _redactText(message);
+    return safe.length > 240 ? '${safe.substring(0, 240)}...' : safe;
   }
 }
 

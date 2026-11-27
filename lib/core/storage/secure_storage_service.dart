@@ -31,6 +31,11 @@ class SecureStorageService {
   Future<void> deleteTokenExpiresAt() =>
       _storage.delete(key: StorageKeys.tokenExpiresAt);
 
+  Future<String?> getTrustedDeviceToken() =>
+      _storage.read(key: StorageKeys.trustedDeviceToken);
+  Future<void> saveTrustedDeviceToken(String value) =>
+      _storage.write(key: StorageKeys.trustedDeviceToken, value: value);
+
   Future<String?> getAuthenticatedUser() =>
       _storage.read(key: StorageKeys.authenticatedUser);
 

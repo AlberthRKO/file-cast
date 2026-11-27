@@ -1,13 +1,24 @@
 import 'package:file_cast/core/errors/either.dart';
 import 'package:file_cast/core/errors/failures.dart';
 import 'package:file_cast/domain/entities/user_entity.dart';
+import 'package:file_cast/domain/models/auth_challenge.dart';
+import 'package:file_cast/domain/models/auth_login_result.dart';
 import 'package:file_cast/domain/repositories/auth_repository.dart';
 
 class InMemoryAuthRepository implements AuthRepository {
   UserEntity? _currentUser;
 
   @override
-  Future<Either<Failure, UserEntity>> login({
+  Future<bool> openTelegram(String? address) async => false;
+
+  @override
+  Future<String?> listenForLoginSmsCode() async => null;
+
+  @override
+  Future<void> stopLoginSmsCodeListener() async {}
+
+  @override
+  Future<Either<Failure, AuthLoginResult>> login({
     required String usuario,
     required String password,
   }) async {
@@ -23,8 +34,27 @@ class InMemoryAuthRepository implements AuthRepository {
     );
 
     _currentUser = user;
-    return Either<Failure, UserEntity>.right(user);
+    return Either<Failure, AuthLoginResult>.right(
+      AuthLoginResult.authenticated(user),
+    );
   }
+
+  @override
+  Future<Either<Failure, AuthChallenge>> sendLoginCode(
+    AuthChallenge challenge,
+    int medio,
+  ) async => const Either.left(
+    Failure.unknown(message: '2FA no disponible en modo demo.'),
+  );
+
+  @override
+  Future<Either<Failure, UserEntity>> confirmLoginCode({
+    required AuthChallenge challenge,
+    required String code,
+    required bool trustedDevice,
+  }) async => const Either.left(
+    Failure.unknown(message: '2FA no disponible en modo demo.'),
+  );
 
   @override
   Future<Either<Failure, void>> logout() async {

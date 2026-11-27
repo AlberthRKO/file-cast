@@ -1,6 +1,7 @@
 import 'package:file_cast/core/errors/either.dart';
 import 'package:file_cast/core/errors/failures.dart';
 import 'package:file_cast/domain/entities/user_entity.dart';
+import 'package:file_cast/domain/models/auth_login_result.dart';
 import 'package:file_cast/domain/repositories/auth_repository.dart';
 
 class LoginUseCase {
@@ -8,11 +9,10 @@ class LoginUseCase {
 
   final AuthRepository _repository;
 
-  Future<Either<Failure, UserEntity>> call({
+  Future<Either<Failure, AuthLoginResult>> call({
     required String usuario,
     required String password,
-  }) =>
-      _repository.login(usuario: usuario, password: password);
+  }) => _repository.login(usuario: usuario, password: password);
 }
 
 class LogoutUseCase {
