@@ -53,6 +53,15 @@ final class EvidencePhotoLibraryPickerPlugin: NSObject, FlutterPlugin, PHPickerV
   }
 
   func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    if call.method == "getInspectorDeviceName" {
+      var system = utsname()
+      uname(&system)
+      let identifier = withUnsafePointer(to: &system.machine) {
+        $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) }
+      }
+      result("\(UIDevice.current.model) (\(identifier))")
+      return
+    }
     guard call.method == "pickMedia" else {
       result(FlutterMethodNotImplemented)
       return
@@ -113,6 +122,7 @@ final class EvidencePhotoLibraryPickerPlugin: NSObject, FlutterPlugin, PHPickerV
         continue
       }
       let assetName = originalName(for: selection) ?? provider.suggestedName
+      let assetDates = photoLibraryDates(for: selection)
       group.enter()
       provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { temporary, error in
         var item: [String: Any]?
@@ -143,6 +153,12 @@ final class EvidencePhotoLibraryPickerPlugin: NSObject, FlutterPlugin, PHPickerV
               "path": destination.path,
               "size": byteLength,
             ]
+            if let registeredAt = assetDates.registeredAt {
+              item?["registeredOnDeviceAtMilliseconds"] = Int64(registeredAt.timeIntervalSince1970 * 1000)
+            }
+            if let capturedAt = assetDates.capturedAt {
+              item?["contentCapturedAtMilliseconds"] = Int64(capturedAt.timeIntervalSince1970 * 1000)
+            }
           } catch {
             try? FileManager.default.removeItem(at: destination)
           }
@@ -188,6 +204,21 @@ final class EvidencePhotoLibraryPickerPlugin: NSObject, FlutterPlugin, PHPickerV
       $0.type == .photo || $0.type == .video || $0.type == .fullSizePhoto || $0.type == .fullSizeVideo
     })?.originalFilename
     return filename?.isEmpty == false ? filename : nil
+  }
+
+  private func photoLibraryDates(for selection: PHPickerResult) -> (registeredAt: Date?, capturedAt: Date?) {
+    let authorization = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+    guard authorization == .authorized || authorization == .limited,
+      let identifier = selection.assetIdentifier,
+      let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject
+    else { return (nil, nil) }
+    let registeredAt: Date?
+    if #available(iOS 26.0, *) {
+      registeredAt = asset.addedDate
+    } else {
+      registeredAt = nil
+    }
+    return (registeredAt, asset.creationDate)
   }
 
   private func displayName(_ proposedName: String?, fileExtension: String) -> String {

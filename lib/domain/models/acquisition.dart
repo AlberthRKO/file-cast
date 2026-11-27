@@ -192,6 +192,8 @@ final class CapturedEvidence {
     required this.sha256,
     required this.createdAt,
     this.sourcePath,
+    this.sourceCreatedAt,
+    this.metadata,
     this.mimeType,
     this.encrypted = false,
     this.encryptionAlgorithm,
@@ -209,6 +211,8 @@ final class CapturedEvidence {
   final String sha256;
   final DateTime createdAt;
   final String? sourcePath;
+  final DateTime? sourceCreatedAt;
+  final Map<String, dynamic>? metadata;
   final String? mimeType;
   final bool encrypted;
   final String? encryptionAlgorithm;

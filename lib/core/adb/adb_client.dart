@@ -109,8 +109,8 @@ class AdbClient {
     }
   }
 
-  Future<void> connectMtp(String deviceName) async {
-    await _methodChannel.invokeMethod<bool>('connectMtp', {
+  Future<String?> connectMtp(String deviceName) async {
+    return _methodChannel.invokeMethod<String>('connectMtp', {
       'deviceName': deviceName,
     });
   }

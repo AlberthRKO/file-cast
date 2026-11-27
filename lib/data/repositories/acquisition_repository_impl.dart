@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:file_cast/data/services/android_acquisition_platform_service.dart';
 import 'package:file_cast/data/services/evidence_sync_service.dart';
+import 'package:file_cast/data/services/inspector_device_metadata_service.dart';
 import 'package:file_cast/data/services/remote_document_preview_service.dart';
 import 'package:file_cast/domain/models/acquisition.dart';
 import 'package:file_cast/domain/models/requisition_detail.dart';
@@ -13,15 +14,18 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
     required AndroidAcquisitionPlatformService platformService,
     required RequisitionDetailRepository detailRepository,
     required RemoteDocumentPreviewService documentPreviewService,
+    required InspectorDeviceMetadataService inspectorDevice,
     EvidenceSyncService? syncService,
   }) : _platformService = platformService,
        _detailRepository = detailRepository,
        _documentPreviewService = documentPreviewService,
+       _inspectorDevice = inspectorDevice,
        _syncService = syncService;
 
   final AndroidAcquisitionPlatformService _platformService;
   final RequisitionDetailRepository _detailRepository;
   final RemoteDocumentPreviewService _documentPreviewService;
+  final InspectorDeviceMetadataService _inspectorDevice;
   final EvidenceSyncService? _syncService;
   final Map<String, int> _subjectByDevice = {};
 
@@ -313,6 +317,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
     required RequisitionEvidenceType type,
     required List<int> subjectPersonIds,
   }) async {
+    final inspectorName = await _inspectorDevice.deviceName();
     final detail = await _detailRepository.addImportedEvidence(
       requisitionId: requisitionId,
       name: captured.name,
@@ -322,6 +327,9 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
       localPath: captured.localPath,
       sha256: captured.sha256,
       sourcePath: captured.sourcePath,
+      sourceCreatedAt: captured.sourceCreatedAt,
+      metadata: _withInspector(captured.metadata, inspectorName),
+      capturedAt: captured.createdAt,
       sessionId: sessionId,
       mimeType: captured.mimeType ?? _mimeTypeFor(type, captured.name),
       acquisitionMethod: type == RequisitionEvidenceType.image
@@ -405,6 +413,7 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
       files: files,
     );
     if (result.files.isNotEmpty) {
+      final inspectorName = await _inspectorDevice.deviceName();
       await _detailRepository.addImportedEvidenceBatch(
         requisitionId: requisitionId,
         evidence: result.files
@@ -417,6 +426,9 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
                 localPath: captured.localPath,
                 sha256: captured.sha256,
                 sourcePath: captured.sourcePath,
+                capturedAt: captured.createdAt,
+                sourceCreatedAt: captured.sourceCreatedAt,
+                metadata: _withInspector(captured.metadata, inspectorName),
                 sessionId: sessionId,
                 mimeType: _mimeTypeFor(
                   _evidenceType(captured.name),
@@ -432,6 +444,15 @@ class AcquisitionRepositoryImpl implements AcquisitionRepository {
     _triggerBackgroundSync();
     return result;
   }
+
+  Map<String, dynamic> _withInspector(
+    Map<String, dynamic>? metadata,
+    String? name,
+  ) => {
+    'version': 1,
+    ...?metadata,
+    if (name != null) 'inspectorDeviceName': name,
+  };
 
   @override
   Future<void> cancelFileTransfer() => _platformService.cancelFileTransfer();

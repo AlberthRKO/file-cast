@@ -20,6 +20,8 @@ class AndroidAcquisitionPlatformService {
   AcquisitionMirrorSession? _activeSession;
   AcquisitionMirrorSession? _restartableSingleSession;
   AcquisitionConnectionSession? _activeConnection;
+  DateTime? _singleRecordingStartedAt;
+  final Map<String, DateTime> _multiRecordingStartedAt = {};
   final Map<String, AcquisitionMirrorSession> _multiSessions = {};
   int? _latestVideoWidth;
   int? _latestVideoHeight;
@@ -149,7 +151,7 @@ class AndroidAcquisitionPlatformService {
     final session = AcquisitionMirrorSession(
       requisitionId: requisitionId,
       sessionId: sessionId,
-      deviceName: video['deviceName'] as String? ?? device.name,
+      deviceName: _activeConnection?.deviceName ?? device.name,
       usbDeviceId: device.id,
       textureId: textureId,
       controlStreamId: controlStreamId,
@@ -180,8 +182,9 @@ class AndroidAcquisitionPlatformService {
     _restartableSingleSession = null;
     _activeConnection = null;
     await _resetNativeSession();
+    String? connectedModel;
     if (device.supportsMtp && !device.supportsAdb) {
-      await _adbClient
+      connectedModel = await _adbClient
           .connectMtp(device.id)
           .timeout(const Duration(seconds: 95));
     } else {
@@ -190,11 +193,24 @@ class AndroidAcquisitionPlatformService {
           .timeout(const Duration(seconds: 45));
       if (connection == null)
         throw StateError('ADB no confirmó la conexión con el dispositivo.');
+      try {
+        final refreshed = await getDevices();
+        for (final candidate in refreshed) {
+          if (candidate.id == device.id) {
+            connectedModel = candidate.name;
+            break;
+          }
+        }
+      } on PlatformException {
+        // La conexión ADB ya está activa; el descriptor USB es opcional.
+      }
     }
     final session = AcquisitionConnectionSession(
       requisitionId: requisitionId,
       sessionId: sessionId,
-      deviceName: device.name,
+      deviceName: connectedModel?.trim().isNotEmpty == true
+          ? connectedModel!
+          : device.name,
       usbDeviceId: device.id,
       transport: device.supportsMtp && !device.supportsAdb ? 'mtp' : 'adb',
     );
@@ -263,12 +279,22 @@ class AndroidAcquisitionPlatformService {
           mirrorCount: devices.length,
           longestTargetEdge: longestTargetEdge,
         );
+        String? sourceName;
+        try {
+          final refreshedDevices = await getDevices();
+          sourceName = refreshedDevices
+              .where((candidate) => candidate.id == device.id)
+              .map((candidate) => candidate.name)
+              .firstOrNull;
+        } on PlatformException {
+          // Conserva el nombre observado al iniciar la conexión.
+        }
         final source = AcquisitionMirrorSession(
           requisitionId: requisitionId,
           sessionId: sessionId,
           sourceSessionId: sourceSessionId,
           usbDeviceId: device.id,
-          deviceName: video['deviceName'] as String? ?? device.name,
+          deviceName: sourceName ?? device.name,
           textureId: textureId,
           controlStreamId: video['controlLocalId'] as int,
           videoWidth: video['width'] as int,
@@ -788,24 +814,36 @@ class AndroidAcquisitionPlatformService {
       requisitionId: requisitionId,
       sessionId: sessionId,
     ),
+    sourceSessionId: sourceSessionId,
   );
 
   Future<CapturedEvidence> startRecordingForSource({
     required String sourceSessionId,
     required String requisitionId,
     required String sessionId,
-  }) async => _mapEvidence(
-    await _adbClient.multiStartScreenRecording(
-      sourceSessionId: sourceSessionId,
-      requisitionId: requisitionId,
-      sessionId: sessionId,
-    ),
-  );
+  }) async {
+    final started = _mapEvidence(
+      await _adbClient.multiStartScreenRecording(
+        sourceSessionId: sourceSessionId,
+        requisitionId: requisitionId,
+        sessionId: sessionId,
+      ),
+    );
+    _multiRecordingStartedAt[sourceSessionId] = started.createdAt;
+    return started;
+  }
 
   Future<CapturedEvidence> stopRecordingForSource(
     String sourceSessionId,
-  ) async =>
-      _mapEvidence(await _adbClient.multiStopScreenRecording(sourceSessionId));
+  ) async {
+    final result = await _adbClient.multiStopScreenRecording(sourceSessionId);
+    final startedAt = _multiRecordingStartedAt.remove(sourceSessionId);
+    return _mapEvidence(
+      result,
+      sourceSessionId: sourceSessionId,
+      recordingStartedAt: startedAt,
+    );
+  }
 
   Future<String> getMultiControlDiagnostics(String sourceSessionId) async =>
       (await _adbClient.multiGetMirrorLog(sourceSessionId))['log'] as String? ??
@@ -860,7 +898,14 @@ class AndroidAcquisitionPlatformService {
       localPath: result['path'] as String,
       byteLength: result['byteLength'] as int,
       sha256: result['sha256'] as String,
-      createdAt: DateTime.now(),
+      createdAt:
+          _sourceTimestamp(result['capturedAtMilliseconds'], multiplier: 1) ??
+          DateTime.now().toUtc(),
+      metadata: {
+        'version': 1,
+        if (_activeSession?.deviceName != null)
+          'sourceDeviceName': _activeSession!.deviceName,
+      },
     );
   }
 
@@ -872,20 +917,41 @@ class AndroidAcquisitionPlatformService {
       requisitionId: requisitionId,
       sessionId: sessionId,
     );
-    return _mapEvidence(result);
+    final started = _mapEvidence(result);
+    _singleRecordingStartedAt = started.createdAt;
+    return started;
   }
 
   Future<CapturedEvidence> stopRecording() async {
-    return _mapEvidence(await _adbClient.stopScreenRecording());
+    final result = await _adbClient.stopScreenRecording();
+    final startedAt = _singleRecordingStartedAt;
+    _singleRecordingStartedAt = null;
+    return _mapEvidence(result, recordingStartedAt: startedAt);
   }
 
-  CapturedEvidence _mapEvidence(Map<String, dynamic> result) {
+  CapturedEvidence _mapEvidence(
+    Map<String, dynamic> result, {
+    String? sourceSessionId,
+    DateTime? recordingStartedAt,
+  }) {
     return CapturedEvidence(
       name: result['name'] as String,
       localPath: result['path'] as String,
       byteLength: result['byteLength'] as int? ?? 0,
       sha256: result['sha256'] as String? ?? '',
-      createdAt: DateTime.now(),
+      createdAt:
+          _sourceTimestamp(result['capturedAtMilliseconds'], multiplier: 1) ??
+          DateTime.now().toUtc(),
+      metadata: Map.unmodifiable({
+        'version': 1,
+        if (sourceSessionId != null) 'sourceSessionId': sourceSessionId,
+        if (sourceSessionId != null && _multiSessions[sourceSessionId] != null)
+          'sourceDeviceName': _multiSessions[sourceSessionId]!.deviceName,
+        if (sourceSessionId == null && _activeSession != null)
+          'sourceDeviceName': _activeSession!.deviceName,
+        if (recordingStartedAt != null)
+          'recordingStartedAt': recordingStartedAt.toUtc().toIso8601String(),
+      }),
     );
   }
 
@@ -952,13 +1018,43 @@ class AndroidAcquisitionPlatformService {
                 final map = raw.map(
                   (key, value) => MapEntry(key.toString(), value),
                 );
+                final sourceCreatedAt = _sourceTimestamp(
+                  map['sourceCreatedAtMilliseconds'],
+                  multiplier: 1,
+                );
+                final sourceModifiedAt =
+                    _sourceTimestamp(
+                      map['sourceModifiedAtMilliseconds'],
+                      multiplier: 1,
+                    ) ??
+                    _sourceTimestamp(
+                      map['sourceModifiedAtSeconds'],
+                      multiplier: 1000,
+                    );
                 return CapturedEvidence(
                   name: map['name'] as String? ?? 'archivo',
                   localPath: map['path'] as String? ?? '',
                   byteLength: (map['byteLength'] as num?)?.toInt() ?? 0,
                   sha256: map['sha256'] as String? ?? '',
-                  createdAt: DateTime.now(),
+                  createdAt:
+                      _sourceTimestamp(
+                        map['capturedAtMilliseconds'],
+                        multiplier: 1,
+                      ) ??
+                      DateTime.now().toUtc(),
                   sourcePath: map['remotePath'] as String?,
+                  sourceCreatedAt: sourceCreatedAt,
+                  metadata: Map.unmodifiable({
+                    'version': 1,
+                    if (_activeConnection != null)
+                      'sourceDeviceName': _activeConnection!.deviceName,
+                    if (sourceCreatedAt != null)
+                      'sourceCreatedAtSource': 'MTP_DATE_CREATED',
+                    if (sourceModifiedAt != null)
+                      'sourceModifiedAt': sourceModifiedAt
+                          .toUtc()
+                          .toIso8601String(),
+                  }),
                 );
               })
               .toList(growable: false)
@@ -1309,5 +1405,16 @@ class AndroidAcquisitionPlatformService {
         'como ${device.deviceType}, pero no expone la interfaz ADB.',
       );
     }
+  }
+}
+
+DateTime? _sourceTimestamp(Object? raw, {required int multiplier}) {
+  if (raw is! num || raw <= 0) return null;
+  final milliseconds = raw.toInt() * multiplier;
+  if (milliseconds < 0 || milliseconds > 253402300799999) return null;
+  try {
+    return DateTime.fromMillisecondsSinceEpoch(milliseconds, isUtc: true);
+  } on RangeError {
+    return null;
   }
 }

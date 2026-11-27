@@ -31,6 +31,18 @@ internal class MtpTransferBridge(private val context: Context) {
             manager.deviceList.values.any { it.deviceName == name }
     }
 
+    fun connectedModel(name: String): String? = synchronized(lock) {
+        if (name != deviceName) return@synchronized null
+        val info = device?.deviceInfo ?: return@synchronized null
+        val maker = info.manufacturer?.trim().orEmpty()
+        val model = info.model?.trim().orEmpty()
+        when {
+            model.isEmpty() -> maker.takeIf { it.isNotEmpty() }
+            maker.isEmpty() || model.startsWith(maker, ignoreCase = true) -> model
+            else -> "$maker $model"
+        }
+    }
+
     fun connect(name: String) {
         check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             "La transferencia MTP de File Cast requiere Android 7 o posterior"
@@ -236,7 +248,10 @@ internal class MtpTransferBridge(private val context: Context) {
                     check(part.renameTo(output)) { "No se pudo confirmar el archivo copiado" }
                     completed += mapOf("name" to fileName, "path" to output.absolutePath,
                         "byteLength" to size, "sha256" to digest.digest().joinToString("") { "%02x".format(it) },
-                        "remotePath" to path)
+                        "remotePath" to path,
+                        "sourceCreatedAtMilliseconds" to info.dateCreated,
+                        "sourceModifiedAtMilliseconds" to info.dateModified,
+                        "capturedAtMilliseconds" to System.currentTimeMillis())
                     transferred += size
                     onProgress(mapOf("state" to "transferring", "fileName" to fileName,
                         "fileIndex" to index, "fileCount" to entries.size, "fileBytes" to size,

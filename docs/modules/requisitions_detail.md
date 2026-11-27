@@ -1,5 +1,7 @@
 # Módulo Detalle de Requisa
 
+Plan para mostrar procedencia y metadata de cada evidencia desde su menú de tres puntos: [EVIDENCE_METADATA_IMPLEMENTATION_PLAN.md](../EVIDENCE_METADATA_IMPLEMENTATION_PLAN.md).
+
 ## Flujo actual
 
 `/requisitions/:requisitionId` muestra la información de la requisa y sus evidencias en una única vista continua. La cabecera fija queda reducida al CUD o persona, estado de la requisa, sujetos, fiscales investigadores y lugar del hecho. La vista consulta `GET /api/v1/requisitions/:id`, convierte el envelope HTTP a modelos de dominio y mezcla únicamente las evidencias locales pendientes que todavía no aparecen en el servidor.

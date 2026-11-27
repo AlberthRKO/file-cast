@@ -32,6 +32,7 @@ import 'package:file_cast/ui/features/auth/session/auth_session_controller.dart'
 import 'package:file_cast/ui/features/requisitions/detail/view_models/requisition_detail_view_model.dart';
 import 'package:file_cast/ui/features/requisitions/detail/widgets/case_detail_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/detail/widgets/import_evidence_preview_dialog.dart';
+import 'package:file_cast/ui/features/requisitions/detail/widgets/evidence_information_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/detail/widgets/participant_role_dropdown.dart';
 import 'package:file_cast/ui/features/requisitions/detail/widgets/participants_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/list/widgets/requisition_location_viewer.dart';
@@ -274,6 +275,8 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
                           decryptionService: decryptionService,
                           onOpenEvidence: (evidence) =>
                               _showEvidencePreview(context, evidence),
+                          onInfoEvidence: (evidence) =>
+                              _showEvidenceInformation(context, evidence),
                           canDeleteEvidence: viewModel.canDeleteEvidence,
                           isDeletingEvidence: viewModel.isDeletingEvidence,
                           onDeleteEvidence: (evidence) =>
@@ -333,6 +336,8 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
                       decryptionService: decryptionService,
                       onOpenEvidence: (evidence) =>
                           _showEvidencePreview(context, evidence),
+                      onInfoEvidence: (evidence) =>
+                          _showEvidenceInformation(context, evidence),
                       canDeleteEvidence: viewModel.canDeleteEvidence,
                       isDeletingEvidence: viewModel.isDeletingEvidence,
                       onDeleteEvidence: (evidence) =>
@@ -648,6 +653,27 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
     audioPlaybackService: context.read<AudioPlaybackService>(),
   );
 
+  Future<void> _showEvidenceInformation(
+    BuildContext context,
+    RequisitionEvidence evidence,
+  ) {
+    final sessions =
+        viewModel.detail?.sessions ?? const <RequisitionAcquisitionSession>[];
+    RequisitionAcquisitionSession? session;
+    for (final candidate in sessions) {
+      if (candidate.id == evidence.sessionId) {
+        session = candidate;
+        break;
+      }
+    }
+    return showAppModalBottomSheet<void>(
+      context: context,
+      maxWidth: AppSize.formMaxWidth,
+      builder: (_) =>
+          EvidenceInformationSheet(evidence: evidence, session: session),
+    );
+  }
+
   Future<void> _showPendingEvidence(BuildContext context) {
     final evidence = viewModel.pendingEvidence;
     if (evidence.isEmpty) return Future<void>.value();
@@ -675,6 +701,7 @@ class _RequisitionDetailViewState extends State<RequisitionDetailView> {
             emptyMessage: 'No quedan evidencias pendientes de carga.',
             decryptionService: decryptionService,
             onOpenEvidence: (item) => _showEvidencePreview(context, item),
+            onInfoEvidence: (item) => _showEvidenceInformation(context, item),
             canDeleteEvidence: viewModel.canDeleteEvidence,
             isDeletingEvidence: viewModel.isDeletingEvidence,
             onDeleteEvidence: (item) => _deleteEvidence(context, item),
@@ -2914,6 +2941,7 @@ class _EvidenceSection extends StatelessWidget {
     required this.onShowAll,
     required this.decryptionService,
     required this.onOpenEvidence,
+    required this.onInfoEvidence,
     required this.canDeleteEvidence,
     required this.isDeletingEvidence,
     required this.onDeleteEvidence,
@@ -2929,6 +2957,7 @@ class _EvidenceSection extends StatelessWidget {
   final VoidCallback onShowAll;
   final EvidenceDecryptionService decryptionService;
   final ValueChanged<RequisitionEvidence> onOpenEvidence;
+  final ValueChanged<RequisitionEvidence> onInfoEvidence;
   final bool Function(RequisitionEvidence) canDeleteEvidence;
   final bool Function(RequisitionEvidence) isDeletingEvidence;
   final ValueChanged<RequisitionEvidence> onDeleteEvidence;
@@ -2994,6 +3023,7 @@ class _EvidenceSection extends StatelessWidget {
                   evidence: visible[index],
                   decryptionService: decryptionService,
                   onOpen: () => onOpenEvidence(visible[index]),
+                  onInfo: () => onInfoEvidence(visible[index]),
                   onDelete: canDeleteEvidence(visible[index])
                       ? () => onDeleteEvidence(visible[index])
                       : null,
@@ -3025,6 +3055,7 @@ class _EvidencePreview extends StatelessWidget {
     this.onUpload,
     this.onRename,
     this.onAnchor,
+    this.onInfo,
     this.showSubjectInfo = false,
     this.isDeleting = false,
     this.isUploading = false,
@@ -3037,6 +3068,7 @@ class _EvidencePreview extends StatelessWidget {
   final VoidCallback? onUpload;
   final VoidCallback? onRename;
   final VoidCallback? onAnchor;
+  final VoidCallback? onInfo;
   final bool showSubjectInfo;
   final bool isDeleting;
   final bool isUploading;
@@ -3184,13 +3216,15 @@ class _EvidencePreview extends StatelessWidget {
                 ),
               ),
             ),
-            if (onDelete != null ||
+            if (onInfo != null ||
+                onDelete != null ||
                 onUpload != null ||
                 onRename != null ||
                 onAnchor != null ||
                 isDeleting ||
                 isUploading)
               _EvidenceActionsMenu(
+                onInfo: onInfo,
                 onUpload: onUpload,
                 onDelete: onDelete,
                 onRename: onRename,
@@ -3205,10 +3239,11 @@ class _EvidencePreview extends StatelessWidget {
   }
 }
 
-enum _EvidenceAction { upload, rename, anchor, delete }
+enum _EvidenceAction { info, upload, rename, anchor, delete }
 
 class _EvidenceActionsMenu extends StatelessWidget {
   const _EvidenceActionsMenu({
+    required this.onInfo,
     required this.onUpload,
     required this.onDelete,
     required this.onRename,
@@ -3218,6 +3253,7 @@ class _EvidenceActionsMenu extends StatelessWidget {
   });
 
   final VoidCallback? onUpload;
+  final VoidCallback? onInfo;
   final VoidCallback? onDelete;
   final VoidCallback? onRename;
   final VoidCallback? onAnchor;
@@ -3226,18 +3262,6 @@ class _EvidenceActionsMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (isBusy) {
-      return const SizedBox.square(
-        dimension: AppSize.minTouchTarget,
-        child: Center(
-          child: SizedBox.square(
-            dimension: AppSize.iconM,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
-      );
-    }
-
     final theme = Theme.of(context);
     final iconColor = theme.colorScheme.onSurface;
     return DropdownButtonHideUnderline(
@@ -3256,7 +3280,16 @@ class _EvidenceActionsMenu extends StatelessWidget {
           ),
         ),
         items: [
-          if (onUpload != null)
+          if (onInfo != null)
+            DropdownMenuItem<_EvidenceAction>(
+              value: _EvidenceAction.info,
+              child: _EvidenceActionRow(
+                icon: Icons.info_outline,
+                label: 'Información',
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
+          if (onUpload != null && !isBusy)
             DropdownMenuItem<_EvidenceAction>(
               value: _EvidenceAction.upload,
               child: _EvidenceActionRow(
@@ -3265,7 +3298,7 @@ class _EvidenceActionsMenu extends StatelessWidget {
                 color: theme.colorScheme.primary,
               ),
             ),
-          if (onRename != null)
+          if (onRename != null && !isBusy)
             DropdownMenuItem<_EvidenceAction>(
               value: _EvidenceAction.rename,
               child: _EvidenceActionRow(
@@ -3274,7 +3307,7 @@ class _EvidenceActionsMenu extends StatelessWidget {
                 color: theme.colorScheme.onSurface,
               ),
             ),
-          if (onAnchor != null)
+          if (onAnchor != null && !isBusy)
             DropdownMenuItem<_EvidenceAction>(
               value: _EvidenceAction.anchor,
               child: _EvidenceActionRow(
@@ -3285,7 +3318,7 @@ class _EvidenceActionsMenu extends StatelessWidget {
                 color: theme.colorScheme.onSurface,
               ),
             ),
-          if (onDelete != null)
+          if (onDelete != null && !isBusy)
             DropdownMenuItem<_EvidenceAction>(
               value: _EvidenceAction.delete,
               child: _EvidenceActionRow(
@@ -3297,6 +3330,8 @@ class _EvidenceActionsMenu extends StatelessWidget {
         ],
         onChanged: (action) {
           switch (action) {
+            case _EvidenceAction.info:
+              onInfo?.call();
             case _EvidenceAction.upload:
               onUpload?.call();
             case _EvidenceAction.delete:
@@ -3408,6 +3443,7 @@ class _AllEvidenceSheet extends StatelessWidget {
     required this.evidence,
     required this.decryptionService,
     required this.onOpenEvidence,
+    required this.onInfoEvidence,
     required this.canDeleteEvidence,
     required this.isDeletingEvidence,
     required this.onDeleteEvidence,
@@ -3430,6 +3466,7 @@ class _AllEvidenceSheet extends StatelessWidget {
   final List<RequisitionEvidence> evidence;
   final EvidenceDecryptionService decryptionService;
   final ValueChanged<RequisitionEvidence> onOpenEvidence;
+  final ValueChanged<RequisitionEvidence> onInfoEvidence;
   final bool Function(RequisitionEvidence) canDeleteEvidence;
   final bool Function(RequisitionEvidence) isDeletingEvidence;
   final ValueChanged<RequisitionEvidence> onDeleteEvidence;
@@ -3558,6 +3595,7 @@ class _AllEvidenceSheet extends StatelessWidget {
                                   context,
                                   () => onOpenEvidence(evidence[index]),
                                 ),
+                                onInfo: () => onInfoEvidence(evidence[index]),
                               ),
                             );
                           },
@@ -3604,7 +3642,7 @@ class _AllEvidenceSheet extends StatelessWidget {
     if (close != null) {
       close();
     } else {
-      Navigator.of(context).pop();
+      context.pop();
     }
   }
 

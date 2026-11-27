@@ -221,12 +221,20 @@ final class RequisitionAcquisitionSession {
     required this.sourcePlatform,
     required this.transport,
     required this.startedAt,
+    this.sourceDeviceId,
+    this.sourceModel,
+    this.sourceOsVersion,
+    this.sourceDeviceNames = const {},
     this.endedAt,
   });
 
   final String id;
   final RequisitionSessionStatus status;
   final String sourcePlatform;
+  final String? sourceDeviceId;
+  final String? sourceModel;
+  final String? sourceOsVersion;
+  final Map<String, String> sourceDeviceNames;
   final String transport;
   final DateTime startedAt;
   final DateTime? endedAt;
@@ -243,6 +251,9 @@ final class ImportedEvidenceDraft {
     this.localPath,
     this.sha256,
     this.sourcePath,
+    this.capturedAt,
+    this.sourceCreatedAt,
+    this.metadata,
     this.sessionId,
     this.mimeType,
     this.acquisitionMethod,
@@ -265,6 +276,9 @@ final class ImportedEvidenceDraft {
   final String? localPath;
   final String? sha256;
   final String? sourcePath;
+  final DateTime? capturedAt;
+  final DateTime? sourceCreatedAt;
+  final Map<String, dynamic>? metadata;
   final String? sessionId;
   final String? mimeType;
   final String? acquisitionMethod;
@@ -292,6 +306,9 @@ final class ImportedEvidenceDraft {
       localPath: localPath,
       sha256: sha256,
       sourcePath: sourcePath,
+      capturedAt: capturedAt,
+      sourceCreatedAt: sourceCreatedAt,
+      metadata: metadata,
       sessionId: sessionId ?? this.sessionId,
       mimeType: mimeType,
       acquisitionMethod: acquisitionMethod,
@@ -324,6 +341,9 @@ final class RequisitionEvidence {
     this.localPath,
     this.sha256,
     this.sourcePath,
+    this.acquisitionMethod,
+    this.sourceCreatedAt,
+    this.metadata,
     this.sessionId,
     this.mimeType,
     this.encrypted = false,
@@ -355,6 +375,9 @@ final class RequisitionEvidence {
   final String? localPath;
   final String? sha256;
   final String? sourcePath;
+  final String? acquisitionMethod;
+  final DateTime? sourceCreatedAt;
+  final Map<String, dynamic>? metadata;
   final String? sessionId;
   final String? mimeType;
   final bool encrypted;
@@ -389,6 +412,9 @@ final class RequisitionEvidence {
       localPath: localPath,
       sha256: sha256,
       sourcePath: sourcePath,
+      acquisitionMethod: acquisitionMethod,
+      sourceCreatedAt: sourceCreatedAt,
+      metadata: metadata,
       sessionId: sessionId,
       mimeType: mimeType,
       encrypted: encrypted,

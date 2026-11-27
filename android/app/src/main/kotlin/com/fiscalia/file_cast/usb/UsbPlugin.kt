@@ -198,6 +198,13 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, METHOD_CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "isOtgSupported" -> result.success(isOtgSupported())
+                "getInspectorDeviceName" -> result.success(
+                    Build.MODEL.trim().takeIf { it.isNotEmpty() }?.let { model ->
+                        val maker = Build.MANUFACTURER.trim()
+                        if (maker.isEmpty() || model.startsWith(maker, ignoreCase = true)) model
+                        else "$maker $model"
+                    }
+                )
                 "getConnectedDevices" -> result.success(getConnectedDevices())
                 "requestPermission" -> {
                     val deviceName = call.argument<String>("deviceName")
@@ -223,7 +230,8 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
                         Thread {
                             try {
                                 mtpTransfer.connect(name)
-                                mainHandler.post { result.success(true) }
+                                val model = mtpTransfer.connectedModel(name)
+                                mainHandler.post { result.success(model) }
                             } catch (error: Exception) {
                                 mainHandler.post { result.error("MTP_CONNECT_ERROR", error.message, null) }
                             }
@@ -1406,6 +1414,7 @@ class UsbPlugin(private val context: Context, private val flutterEngine: Flutter
         "path" to file.absolutePath,
         "byteLength" to file.length(),
         "sha256" to hash.joinToString("") { "%02x".format(it) },
+        "capturedAtMilliseconds" to System.currentTimeMillis(),
     )
 
     private fun sha256(file: File): ByteArray {

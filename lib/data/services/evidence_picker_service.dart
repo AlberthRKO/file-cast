@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:file_cast/data/services/inspector_device_metadata_service.dart';
 
 import 'package:file_cast/domain/models/requisition_detail.dart';
 import 'package:file_picker/file_picker.dart';
@@ -15,6 +16,7 @@ final class PickedEvidence {
     this.localPath,
     this.mimeType,
     this.ownedPickerCopy = false,
+    this.metadata,
   });
   final String name;
   final RequisitionEvidenceType type;
@@ -23,13 +25,18 @@ final class PickedEvidence {
   final String? localPath;
   final String? mimeType;
   final bool ownedPickerCopy;
+  final Map<String, dynamic>? metadata;
 }
 
 class EvidencePickerService {
-  EvidencePickerService({ImagePicker? imagePicker})
-    : _imagePicker = imagePicker ?? ImagePicker();
+  EvidencePickerService({
+    ImagePicker? imagePicker,
+    InspectorDeviceMetadataService? inspectorDevice,
+  }) : _imagePicker = imagePicker ?? ImagePicker(),
+       _inspectorDevice = inspectorDevice ?? InspectorDeviceMetadataService();
 
   final ImagePicker _imagePicker;
+  final InspectorDeviceMetadataService _inspectorDevice;
   static const _iosPhotoLibraryChannel = MethodChannel(
     'com.fiscalia.file_cast/evidence_photo_library',
   );
@@ -39,6 +46,7 @@ class EvidencePickerService {
     final image = await _imagePicker.pickImage(source: ImageSource.gallery);
     if (image == null) return null;
     final bytes = await File(image.path).length();
+    final inspectorName = await _inspectorDevice.deviceName();
     return PickedEvidence(
       name: image.name,
       type: RequisitionEvidenceType.image,
@@ -46,6 +54,7 @@ class EvidencePickerService {
       byteLength: bytes,
       localPath: image.path,
       mimeType: 'image/${image.path.toLowerCase().split('.').last}',
+      metadata: _withInspector(null, inspectorName),
     );
   }
 
@@ -74,6 +83,7 @@ class EvidencePickerService {
       allowCompression: false,
     );
     if (result == null) return null;
+    final inspectorName = await _inspectorDevice.deviceName();
 
     return result.files
         .where((file) => file.path != null)
@@ -83,6 +93,7 @@ class EvidencePickerService {
             byteLength: file.size,
             localPath: file.path!,
             ownedPickerCopy: false,
+            metadata: _withInspector(null, inspectorName),
           ),
         )
         .toList(growable: false);
@@ -100,6 +111,7 @@ class EvidencePickerService {
       );
     }
     if (media == null || media.isEmpty) return null;
+    final inspectorName = await _inspectorDevice.deviceName();
 
     final picked = <PickedEvidence>[];
     final receivedPaths = <String>[];
@@ -127,6 +139,7 @@ class EvidencePickerService {
             byteLength: byteLength,
             localPath: localPath,
             ownedPickerCopy: true,
+            metadata: _withInspector(_iosLibraryMetadata(raw), inspectorName),
           ),
         );
       }
@@ -142,6 +155,7 @@ class EvidencePickerService {
       requestFullMetadata: false,
     );
     if (media.isEmpty) return null;
+    final inspectorName = await _inspectorDevice.deviceName();
 
     final picked = <PickedEvidence>[];
     final movedPaths = <String>[];
@@ -186,6 +200,7 @@ class EvidencePickerService {
             byteLength: byteLength,
             localPath: destination.path,
             ownedPickerCopy: true,
+            metadata: _withInspector(null, inspectorName),
           ),
         );
       }
@@ -214,6 +229,7 @@ class EvidencePickerService {
     required int byteLength,
     required String localPath,
     required bool ownedPickerCopy,
+    Map<String, dynamic>? metadata,
   }) {
     final extension = name.contains('.')
         ? name.split('.').last.toLowerCase()
@@ -276,7 +292,45 @@ class EvidencePickerService {
       localPath: localPath,
       mimeType: _mimeTypeFor(extension),
       ownedPickerCopy: ownedPickerCopy,
+      metadata: metadata,
     );
+  }
+
+  Map<String, dynamic>? _iosLibraryMetadata(Map raw) {
+    final registeredAt = _dateFromMilliseconds(
+      raw['registeredOnDeviceAtMilliseconds'],
+    );
+    final capturedAt = _dateFromMilliseconds(
+      raw['contentCapturedAtMilliseconds'],
+    );
+    if (registeredAt == null && capturedAt == null) return null;
+    return {
+      'version': 1,
+      if (registeredAt != null) ...{
+        'registeredOnDeviceAt': registeredAt,
+        'registeredOnDeviceAtSource': 'INSPECTOR_PHOTOKIT_ADDED_DATE',
+      },
+      if (capturedAt != null) ...{
+        'contentCapturedAt': capturedAt,
+        'contentCapturedAtSource': 'PH_ASSET_CREATION_DATE',
+      },
+    };
+  }
+
+  Map<String, dynamic>? _withInspector(
+    Map<String, dynamic>? metadata,
+    String? name,
+  ) {
+    if (name == null) return metadata;
+    return {'version': 1, ...?metadata, 'inspectorDeviceName': name};
+  }
+
+  String? _dateFromMilliseconds(Object? value) {
+    if (value is! int || value <= 0) return null;
+    return DateTime.fromMillisecondsSinceEpoch(
+      value,
+      isUtc: true,
+    ).toIso8601String();
   }
 
   String _sizeLabel(int bytes) {

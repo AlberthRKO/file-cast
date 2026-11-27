@@ -98,10 +98,21 @@ class _EvidencePreviewSheetState extends State<EvidencePreviewSheet> {
 
   Future<PreparedEvidencePreview> _startPreparation() {
     final generation = ++_preparationGeneration;
-    final future = widget.prepare();
-    future.then<void>(
+    var timedOut = false;
+    final preparation = widget.prepare();
+    final future = preparation.timeout(
+      const Duration(seconds: 90),
+      onTimeout: () {
+        timedOut = true;
+        throw TimeoutException(
+          'La vista previa tardó demasiado. Comprueba la conexión o '
+          'sincroniza esta evidencia para usarla sin conexión.',
+        );
+      },
+    );
+    preparation.then<void>(
       (preview) {
-        if (mounted && generation == _preparationGeneration) {
+        if (!timedOut && mounted && generation == _preparationGeneration) {
           _preview = preview;
         } else {
           unawaited(widget.disposePreview(preview));
@@ -427,6 +438,8 @@ bool _isPdf(RequisitionEvidence evidence) =>
 
 String _previewErrorMessage(Object? error) {
   if (error is FormatException) return error.message;
+  if (error is TimeoutException)
+    return error.message ?? 'La vista previa tardó demasiado.';
   final message = error?.toString().replaceFirst('Bad state: ', '').trim();
   return message == null || message.isEmpty
       ? 'No se pudo preparar la vista previa.'

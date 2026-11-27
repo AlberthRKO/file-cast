@@ -845,7 +845,21 @@ class RequisitionDetailViewModel extends ChangeNotifier {
     RequisitionEvidence evidence,
   ) async {
     var evidenceForPreview = evidence;
-    if (_needsOfflineRecovery(evidence)) {
+    // Una tarjeta puede conservar un snapshot anterior a la descarga offline.
+    // Reconciliar la fila local antes de intentar acceder a la red evita
+    // depender del cable de depuración para abrir una copia ya guardada.
+    try {
+      final cached = await _repository.getCachedDetail(requisitionId);
+      for (final item in cached.evidence) {
+        if (item.id == evidence.id) {
+          evidenceForPreview = item;
+          break;
+        }
+      }
+    } on Object {
+      // El snapshot visible sigue siendo válido para el flujo remoto.
+    }
+    if (_needsOfflineRecovery(evidenceForPreview)) {
       if (isWorkingOffline) {
         throw StateError(
           'Esta evidencia todavía no tiene una copia local disponible. '
@@ -864,7 +878,7 @@ class RequisitionDetailViewModel extends ChangeNotifier {
       try {
         result = await _repository.syncEvidenceForOffline(
           requisitionId: requisitionId,
-          evidence: [evidence],
+          evidence: [evidenceForPreview],
           scope: EvidenceOfflineSyncScope.selectedEvidence,
         );
         await _reloadSilently();

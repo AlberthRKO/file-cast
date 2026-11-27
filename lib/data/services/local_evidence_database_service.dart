@@ -113,7 +113,7 @@ class LocalEvidenceDatabaseService {
       return await openDatabase(
         path,
         password: key,
-        version: 11,
+        version: 12,
         onCreate: (db, _) async {
           await db.execute('''
             CREATE TABLE evidencias_locales (
@@ -139,6 +139,8 @@ class LocalEvidenceDatabaseService {
               estado TEXT NOT NULL,
               ms_archivo_id TEXT,
               ruta_origen TEXT,
+              creado_origen_at TEXT,
+              metadata_json TEXT,
               sujeto_person_ids TEXT NOT NULL DEFAULT '[]',
               client_operation_id TEXT NOT NULL,
               creado_at TEXT NOT NULL,
@@ -240,6 +242,20 @@ class LocalEvidenceDatabaseService {
           }
           if (oldVersion < 10) await _createImageThumbnailCache(db);
           if (oldVersion < 11) await _createVideoThumbnailCache(db);
+          if (oldVersion < 12) {
+            await _ensureColumn(
+              db,
+              table: 'evidencias_locales',
+              column: 'creado_origen_at',
+              definition: 'TEXT',
+            );
+            await _ensureColumn(
+              db,
+              table: 'evidencias_locales',
+              column: 'metadata_json',
+              definition: 'TEXT',
+            );
+          }
         },
       );
     } on Object catch (error, stackTrace) {
@@ -1506,6 +1522,8 @@ final class LocalEvidenceRecord {
     required this.clientOperationId,
     required this.createdAt,
     this.sourcePath,
+    this.sourceCreatedAt,
+    this.metadata,
     this.subjectPersonIds = const [],
     this.msFileId,
     this.displayName,
@@ -1533,6 +1551,8 @@ final class LocalEvidenceRecord {
   final String clientOperationId;
   final DateTime createdAt;
   final String? sourcePath;
+  final DateTime? sourceCreatedAt;
+  final Map<String, dynamic>? metadata;
   final List<int> subjectPersonIds;
   final String? msFileId;
 
@@ -1558,6 +1578,8 @@ final class LocalEvidenceRecord {
     'estado': state,
     'ms_archivo_id': msFileId,
     'ruta_origen': sourcePath,
+    'creado_origen_at': sourceCreatedAt?.toUtc().toIso8601String(),
+    'metadata_json': metadata == null ? null : jsonEncode(metadata),
     'sujeto_person_ids': jsonEncode(subjectPersonIds),
     'client_operation_id': clientOperationId,
     'creado_at': createdAt.toUtc().toIso8601String(),
@@ -1588,6 +1610,10 @@ final class LocalEvidenceRecord {
       clientOperationId: map['client_operation_id']! as String,
       createdAt: DateTime.parse(map['creado_at']! as String),
       sourcePath: map['ruta_origen'] as String?,
+      sourceCreatedAt: (map['creado_origen_at'] as String?) == null
+          ? null
+          : DateTime.tryParse(map['creado_origen_at']! as String),
+      metadata: _decodeEvidenceMetadata(map['metadata_json'] as String?),
       subjectPersonIds: _decodeSubjectPersonIds(
         map['sujeto_person_ids'] as String?,
       ),
@@ -1605,4 +1631,15 @@ final class LocalEvidenceRecord {
       return const [];
     }
   }
+}
+
+Map<String, dynamic>? _decodeEvidenceMetadata(String? raw) {
+  if (raw == null || raw.isEmpty) return null;
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is Map<String, dynamic>) return Map.unmodifiable(decoded);
+  } on FormatException {
+    // Los registros históricos permanecen accesibles sin metadata.
+  }
+  return null;
 }

@@ -37,6 +37,8 @@ data class PulledFile(
     val localPath: String,
     val byteLength: Long,
     val sha256: String,
+    val sourceModifiedAtSeconds: Long,
+    val capturedAtMilliseconds: Long,
 ) {
     fun toMap(): Map<String, Any> = mapOf(
         "name" to name,
@@ -44,6 +46,8 @@ data class PulledFile(
         "path" to localPath,
         "byteLength" to byteLength,
         "sha256" to sha256,
+        "sourceModifiedAtSeconds" to sourceModifiedAtSeconds,
+        "capturedAtMilliseconds" to capturedAtMilliseconds,
     )
 }
 
@@ -196,6 +200,8 @@ class AdbSyncClient(private val transport: UsbAdbTransport) {
                 localPath = destination.absolutePath,
                 byteLength = received,
                 sha256 = digest.digest().joinToString("") { "%02x".format(it) },
+                sourceModifiedAtSeconds = remote.modifiedAtSeconds,
+                capturedAtMilliseconds = System.currentTimeMillis(),
             )
         } catch (error: Throwable) {
             partial.delete()

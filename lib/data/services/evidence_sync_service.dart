@@ -638,6 +638,11 @@ class EvidenceSyncService {
         'kind': evidence.type,
         'acquisitionMethod': evidence.acquisitionMethod,
         'sourcePath': evidence.sourcePath,
+        if (evidence.sourceCreatedAt != null)
+          'sourceCreatedAt': evidence.sourceCreatedAt!
+              .toUtc()
+              .toIso8601String(),
+        if (evidence.metadata != null) 'metadata': evidence.metadata,
         if (evidence.subjectPersonIds.isNotEmpty)
           'personIds': evidence.subjectPersonIds,
         'capturedAt': evidence.createdAt.toUtc().toIso8601String(),

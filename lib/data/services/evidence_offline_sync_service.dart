@@ -447,7 +447,7 @@ class EvidenceOfflineSyncService {
           displayName: evidence.displayName,
           mimeType: evidence.mimeType ?? 'application/octet-stream',
           type: _backendKind(evidence.type),
-          acquisitionMethod: 'RECOVERED_OFFLINE',
+          acquisitionMethod: evidence.acquisitionMethod ?? 'IMPORTED_FILE',
           encryptedPath: targetPath,
           plaintextByteLength: evidence.plaintextByteLength!,
           ciphertextByteLength: evidence.byteLength,
@@ -465,6 +465,8 @@ class EvidenceOfflineSyncService {
           clientOperationId: 'offline-${evidence.id}',
           createdAt: evidence.createdAt,
           sourcePath: evidence.sourcePath,
+          sourceCreatedAt: evidence.sourceCreatedAt,
+          metadata: evidence.metadata,
         ),
       );
     } catch (_) {

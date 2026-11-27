@@ -18,6 +18,7 @@ import 'package:file_cast/data/services/android_evidence_video_thumbnail_service
 import 'package:file_cast/data/services/ios_evidence_video_thumbnail_service.dart';
 import 'package:file_cast/data/services/just_audio_playback_service.dart';
 import 'package:file_cast/data/services/evidence_picker_service.dart';
+import 'package:file_cast/data/services/inspector_device_metadata_service.dart';
 import 'package:file_cast/data/services/evidence_crypto_service.dart';
 import 'package:file_cast/data/services/evidence_background_sync_service.dart';
 import 'package:file_cast/data/services/evidence_key_exchange_service.dart';
@@ -209,8 +210,12 @@ class DependencyInjection {
               connectivity: connectivity,
             ),
       ),
-      Provider<EvidencePickerService>(
-        create: (_) => EvidencePickerService(),
+      Provider<InspectorDeviceMetadataService>(
+        create: (_) => InspectorDeviceMetadataService(),
+      ),
+      ProxyProvider<InspectorDeviceMetadataService, EvidencePickerService>(
+        update: (_, inspector, previous) =>
+            previous ?? EvidencePickerService(inspectorDevice: inspector),
       ),
       Provider<AudioPlaybackService>(
         create: (_) => JustAudioPlaybackService(),
@@ -364,7 +369,7 @@ class DependencyInjection {
       >(
         update:
             (
-              _,
+              context,
               platformService,
               detailRepository,
               documentPreviewService,
@@ -376,6 +381,8 @@ class DependencyInjection {
                   platformService: platformService,
                   detailRepository: detailRepository,
                   documentPreviewService: documentPreviewService,
+                  inspectorDevice: context
+                      .read<InspectorDeviceMetadataService>(),
                   syncService: syncService,
                 ),
       ),

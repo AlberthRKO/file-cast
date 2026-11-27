@@ -282,6 +282,12 @@ class RequisitionDetailService {
       byteLength: byteLength,
       sha256: _text(data['sha256']),
       sourcePath: _text(data['sourcePath']),
+      acquisitionMethod: _text(data['acquisitionMethod']),
+      sessionId: _text(data['sessionId']),
+      sourceCreatedAt: _date(data['sourceCreatedAt']),
+      metadata: data['metadata'] is Map
+          ? Map<String, dynamic>.unmodifiable(_asMap(data['metadata']))
+          : null,
       mimeType: _text(data['mimeType']),
       encrypted: _text(data['encryptionStatus']) == 'CLIENT_SIDE',
       encryptionAlgorithm: _text(data['encryptionAlgorithm']),
@@ -479,6 +485,18 @@ class RequisitionDetailService {
       id: _text(data['id']) ?? '',
       status: _sessionStatus(data['status']),
       sourcePlatform: _text(data['sourcePlatform']) ?? 'UNKNOWN',
+      sourceDeviceId: _text(data['sourceDeviceId']),
+      sourceModel: _text(data['sourceModel']),
+      sourceOsVersion: _text(data['sourceOsVersion']),
+      sourceDeviceNames: {
+        for (final source
+            in (data['sources'] is List ? data['sources'] as List : const []))
+          if (_text(_asMap(source)['sourceSessionId']) != null &&
+              _text(_asMap(source)['sourceDeviceName']) != null)
+            _text(_asMap(source)['sourceSessionId'])!: _text(
+              _asMap(source)['sourceDeviceName'],
+            )!,
+      },
       transport: _text(data['transport']) ?? 'UNKNOWN',
       startedAt:
           _date(data['startedAt']) ?? DateTime.fromMillisecondsSinceEpoch(0),
