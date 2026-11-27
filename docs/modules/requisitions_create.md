@@ -33,10 +33,12 @@ lib/ui/features/requisitions/create/
 │   └── create_requisition_view.dart
 └── widgets/
     ├── create_requisition_form.dart
-    └── requisition_location_picker.dart
+    └── requisition_location_map.dart
 ```
 
-La búsqueda usa `searchfield` sin recrear el controlador al recibir resultados. El capturador usa `flutter_map` con `latlong2`, manteniendo el pin centrado y desplazable como en el módulo de Agenda.
+La búsqueda CUD presenta resultados en una lista dentro del formulario y evita el overlay de `searchfield`, que podía intentar retirar una entrada dos veces al perder el foco. Las tarjetas muestran CUD, puntaje, tipo, estado, etapa, división, ubicación, delito y plazo; no exponen los nombres de sujetos ni funcionarios. La selección conserva el mismo resumen, usa el color de fondo del scaffold y no dibuja borde. La selección de persona muestra el nombre en mayúsculas.
+
+El mapa usa `flutter_map` con `latlong2` dentro de Datos del procedimiento. Inicia en `-19.0477918,-65.2597374`, conserva el pin fijo al centro y actualiza las coordenadas al desplazar el mapa. Los controles permiten acercar, alejar, alternar mapa satelital y solicitar/reenfocar la ubicación actual. La ubicación GPS y su marcador pulsante aparecen tras conceder el permiso. Latitud, longitud y referencia/dirección permanecen editables en el formulario.
 
 La lista mantiene el launcher visual del FAB porque pertenece a `requisitions/list`; el formulario real queda aislado en `requisitions/create`.
 
@@ -45,16 +47,17 @@ La lista mantiene el launcher visual del FAB porque pertenece a `requisitions/li
 1. El FAB o la acción amplia abre directamente el bottom sheet, sin preseleccionar visualmente una modalidad.
 2. El operador elige `CUD existente` o `Sin CUD - Registrar persona`; la opción activa muestra un check.
 3. Al seleccionar un resultado, el campo de búsqueda se reemplaza por su tarjeta resumen y permite cambiar la selección.
-4. En modo CUD, el ViewModel busca contra `POST /caso/casos/list` con el payload acordado.
-5. En modo persona, el ViewModel busca contra `POST /supr/persona/detalle/segip` por CI.
-6. El operador confirma fecha/hora y abre el bottom sheet de captura para ajustar coordenadas y dirección. Al confirmar, el formulario muestra una tarjeta de ubicación y permite editarla.
-7. `createDraft` simula el registro, emite `requisitionId/sessionId`, cierra el sheet una sola vez y hace `push` a conexión de dispositivo; volver conserva el listado/home.
+4. En modo CUD, el ViewModel busca contra `POST /api/v1/file-cast/casos/list` con el payload acordado.
+5. En modo persona, el ViewModel busca contra `POST /api/v1/file-cast/persona/buscar` por CI.
+6. El operador confirma fecha/hora, referencia/dirección y ubicación desde el formulario, sin abrir un modal de captura.
+7. `createDraft` envía la requisa al endpoint remoto, emite el `requisitionId` devuelto por el backend, cierra el sheet una sola vez y abre el detalle de la requisa.
 
 ## Reglas de arquitectura
 
 - La View renderiza estado y emite intenciones.
 - El ViewModel valida campos, controla busquedas con debounce y expone un snapshot inmutable.
-- CUD y persona siguen el mismo patrón: `SearchField` muestra resultados y una tarjeta seleccionada los reemplaza hasta que se use su botón `X`.
+- La búsqueda se confirma con el botón o la acción del teclado; las sugerencias CUD aparecen inline mientras el campo conserva el foco y una lista acotada permite desplazarlas.
+- La tarjeta seleccionada reemplaza las sugerencias hasta que se use su botón `X`.
 - El repositorio crea los modelos de dominio y contiene el fallback de laboratorio.
 - El servicio es el unico que conoce los endpoints HTTP.
 - La navegacion se mantiene en `go_router`; el ViewModel no usa `BuildContext`.
@@ -68,8 +71,8 @@ La lista mantiene el launcher visual del FAB porque pertenece a `requisitions/li
 
 ## Deuda pendiente
 
-- El mapa ya usa tiles de OpenStreetMap y pin centrado; aún falta conectar GPS nativo (`geolocator`) y permisos de plataforma.
+- El mapa y el permiso de GPS están conectados; las teselas requieren conectividad y la captura offline real de la requisa sigue pendiente.
 - El endpoint de persona disponible busca por CI; busqueda por nombre requiere contrato backend adicional.
-- El registro final aun es simulado. Debe cambiar a API real, outbox offline y almacenamiento cifrado cuando se implemente la capa probatoria.
+- La creación remota está conectada; crear/recuperar requisas offline todavía requiere outbox y almacenamiento local.
 - El fallback de laboratorio debe retirarse o condicionarse por flavor cuando exista backend estable.
 - No se uso Freezed para esta vertical porque las reglas reservan generadores al propietario; el estado se implemento manualmente con `copyWith`.

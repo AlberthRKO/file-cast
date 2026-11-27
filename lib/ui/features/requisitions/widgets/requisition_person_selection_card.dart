@@ -12,6 +12,8 @@ class RequisitionPersonSelectionCard extends StatelessWidget {
     this.address,
     this.phone,
     this.footer,
+    this.selectionStyle = false,
+    this.uppercaseName = false,
     this.onRemove,
     super.key,
   });
@@ -22,6 +24,8 @@ class RequisitionPersonSelectionCard extends StatelessWidget {
   final String? address;
   final String? phone;
   final Widget? footer;
+  final bool selectionStyle;
+  final bool uppercaseName;
   final VoidCallback? onRemove;
 
   @override
@@ -32,8 +36,13 @@ class RequisitionPersonSelectionCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(AppSpace.m),
       decoration: BoxDecoration(
-        color: theme.cardColor,
+        color: selectionStyle ? theme.scaffoldBackgroundColor : theme.cardColor,
         borderRadius: BorderRadius.circular(AppRadius.s),
+        border: selectionStyle
+            ? Border.all(
+                color: theme.colorScheme.outline.withValues(alpha: .24),
+              )
+            : null,
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: .05),
@@ -55,6 +64,7 @@ class RequisitionPersonSelectionCard extends StatelessWidget {
               username: username,
               address: address,
               phone: phone,
+              uppercaseName: uppercaseName,
             ),
             if (footer != null) ...[
               const SizedBox(height: AppSpace.m),
@@ -112,6 +122,7 @@ class _PersonCardContent extends StatelessWidget {
     this.username,
     this.address,
     this.phone,
+    required this.uppercaseName,
   });
 
   final String name;
@@ -119,6 +130,7 @@ class _PersonCardContent extends StatelessWidget {
   final String? username;
   final String? address;
   final String? phone;
+  final bool uppercaseName;
 
   @override
   Widget build(BuildContext context) {
@@ -127,7 +139,7 @@ class _PersonCardContent extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          name,
+          uppercaseName ? name.toUpperCase() : name,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: theme.textTheme.titleSmall?.copyWith(

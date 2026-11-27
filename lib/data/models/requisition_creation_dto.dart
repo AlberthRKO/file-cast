@@ -10,6 +10,13 @@ final class EcosystemCaseDto {
     required this.subjects,
     required this.officials,
     required this.caseSubjects,
+    required this.crimes,
+    required this.stage,
+    required this.location,
+    required this.score,
+    required this.timerLabel,
+    required this.timerEndsAt,
+    required this.timerPaused,
   });
 
   factory EcosystemCaseDto.fromJson(Map<String, dynamic> json) {
@@ -22,6 +29,23 @@ final class EcosystemCaseDto {
     final officials = _asList(
       json['persCasoFuncionarios'] ?? json['officials'] ?? json['funcionarios'],
     );
+    final primaryDivision = _asMap(
+      divisions.isNotEmpty ? divisions.first : json['casoFiscaliaDivision'],
+    );
+    final caseDivision = _asMap(
+      primaryDivision['casoDivision'] ??
+          json['casoFiscaliaDivision'] ??
+          primaryDivision,
+    );
+    final timer = _asMap(json['temporizador'] ?? json['timer']);
+    final scoreData = _asMap(json['puntuacion'] ?? json['score']);
+    final crimes =
+        _asList(
+              json['deliCasoDelito'] ?? json['crimes'] ?? json['delitos'],
+            )
+            .map(_crimeLabel)
+            .where((value) => value.isNotEmpty)
+            .toList(growable: false);
 
     return EcosystemCaseDto(
       id: _asInt(json['id'] ?? json['casoId']),
@@ -35,12 +59,25 @@ final class EcosystemCaseDto {
           .map(_divisionLabel)
           .where((value) => value.isNotEmpty)
           .join(', ')
+          .ifEmpty(_divisionLabel(json['casoFiscaliaDivision']))
           .ifEmpty('Sin division'),
       status:
           _nestedName(json['casoEstado']) ??
           _nestedName(json['estadoCaso']) ??
           _asString(json['caseStatus']) ??
           'Sin estado',
+      stage:
+          _nestedName(json['casoEtapa']) ??
+          _nestedName(json['stage']) ??
+          _nestedName(json['etapa']),
+      location: _locationLabel(caseDivision, json),
+      crimes: crimes,
+      score: scoreData['total'] == null ? null : _asInt(scoreData['total']),
+      timerLabel: _asString(timer['labelTiempo'] ?? timer['label']),
+      timerEndsAt: DateTime.tryParse(
+        _asString(timer['end'] ?? timer['endsAt']) ?? '',
+      ),
+      timerPaused: timer['paralizado'] == true || timer['paused'] == true,
       subjects: people
           .map(_subjectLabel)
           .where((value) => value.isNotEmpty)
@@ -61,6 +98,13 @@ final class EcosystemCaseDto {
   final List<String> subjects;
   final List<String> officials;
   final List<EcosystemSubjectSummary> caseSubjects;
+  final List<String> crimes;
+  final String? stage;
+  final String? location;
+  final int? score;
+  final String? timerLabel;
+  final DateTime? timerEndsAt;
+  final bool timerPaused;
 
   EcosystemCaseSummary toDomain() {
     return EcosystemCaseSummary(
@@ -72,17 +116,48 @@ final class EcosystemCaseDto {
       subjects: subjects,
       officials: officials,
       caseSubjects: caseSubjects,
+      crimes: crimes,
+      stage: stage,
+      location: location,
+      score: score,
+      timerLabel: timerLabel,
+      timerEndsAt: timerEndsAt,
+      timerPaused: timerPaused,
     );
   }
 
   static String _divisionLabel(Object? value) {
     final map = _asMap(value);
-    return _nestedName(map['division']) ??
+    return _nestedName(map['casoDivision']) ??
+        _nestedName(map['casoFiscaliaDivision']) ??
+        _nestedName(map['division']) ??
         _nestedName(map['fiscaliaDivision']) ??
         _nestedName(map['fiscalia']) ??
         _asString(map['nombre']) ??
         _asString(map['name']) ??
         '';
+  }
+
+  static String _locationLabel(
+    Map<String, dynamic> division,
+    Map<String, dynamic> caseJson,
+  ) {
+    final location = [
+      _asString(division['departamento']),
+      _asString(division['municipio']),
+    ].whereType<String>().toSet().join(', ');
+    return location.isNotEmpty
+        ? location
+        : _asString(caseJson['hechoMunicipio']) ?? '';
+  }
+
+  static String _crimeLabel(Object? value) {
+    final map = _asMap(value);
+    final crime = map['deliDelito'] ?? map['delito'] ?? value;
+    final name = _nestedName(crime) ?? _asString(map['nombre']);
+    if (name == null || name.isEmpty) return '';
+    final priority = _nestedName(map['deliPrioridad'] ?? map['prioridad']);
+    return priority == null || priority.isEmpty ? name : '$name · $priority';
   }
 
   static String _subjectLabel(Object? value) {

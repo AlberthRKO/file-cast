@@ -1,11 +1,10 @@
 import 'package:file_cast/domain/models/requisition_creation.dart';
 import 'package:file_cast/ui/core/theme/layout_tokens.dart';
-import 'package:file_cast/ui/core/feedback/app_feedback.dart';
 import 'package:file_cast/ui/core/widgets/app_form_input_icon.dart';
 import 'package:file_cast/ui/core/widgets/app_modal_bottom_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/create/view_models/create_requisition_state.dart';
 import 'package:file_cast/ui/features/requisitions/create/view_models/create_requisition_view_model.dart';
-import 'package:file_cast/ui/features/requisitions/create/widgets/requisition_location_picker.dart';
+import 'package:file_cast/ui/features/requisitions/create/widgets/requisition_location_map.dart';
 import 'package:file_cast/ui/features/requisitions/widgets/case_subjects_sheet.dart';
 import 'package:file_cast/ui/features/requisitions/widgets/requisition_case_card.dart';
 import 'package:file_cast/ui/features/requisitions/widgets/requisition_person_selection_card.dart';
@@ -14,7 +13,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:intl/intl.dart';
-import 'package:searchfield/searchfield.dart';
 
 class CreateRequisitionForm extends StatefulWidget {
   const CreateRequisitionForm({
@@ -118,10 +116,10 @@ class _CreateRequisitionFormState extends State<CreateRequisitionForm> {
               _ProcedureSection(
                 state: state,
                 onDateChanged: widget.viewModel.updateProcedureAt,
-                onCaptureLocation: _captureLocation,
+                onLocationChanged: widget.viewModel.updateLocation,
+                onLocationLabelChanged: widget.viewModel.updateLocationLabel,
+                onCaptureLocation: _captureCurrentLocation,
               ),
-              const SizedBox(height: AppSpace.m),
-              _OfflineNotice(),
             ],
           ),
         ),
@@ -134,35 +132,8 @@ class _CreateRequisitionFormState extends State<CreateRequisitionForm> {
     );
   }
 
-  Future<void> _captureLocation() async {
-    final point = await widget.viewModel.captureCurrentLocation();
-    if (!mounted) return;
-    if (point == null) {
-      final message = widget.viewModel.state.locationError;
-      if (message != null) {
-        await showAppErrorBottomSheet(context, message);
-      }
-      return;
-    }
-
-    final current = widget.viewModel.state.location;
-    final editedPoint = await showAppModalBottomSheet<GeoPoint>(
-      context: context,
-      useSafeArea: false,
-      enableDrag: false,
-      backgroundColor: Colors.transparent,
-      maxWidth: 560,
-      builder: (_) => RequisitionLocationPicker(
-        initialPoint: GeoPoint(
-          latitude: point.latitude,
-          longitude: point.longitude,
-          label: current?.label,
-        ),
-      ),
-    );
-    if (editedPoint != null && mounted) {
-      widget.viewModel.updateLocation(editedPoint);
-    }
+  Future<void> _captureCurrentLocation() async {
+    await widget.viewModel.captureCurrentLocation();
   }
 }
 
@@ -384,6 +355,35 @@ class _ModeItem extends StatelessWidget {
   }
 }
 
+class _CaseSuggestionCard extends StatelessWidget {
+  const _CaseSuggestionCard({
+    required this.caseSummary,
+    required this.onTap,
+  });
+
+  final EcosystemCaseSummary caseSummary;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return RequisitionCaseCard(
+      cud: caseSummary.cud,
+      caseType: caseSummary.type,
+      division: caseSummary.division,
+      statusLabel: caseSummary.status,
+      flatStyle: true,
+      stageLabel: caseSummary.stage,
+      locationLabel: caseSummary.location,
+      crimes: caseSummary.crimes,
+      score: caseSummary.score,
+      timerLabel: caseSummary.timerLabel,
+      timerEndsAt: caseSummary.timerEndsAt,
+      timerPaused: caseSummary.timerPaused,
+      onTap: onTap,
+    );
+  }
+}
+
 class _ExistingCudSection extends StatelessWidget {
   const _ExistingCudSection({
     required this.state,
@@ -403,9 +403,12 @@ class _ExistingCudSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final maxVisibleSuggestions = MediaQuery.sizeOf(context).height < 480
-        ? 2
-        : 4;
+    final viewportHeight = MediaQuery.sizeOf(context).height;
+    final maxSuggestionsHeight = viewportHeight < 480
+        ? 200.0
+        : viewportHeight < 680
+        ? 300.0
+        : 420.0;
     return RequisitionSectionCard(
       icon: Icons.folder_rounded,
       title: 'Casos del ecosistema',
@@ -421,56 +424,17 @@ class _ExistingCudSection extends StatelessWidget {
                   state.selectedCase == null &&
                   state.cudQuery.trim().length >= 4 &&
                   state.caseSearchPhase != AsyncPhase.loading;
-              final suggestions = state.caseResults
-                  .map(
-                    (item) => SearchFieldListItem<EcosystemCaseSummary>(
-                      item.cud,
-                      item: item,
-                      child: ListTile(
-                        dense: true,
-                        title: Text(item.cud),
-                        subtitle: Text('${item.type} - ${item.division}'),
-                      ),
-                    ),
-                  )
-                  .toList(growable: false);
               final field = Expanded(
-                child: SearchField<EcosystemCaseSummary>(
+                child: TextField(
                   controller: controller,
                   focusNode: focusNode,
-                  suggestionState: Suggestion.hidden,
-                  suggestionDirection: SuggestionDirection.down,
-                  maxSuggestionsInViewPort: maxVisibleSuggestions,
-                  itemHeight: 76,
-                  suggestions: suggestions,
-                  suggestionsDecoration: SuggestionDecoration(
-                    color: Theme.of(context).cardColor,
-                    elevation: 6,
-                    border: Border.all(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.outline.withValues(alpha: .18),
-                    ),
-                    borderRadius: BorderRadius.circular(AppRadius.s),
-                  ),
-                  onSearchTextChanged: (query) {
-                    onQueryChanged(query);
-                    return const <SearchFieldListItem<EcosystemCaseSummary>>[];
-                  },
-                  onSubmit: (_) {
+                  onChanged: onQueryChanged,
+                  textInputAction: TextInputAction.search,
+                  style: Theme.of(context).textTheme.bodyLarge,
+                  onSubmitted: (_) {
                     if (canSearch) onSearch();
                   },
-                  onSuggestionTap: (suggestion) {
-                    final item = suggestion.item;
-                    if (item == null) return;
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (context.mounted) onSelected(item);
-                    });
-                  },
-                  textInputAction: TextInputAction.search,
-                  searchStyle: Theme.of(context).textTheme.bodyLarge,
-                  suggestionStyle: Theme.of(context).textTheme.bodyMedium,
-                  searchInputDecoration: InputDecoration(
+                  decoration: InputDecoration(
                     labelText: 'Buscar por Nro de caso, caratula o imputado...',
                     labelStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(
                       color: Theme.of(
@@ -514,11 +478,28 @@ class _ExistingCudSection extends StatelessWidget {
                   state.caseResults.isEmpty) {
                 return const SizedBox.shrink();
               }
-              final visibleCount =
-                  state.caseResults.length > maxVisibleSuggestions
-                  ? maxVisibleSuggestions
-                  : state.caseResults.length;
-              return SizedBox(height: visibleCount * 76.0);
+              return Padding(
+                padding: const EdgeInsets.only(top: AppSpace.xs),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: maxSuggestionsHeight),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: state.caseResults.length,
+                    separatorBuilder: (_, _) =>
+                        const SizedBox(height: AppSpace.xs),
+                    itemBuilder: (context, index) {
+                      final item = state.caseResults[index];
+                      return _CaseSuggestionCard(
+                        caseSummary: item,
+                        onTap: () {
+                          focusNode.unfocus();
+                          onSelected(item);
+                        },
+                      );
+                    },
+                  ),
+                ),
+              );
             },
           ),
           if (state.selectedCase == null &&
@@ -660,11 +641,15 @@ class _ProcedureSection extends StatelessWidget {
   const _ProcedureSection({
     required this.state,
     required this.onDateChanged,
+    required this.onLocationChanged,
+    required this.onLocationLabelChanged,
     required this.onCaptureLocation,
   });
 
   final CreateRequisitionState state;
   final ValueChanged<DateTime> onDateChanged;
+  final ValueChanged<GeoPoint> onLocationChanged;
+  final ValueChanged<String> onLocationLabelChanged;
   final Future<void> Function() onCaptureLocation;
 
   @override
@@ -685,54 +670,83 @@ class _ProcedureSection extends StatelessWidget {
             onChanged: onDateChanged,
           ),
           const SizedBox(height: AppSpace.m),
-          const _SectionLabel(label: 'Ubicacion GPS'),
+          const _SectionLabel(label: 'Referencia o dirección'),
+          const SizedBox(height: AppSpace.s),
+          TextField(
+            key: const ValueKey('requisition-location-reference'),
+            onChanged: onLocationLabelChanged,
+            style: Theme.of(context).textTheme.bodyLarge,
+            decoration: const InputDecoration(
+              labelText: 'Ingresar referencia o dirección',
+              prefixIcon: AppFormInputIcon(
+                asset: 'assets/images/icons/address.svg',
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSpace.m),
+          const _SectionLabel(label: 'Ubicación GPS'),
+          const SizedBox(height: AppSpace.s),
+          if (location != null)
+            RequisitionLocationMap(
+              location: location,
+              currentUserLocation: state.currentUserLocation,
+              isLocating: state.isCapturingLocation,
+              onLocationChanged: onLocationChanged,
+              onRequestCurrentLocation: onCaptureLocation,
+            ),
+          if (state.locationError != null) ...[
+            const SizedBox(height: AppSpace.xs),
+            Text(
+              state.locationError!,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.error,
+              ),
+            ),
+          ],
           const SizedBox(height: AppSpace.s),
           LayoutBuilder(
             builder: (context, constraints) {
-              final vertical = constraints.maxWidth < 520;
-              final field = location == null
-                  ? _LocationPending(errorText: state.locationError)
-                  : _LocationSelectedCard(location: location);
-              return Flex(
-                direction: vertical ? Axis.vertical : Axis.horizontal,
-                crossAxisAlignment: CrossAxisAlignment.start,
+              final compact = constraints.maxWidth < 420;
+              final latitudeField = _CoordinateField(
+                label: 'Latitud',
+                value: location!.latitude,
+                minimum: -90,
+                maximum: 90,
+                onChanged: (latitude) => onLocationChanged(
+                  GeoPoint(
+                    latitude: latitude,
+                    longitude: location.longitude,
+                    label: location.label,
+                  ),
+                ),
+              );
+              final longitudeField = _CoordinateField(
+                label: 'Longitud',
+                value: location.longitude,
+                minimum: -180,
+                maximum: 180,
+                onChanged: (longitude) => onLocationChanged(
+                  GeoPoint(
+                    latitude: location.latitude,
+                    longitude: longitude,
+                    label: location.label,
+                  ),
+                ),
+              );
+              if (compact) {
+                return Column(
+                  children: [
+                    latitudeField,
+                    const SizedBox(height: AppSpace.s),
+                    longitudeField,
+                  ],
+                );
+              }
+              return Row(
                 children: [
-                  if (vertical) field else Expanded(child: field),
-                  SizedBox(
-                    width: vertical ? 0 : AppSpace.s,
-                    height: vertical ? AppSpace.s : 0,
-                  ),
-                  SizedBox(
-                    width: vertical ? double.infinity : 136,
-                    child: FilledButton.tonalIcon(
-                      onPressed: state.isCapturingLocation
-                          ? null
-                          : onCaptureLocation,
-                      icon: state.isCapturingLocation
-                          ? const SizedBox.square(
-                              dimension: AppSize.iconS,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : SvgPicture.asset(
-                              'assets/images/icons/gps.svg',
-                              width: AppSize.iconS,
-                              height: AppSize.iconS,
-                              colorFilter: ColorFilter.mode(
-                                Theme.of(
-                                  context,
-                                ).colorScheme.onSecondaryContainer,
-                                BlendMode.srcIn,
-                              ),
-                            ),
-                      label: Text(
-                        state.isCapturingLocation
-                            ? 'Obteniendo ubicación…'
-                            : location == null
-                            ? 'Capturar'
-                            : 'Actualizar ubicación',
-                      ),
-                    ),
-                  ),
+                  Expanded(child: latitudeField),
+                  const SizedBox(width: AppSpace.s),
+                  Expanded(child: longitudeField),
                 ],
               );
             },
@@ -801,71 +815,96 @@ class _DateTimeField extends StatelessWidget {
   }
 }
 
-class _LocationPending extends StatelessWidget {
-  const _LocationPending({this.errorText});
-  final String? errorText;
+class _CoordinateField extends StatefulWidget {
+  const _CoordinateField({
+    required this.label,
+    required this.value,
+    required this.minimum,
+    required this.maximum,
+    required this.onChanged,
+  });
+
+  final String label;
+  final double value;
+  final double minimum;
+  final double maximum;
+  final ValueChanged<double> onChanged;
 
   @override
-  Widget build(BuildContext context) => InputDecorator(
-    decoration: InputDecoration(
-      errorText: errorText,
-      prefixIcon: const AppFormInputIcon(
-        asset: 'assets/images/icons/punto.svg',
-      ),
-    ),
-    child: Text(
-      'Captura la ubicación para continuar',
-      style: Theme.of(context).inputDecorationTheme.hintStyle,
-    ),
-  );
+  State<_CoordinateField> createState() => _CoordinateFieldState();
 }
 
-class _LocationSelectedCard extends StatelessWidget {
-  const _LocationSelectedCard({required this.location});
-  final GeoPoint location;
+class _CoordinateFieldState extends State<_CoordinateField> {
+  late final TextEditingController _controller;
+  late final FocusNode _focusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: _format(widget.value));
+    _focusNode = FocusNode()..addListener(_handleFocusChange);
+  }
+
+  @override
+  void didUpdateWidget(covariant _CoordinateField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_focusNode.hasFocus && oldWidget.value != widget.value) {
+      _syncController();
+    }
+  }
+
+  @override
+  void dispose() {
+    _focusNode
+      ..removeListener(_handleFocusChange)
+      ..dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _handleFocusChange() {
+    if (_focusNode.hasFocus) return;
+    final parsed = double.tryParse(_controller.text.trim());
+    if (parsed == null ||
+        !parsed.isFinite ||
+        parsed < widget.minimum ||
+        parsed > widget.maximum) {
+      _syncController();
+    } else {
+      widget.onChanged(parsed);
+    }
+  }
+
+  void _syncController() {
+    final text = _format(widget.value);
+    if (_controller.text == text) return;
+    _controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+
+  String _format(double value) => value.toStringAsFixed(6);
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.primary.withValues(alpha: .08),
-        borderRadius: BorderRadius.circular(AppRadius.s),
-        border: Border.all(
-          color: theme.colorScheme.primary.withValues(alpha: .2),
+    return TextField(
+      controller: _controller,
+      focusNode: _focusNode,
+      keyboardType: const TextInputType.numberWithOptions(
+        signed: true,
+        decimal: true,
+      ),
+      textInputAction: TextInputAction.done,
+      style: Theme.of(context).textTheme.bodyLarge,
+      decoration: InputDecoration(
+        labelText: widget.label,
+        prefixIcon: const AppFormInputIcon(
+          asset: 'assets/images/icons/coordenadas.svg',
         ),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpace.s),
-        child: Row(
-          children: [
-            const AppFormInputIcon(asset: 'assets/images/icons/punto.svg'),
-            const SizedBox(width: AppSpace.xs),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    location.label?.isNotEmpty ?? false
-                        ? location.label!
-                        : 'Ubicación capturada',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  Text(
-                    '${location.latitude.toStringAsFixed(6)}, ${location.longitude.toStringAsFixed(6)}',
-                    style: theme.textTheme.bodySmall,
-                  ),
-                ],
-              ),
-            ),
-            Icon(Icons.check_circle_rounded, color: theme.colorScheme.primary),
-          ],
-        ),
-      ),
+      onSubmitted: (_) => _focusNode.unfocus(),
+      onTapOutside: (_) => _focusNode.unfocus(),
     );
   }
 }
@@ -895,6 +934,15 @@ class _CasePenalCard extends StatelessWidget {
       caseType: caseSummary.type,
       division: caseSummary.division,
       statusLabel: caseSummary.status,
+      selectionStyle: true,
+      flatStyle: true,
+      stageLabel: caseSummary.stage,
+      locationLabel: caseSummary.location,
+      crimes: caseSummary.crimes,
+      score: caseSummary.score,
+      timerLabel: caseSummary.timerLabel,
+      timerEndsAt: caseSummary.timerEndsAt,
+      timerPaused: caseSummary.timerPaused,
       onViewSubjects: () => showAppModalBottomSheet<void>(
         context: context,
         maxWidth: 560,
@@ -921,37 +969,9 @@ class _SelectedPersonCard extends StatelessWidget {
       ci: person.ci,
       address: person.address,
       phone: person.phone,
+      selectionStyle: true,
+      uppercaseName: true,
       onRemove: onChange,
-    );
-  }
-}
-
-class _OfflineNotice extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(AppRadius.m),
-        border: Border.all(
-          color: theme.colorScheme.outline.withValues(alpha: 0.18),
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpace.m),
-        child: Row(
-          children: [
-            Icon(Icons.lock_outline_rounded, color: theme.colorScheme.primary),
-            const SizedBox(width: AppSpace.s),
-            Expanded(
-              child: Text(
-                'Registro local de laboratorio. El cifrado offline real queda pendiente para la capa de evidencias.',
-                style: theme.textTheme.bodySmall,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

@@ -438,7 +438,7 @@ Requisitos:
 - tablet: dialog centrado y limitado de ancho;
 - elegir CUD y registrar persona son estados del ViewModel, no dos formularios independientes;
 - GPS, fecha y almacenamiento offline deben mostrar procedencia y permisos.
-- Estado actual: implementado como vertical UI/MVVM inicial en [modules/requisitions_create.md](modules/requisitions_create.md), con registro simulado y mapa/GPS nativo pendientes.
+- Estado actual: vertical UI/MVVM conectada a la creación remota; el mapa inline tiene ubicación predeterminada, permiso GPS, coordenadas editables y mosaico satelital. La persistencia offline queda pendiente; ver [modules/requisitions_create.md](modules/requisitions_create.md).
 
 ## Fases de entrega
 

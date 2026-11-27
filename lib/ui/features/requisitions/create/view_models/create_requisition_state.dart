@@ -12,6 +12,7 @@ final class CreateRequisitionState {
     this.selectedPerson,
     this.procedureAt,
     this.location,
+    this.currentUserLocation,
     this.isCapturingLocation = false,
     this.submitPhase = AsyncPhase.initial,
     this.errorMessage,
@@ -32,6 +33,7 @@ final class CreateRequisitionState {
   final PersonSummary? selectedPerson;
   final DateTime? procedureAt;
   final GeoPoint? location;
+  final GeoPoint? currentUserLocation;
   final bool isCapturingLocation;
   final AsyncPhase submitPhase;
   final String? errorMessage;
@@ -65,6 +67,7 @@ final class CreateRequisitionState {
     Object? selectedPerson = _sentinel,
     Object? procedureAt = _sentinel,
     Object? location = _sentinel,
+    Object? currentUserLocation = _sentinel,
     bool? isCapturingLocation,
     AsyncPhase? submitPhase,
     Object? errorMessage = _sentinel,
@@ -91,6 +94,9 @@ final class CreateRequisitionState {
           ? this.procedureAt
           : procedureAt as DateTime?,
       location: location == _sentinel ? this.location : location as GeoPoint?,
+      currentUserLocation: currentUserLocation == _sentinel
+          ? this.currentUserLocation
+          : currentUserLocation as GeoPoint?,
       isCapturingLocation: isCapturingLocation ?? this.isCapturingLocation,
       submitPhase: submitPhase ?? this.submitPhase,
       errorMessage: errorMessage == _sentinel

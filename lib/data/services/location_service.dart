@@ -20,6 +20,9 @@ class LocationService {
         : permission;
 
     if (!resolvedPermission.isGranted) {
+      if (resolvedPermission.isPermanentlyDenied) {
+        await openAppSettings();
+      }
       throw LocationServiceException(
         resolvedPermission.isPermanentlyDenied
             ? 'El permiso de ubicación está bloqueado. Habilítalo desde los ajustes del dispositivo.'

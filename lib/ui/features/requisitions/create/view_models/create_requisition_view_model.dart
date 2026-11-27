@@ -18,6 +18,10 @@ class CreateRequisitionViewModel extends ChangeNotifier {
        _state = CreateRequisitionState(
          mode: initialMode,
          procedureAt: DateTime.now(),
+         location: const GeoPoint(
+           latitude: requisitionDefaultLatitude,
+           longitude: requisitionDefaultLongitude,
+         ),
        );
 
   final RequisitionCreationRepository _repository;
@@ -177,8 +181,8 @@ class CreateRequisitionViewModel extends ChangeNotifier {
       _emit(
         _state.copyWith(
           location: GeoPoint(
-            latitude: -19.0478,
-            longitude: -65.2592,
+            latitude: requisitionDefaultLatitude,
+            longitude: requisitionDefaultLongitude,
             label: label,
           ),
           locationError: null,
@@ -201,6 +205,7 @@ class CreateRequisitionViewModel extends ChangeNotifier {
   }
 
   Future<GeoPoint?> captureCurrentLocation() async {
+    if (_state.isCapturingLocation) return null;
     _emit(
       _state.copyWith(
         isCapturingLocation: true,
@@ -209,20 +214,35 @@ class CreateRequisitionViewModel extends ChangeNotifier {
     );
     try {
       final location = await _locationService.captureCurrentLocation();
+      final selectedLocation = GeoPoint(
+        latitude: location.latitude,
+        longitude: location.longitude,
+        label: _state.location?.label,
+      );
       _emit(
         _state.copyWith(
-          location: location,
+          location: selectedLocation,
+          currentUserLocation: selectedLocation,
           isCapturingLocation: false,
           locationError: null,
           createdResult: null,
         ),
       );
-      return location;
+      return selectedLocation;
     } on LocationServiceException catch (error) {
       _emit(
         _state.copyWith(
           isCapturingLocation: false,
           locationError: error.message,
+        ),
+      );
+      return null;
+    } catch (_) {
+      _emit(
+        _state.copyWith(
+          isCapturingLocation: false,
+          locationError:
+              'No se pudo obtener la ubicación actual. Intenta nuevamente.',
         ),
       );
       return null;

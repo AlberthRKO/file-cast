@@ -2,6 +2,9 @@ enum RequisitionRegistrationMode { existingCud, withoutCud }
 
 enum AsyncPhase { initial, loading, content, empty, error }
 
+const requisitionDefaultLatitude = -19.0477918;
+const requisitionDefaultLongitude = -65.2597374;
+
 final class GeoPoint {
   const GeoPoint({
     required this.latitude,
@@ -36,6 +39,13 @@ final class EcosystemCaseSummary {
     required this.subjects,
     required this.officials,
     this.caseSubjects = const [],
+    this.crimes = const [],
+    this.stage,
+    this.location,
+    this.score,
+    this.timerLabel,
+    this.timerEndsAt,
+    this.timerPaused = false,
   });
 
   final int id;
@@ -46,6 +56,13 @@ final class EcosystemCaseSummary {
   final List<String> subjects;
   final List<String> officials;
   final List<EcosystemSubjectSummary> caseSubjects;
+  final List<String> crimes;
+  final String? stage;
+  final String? location;
+  final int? score;
+  final String? timerLabel;
+  final DateTime? timerEndsAt;
+  final bool timerPaused;
 }
 
 final class EcosystemSubjectSummary {
